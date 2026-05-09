@@ -11,18 +11,16 @@ class GaugeGroup(ABC):
         return self.name
 
     @abstractmethod
-    def multiply(U, V):
+    def multiply(self, *operators):
         pass
 
     @abstractmethod
-    def inverse(U):
+    def inverse(self, U):
         pass
 
 
 class Z2(GaugeGroup):
-    def __init__(
-        self,
-    ):
+    def __init__(self):
         super().__init__("Z2")
 
     def multiply(self, *operators):
@@ -36,49 +34,44 @@ class Z2(GaugeGroup):
 
 
 class Site:
-    def __init__(self, position, features=None):
+    def __init__(self, features=None):
         self.features = features
-        self.position = position
 
 
 class Link:
-    def __init__(self, U, position, direction, gaugegroup):
+    def __init__(self, U, direction, gaugegroup, D):
         self.operator = U
-        self.position = position
         self.direction = direction
         self.gaugegroup = gaugegroup
-        self.D = len(position)
+        self.D = D
 
     def inverse(self):
-        """Returns the inverse link"""
+        """Returns the inverse link.
 
-        # Direction is encoded as: mu=0,...,d-1 -> 'positive' along mu; mu=d, ..., 2d-1 -> 'negative' along mu%d
-        axis = self.direction % self.D
-        dir_vec = np.zeros(self.D, dtype=np.int64)
-        dir_vec[axis] = 1
+        Direction encoding: mu=0,...,D-1 forward along axis mu; mu=D,...,2D-1 backward along axis mu%D.
+        """
         inverse_direction = (
             self.direction + self.D
             if self.direction < self.D
             else self.direction - self.D
         )
-
         return Link(
             U=self.gaugegroup.inverse(self.operator),
-            position=np.array(self.position) + dir_vec,
             direction=inverse_direction,
             gaugegroup=self.gaugegroup,
+            D=self.D,
         )
 
     def __mul__(self, other):
         return Link(
             U=self.gaugegroup.multiply(self.operator, other.operator),
-            position=self.position,
             direction=None,
             gaugegroup=self.gaugegroup,
+            D=self.D,
         )
 
     def __str__(self):
-        return f"Link at position: {self.position}, direction: {self.direction} with value: {self.operator}"
+        return f"Link direction: {self.direction}, value: {self.operator}"
 
 
 class Plaquette:
@@ -89,11 +82,11 @@ class Plaquette:
         self.dir2 = dir2
 
     @classmethod
-    def from_links(cls, link1, link2, link3, link4, dir1, dir2):
+    def from_links(cls, link1, link2, link3, link4, position, dir1, dir2):
         P = link1.gaugegroup.multiply(
             link1.operator, link2.operator, link3.operator, link4.operator
         )
-        return cls(P, link1.position, dir1, dir2)
+        return cls(P, position, dir1, dir2)
 
 
 class Lattice:
@@ -111,27 +104,20 @@ class Lattice:
         self.D = D
         self.gaugegroup = gaugegroup
 
-        def _initialize_sites(L):
-            # Initialize lattice points with no site-features
-            lattice_sites = np.empty(shape=(L,) * self.D, dtype=Site)
-            for coord in np.ndindex(lattice_sites.shape):
-                lattice_sites[*coord] = Site(position=coord)
-            return lattice_sites
-
-        self.lattice_sites = _initialize_sites(self.L)
+        self.lattice_sites = np.empty(shape=(L,) * D, dtype=Site)
+        for coord in np.ndindex(self.lattice_sites.shape):
+            self.lattice_sites[*coord] = Site()
 
     def initialize_random_links(self):
         """Initialize all links to be either +1 or -1 with 50% chance. (Haar)"""
-        self.links = np.empty(
-            shape=(self.L,) * self.D + (self.D,), dtype=Link
-        )  # [L, L, ..., L, D]
+        self.links = np.empty(shape=(self.L,) * self.D + (self.D,), dtype=Link)
         for coord in np.ndindex(self.lattice_sites.shape):
             for i in range(self.D):
                 self.links[*coord, i] = Link(
                     U=(1 if np.random.random() < 0.5 else -1),
-                    position=coord,
                     direction=i,
                     gaugegroup=self.gaugegroup,
+                    D=self.D,
                 )
 
     def get_link(self, position, direction) -> Link:
@@ -159,7 +145,6 @@ class Lattice:
 
         position = np.array(position)
 
-        # Build the basis vectors mu^hat, nu^hat
         mu_vec = np.zeros(self.D, dtype=np.int64)
         nu_vec = np.zeros(self.D, dtype=np.int64)
         mu_vec[mu] = 1
@@ -169,6 +154,7 @@ class Lattice:
             self.links[*((position + mu_vec) % self.L), nu],
             self.links[*((position + nu_vec) % self.L), mu].inverse(),
             self.links[*position, nu].inverse(),
+            position,
             mu,
             nu,
         )
@@ -179,13 +165,12 @@ class Lattice:
         assert sum([0 <= position[i] < self.L for i in range(self.D)]) == self.D
 
         plaquettes = np.empty(shape=(self.D, self.D), dtype=Plaquette)
-        # only compute P_munu with nu > mu, the remaining ones are the hermitians
         for mu, nu in np.ndindex(plaquettes.shape):
             if nu > mu:
                 plaquettes[mu, nu] = self.plaquette(position, mu, nu)
             elif nu < mu:
                 plaquettes[mu, nu] = plaquettes[nu, mu]
-            else:  # mu = nu, None
+            else:
                 plaquettes[mu, nu] = None
 
         return plaquettes
