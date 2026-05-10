@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 
 import numpy as np
+import torch
 
 
 class GaugeGroup(ABC):
@@ -119,6 +120,7 @@ class Lattice:
                     gaugegroup=self.gaugegroup,
                     D=self.D,
                 )
+        return self
 
     def get_link(self, position, direction) -> Link:
         """Return link at specified position and direction"""
@@ -159,18 +161,25 @@ class Lattice:
             nu,
         )
 
-    def all_plaquettes(self, position):
-        """Return all the plaquettes at position position"""
-        assert len(position) == self.D
-        assert sum([0 <= position[i] < self.L for i in range(self.D)]) == self.D
+    def plaquette_tensor(self):
+        """Return the (*L, D*(D-1)//2) tensor of unique plaquette values per site."""
+        pairs = [(mu, nu) for mu in range(self.D) for nu in range(mu + 1, self.D)]
+        tensor = torch.zeros((len(pairs),) + (self.L,) * self.D)
+        for coord in np.ndindex(self.lattice_sites.shape):
+            for k, (mu, nu) in enumerate(pairs):
+                tensor[k, *coord] = self.plaquette(coord, mu, nu).P
+        return tensor
 
-        plaquettes = np.empty(shape=(self.D, self.D), dtype=Plaquette)
-        for mu, nu in np.ndindex(plaquettes.shape):
-            if nu > mu:
-                plaquettes[mu, nu] = self.plaquette(position, mu, nu)
-            elif nu < mu:
-                plaquettes[mu, nu] = plaquettes[nu, mu]
-            else:
-                plaquettes[mu, nu] = None
+    def link_tensor(self):
+        """Return the (*L, D) tensor of D links fr each site"""
+        tensor = torch.zeros((self.D,) + (self.L,) * self.D)
+        for coord in np.ndindex(self.lattice_sites.shape):
+            for mu in range(self.D):
+                tensor[mu, *coord] = self.links[*coord, mu]
+        return tensor
 
-        return plaquettes
+    def action(self):
+        plaq = self.plaquette_tensor()
+        n_plaq = self.L**self.D * self.D * (self.D - 1) // 2
+        # equivalent to sum_p (1 - P_p)
+        return n_plaq - torch.sum(plaq)
