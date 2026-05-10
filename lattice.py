@@ -115,10 +115,10 @@ class Lattice:
 
     def initialize_random_links(self):
         """Initialize all links to be either +1 or -1 with 50% chance. (Haar)"""
-        self.links = np.empty(shape=(self.L,) * self.D + (self.D,), dtype=Link)
+        self.links = np.empty(shape=(self.D,) + (self.L,) * self.D, dtype=Link)
         for coord in np.ndindex(self.lattice_sites.shape):
             for i in range(self.D):
-                self.links[*coord, i] = Link(
+                self.links[i, *coord] = Link(
                     U=(1 if np.random.random() < 0.5 else -1),
                     direction=i,
                     gaugegroup=self.gaugegroup,
@@ -132,7 +132,7 @@ class Lattice:
         assert sum([0 <= position[i] < self.L for i in range(self.D)]) == self.D
         assert 0 <= direction < self.D
 
-        return self.links[*position, direction]
+        return self.links[direction, *position]
 
     def get_site(self, position):
         """Return site at specified position"""
@@ -156,23 +156,25 @@ class Lattice:
         mu_vec[mu] = 1
         nu_vec[nu] = 1
         return Plaquette.from_links(
-            self.links[*position, mu],
-            self.links[*((position + mu_vec) % self.L), nu],
-            self.links[*((position + nu_vec) % self.L), mu].inverse(),
-            self.links[*position, nu].inverse(),
+            self.links[mu, *position],
+            self.links[nu, *((position + mu_vec) % self.L)],
+            self.links[mu, *((position + nu_vec) % self.L)].inverse(),
+            self.links[nu, *position].inverse(),
             position,
             mu,
             nu,
         )
 
-    def _link_values(self) -> torch.Tensor:
+    def link_tensor(self) -> torch.Tensor:
         """Extract link operators into a float tensor of shape (D, L, ..., L)."""
-        ops = np.vectorize(lambda l: l.operator)(self.links)  # shape (L,...,L, D)
-        return torch.tensor(np.moveaxis(ops, -1, 0), dtype=torch.float32)
+        ops = np.vectorize(lambda l: l.operator)(
+            self.links
+        )  # shape (D,L,...,L). vectorize to apply to multidim array, not faster
+        return torch.tensor(ops, dtype=torch.float32)
 
     def plaquette_tensor(self) -> torch.Tensor:
         """Return the (D*(D-1)//2, L, ..., L) tensor of unique plaquette values."""
-        U = self._link_values()  # (D, L, ..., L)
+        U = self.link_tensor()  # (D, L, ..., L)
         pairs = [(mu, nu) for mu in range(self.D) for nu in range(mu + 1, self.D)]
         tensor = torch.empty((len(pairs),) + (self.L,) * self.D)
         for k, (mu, nu) in enumerate(pairs):
@@ -184,10 +186,6 @@ class Lattice:
                 * self.gaugegroup.tensor_inverse(U[nu])
             )
         return tensor
-
-    def link_tensor(self) -> torch.Tensor:
-        """Return the (D, L, ..., L) tensor of link values."""
-        return self._link_values()
 
     def action(self, plaq=None) -> torch.Tensor:
         if plaq is None:

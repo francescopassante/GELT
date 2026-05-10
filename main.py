@@ -6,13 +6,13 @@ from train import full_pipeline
 if __name__ == "__main__":
     D = 2
     N = 1000
-    in_channels = D * (D - 1) // 2
+    in_channels = D
     channel_dimensions = [in_channels, 16, 32]
     Ls = np.arange(4, 33, 4, dtype=np.int64)
     print(Ls)
     test_losses = np.zeros(len(Ls))
     train_epochs = np.zeros(len(Ls))
-    for i, L in tqdm(enumerate(Ls)):
+    for i, L in enumerate(tqdm(Ls)):
         test_loss, train_epoch = full_pipeline(
             L,
             D,
@@ -24,6 +24,7 @@ if __name__ == "__main__":
             patience=10,
             plots=False,
             verbose=True,
+            input="links",
         )
         test_losses[i] = test_loss
         train_epochs[i] = train_epoch

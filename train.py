@@ -81,10 +81,16 @@ def full_pipeline(
     patience=10,
     plots=False,
     verbose=True,
+    input="plaquette",
 ):
-    from data import build_datasets
+    from data import build_link_datasets, build_plaquette_datasets
 
-    train_dataset, val_dataset, test_dataset = build_datasets(N, D, L, splits)
+    if input.lower() == "plaquette":
+        train_dataset, val_dataset, test_dataset = build_plaquette_datasets(
+            N, D, L, splits
+        )
+    else:
+        train_dataset, val_dataset, test_dataset = build_link_datasets(N, D, L, splits)
 
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=32, shuffle=True
@@ -95,7 +101,7 @@ def full_pipeline(
     )
 
     model = LatticeCNN(L, D, channel_dimensions)
-    device = torch.device("cuda" if torch.cuda.is_available() else "mps")
+    device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
     model = model.to(device)
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=lr)
