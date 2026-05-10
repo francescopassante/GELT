@@ -94,10 +94,6 @@ class Lattice:
     """Class to manipulate lattices"""
 
     def __init__(self, L, D=2, gaugegroup=None):
-        if not isinstance(D, int):
-            raise TypeError("D must be an integer")
-        if not isinstance(L, int):
-            raise TypeError("L must be an integer")
         assert D > 0 and L > 0
         if gaugegroup is None:
             gaugegroup = Z2()
