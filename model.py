@@ -5,13 +5,14 @@ from torchsummary import summary
 
 class LatticeCNN(nn.Module):
     """
-    A simple Convolutional Neural Network for Lattice Gauge Theories.
-    Uses circular padding to enforce periodic boundary conditions on the lattice.
+    A simple CNN for Lattice Gauge Theories.
+    Uses circular padding to enforce periodic boundary conditions.
     """
 
-    def __init__(self, L, channels):
+    def __init__(self, L, D, channels):
         super(LatticeCNN, self).__init__()
         self.L = L
+        self.D = D
         layers = []
         for chan_in, chan_out in zip(channels, channels[1:]):
             layers.append(
@@ -24,7 +25,7 @@ class LatticeCNN(nn.Module):
         self.conv = nn.Sequential(*layers)
 
         self.fc = nn.Sequential(
-            nn.Linear(self.L * self.L * channels[-1], 32), nn.ReLU(), nn.Linear(32, 1)
+            nn.Linear(self.L**self.D * channels[-1], 32), nn.ReLU(), nn.Linear(32, 1)
         )
 
     def forward(self, x):
@@ -35,5 +36,6 @@ class LatticeCNN(nn.Module):
 
 if __name__ == "__main__":
     L = 5
-    model = LatticeCNN(L, [1, 16, 32])
+    D = 2
+    model = LatticeCNN(L, D, [1, 16, 32])
     summary(model, (1, L, L))

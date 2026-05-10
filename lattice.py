@@ -19,6 +19,11 @@ class GaugeGroup(ABC):
     def inverse(self, U):
         pass
 
+    @abstractmethod
+    def tensor_inverse(self, U: torch.Tensor) -> torch.Tensor:
+        """Element-wise inverse of a tensor of group elements."""
+        pass
+
 
 class Z2(GaugeGroup):
     def __init__(self):
@@ -32,6 +37,9 @@ class Z2(GaugeGroup):
 
     def inverse(self, U):
         return U
+
+    def tensor_inverse(self, U: torch.Tensor) -> torch.Tensor:
+        return U  # Z2 elements are self-inverse (±1)
 
 
 class Site:
@@ -157,25 +165,33 @@ class Lattice:
             nu,
         )
 
-    def plaquette_tensor(self):
-        """Return the (*L, D*(D-1)//2) tensor of unique plaquette values per site."""
+    def _link_values(self) -> torch.Tensor:
+        """Extract link operators into a float tensor of shape (D, L, ..., L)."""
+        ops = np.vectorize(lambda l: l.operator)(self.links)  # shape (L,...,L, D)
+        return torch.tensor(np.moveaxis(ops, -1, 0), dtype=torch.float32)
+
+    def plaquette_tensor(self) -> torch.Tensor:
+        """Return the (D*(D-1)//2, L, ..., L) tensor of unique plaquette values."""
+        U = self._link_values()  # (D, L, ..., L)
         pairs = [(mu, nu) for mu in range(self.D) for nu in range(mu + 1, self.D)]
-        tensor = torch.zeros((len(pairs),) + (self.L,) * self.D)
-        for coord in np.ndindex(self.lattice_sites.shape):
-            for k, (mu, nu) in enumerate(pairs):
-                tensor[k, *coord] = self.plaquette(coord, mu, nu).P
+        tensor = torch.empty((len(pairs),) + (self.L,) * self.D)
+        for k, (mu, nu) in enumerate(pairs):
+            # P_{mu,nu}(x) = U_mu(x) * U_nu(x+e_mu) * U_mu^{-1}(x+e_nu) * U_nu^{-1}(x)
+            tensor[k] = (
+                U[mu]
+                * torch.roll(U[nu], -1, mu)
+                * self.gaugegroup.tensor_inverse(torch.roll(U[mu], -1, nu))
+                * self.gaugegroup.tensor_inverse(U[nu])
+            )
         return tensor
 
-    def link_tensor(self):
-        """Return the (*L, D) tensor of D links fr each site"""
-        tensor = torch.zeros((self.D,) + (self.L,) * self.D)
-        for coord in np.ndindex(self.lattice_sites.shape):
-            for mu in range(self.D):
-                tensor[mu, *coord] = self.links[*coord, mu]
-        return tensor
+    def link_tensor(self) -> torch.Tensor:
+        """Return the (D, L, ..., L) tensor of link values."""
+        return self._link_values()
 
-    def action(self):
-        plaq = self.plaquette_tensor()
+    def action(self, plaq=None) -> torch.Tensor:
+        if plaq is None:
+            plaq = self.plaquette_tensor()
         n_plaq = self.L**self.D * self.D * (self.D - 1) // 2
         # equivalent to sum_p (1 - P_p)
         return n_plaq - torch.sum(plaq)

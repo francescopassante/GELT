@@ -28,8 +28,9 @@ def visualize_lattice(lattice, title=None):
     plt.show()
 
 
-from lattice import Lattice
+if __name__ == "__main__":
+    from lattice import Lattice
 
-lat = Lattice(L=5)
-lat.initialize_random_links()
-visualize_lattice(lat)
+    lat = Lattice(L=5)
+    lat.initialize_random_links()
+    visualize_lattice(lat)
