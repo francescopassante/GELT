@@ -96,7 +96,16 @@ def full_pipeline(
     batch_size: int = 32,
     seed: Optional[int] = None,
     checkpoint_path: str = "best_model.pth",
+    sampler=None,
+    n_therm: int = 200,
+    n_skip: int = 5,
 ) -> dict:
+    """
+    ``sampler`` : ensemble-generator callable with the same interface as
+                  ``mcmc_ensemble``.  ``None`` (default) auto-dispatches
+                  to the registered sweep for ``group`` via ``_SWEEP_FN``.
+                  Pass ``sampler=haar_ensemble`` for Haar-uniform configurations.
+    """
     from data import build_link_datasets, build_plaquette_datasets
 
     if seed is not None:
@@ -114,7 +123,8 @@ def full_pipeline(
         else build_link_datasets
     )
     train_dataset, val_dataset, test_dataset = builder(
-        N, D, L, group=group, beta=beta, splits=splits, structured=False
+        N, D, L, group=group, beta=beta, splits=splits, structured=False,
+        sampler=sampler, n_therm=n_therm, n_skip=n_skip,
     )
 
     train_loader = torch.utils.data.DataLoader(

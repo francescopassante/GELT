@@ -127,7 +127,39 @@ def metropolis_sweep(
     return U, total_accepted / total_proposed
 
 
-def generate_ensemble(
+def haar_ensemble(
+    L: int,
+    D: int,
+    group: GaugeGroup,
+    beta: float,
+    n_configs: int,
+    n_therm: int = 0,
+    n_skip: int = 1,
+    sweep_fn=None,
+    dtype: torch.dtype = torch.float32,
+    device: Optional[torch.device] = None,
+) -> Tuple[torch.Tensor, float, List[float]]:
+    """Haar-uniform ensemble — no dynamics, ignores beta.
+
+    Shares the sampler interface with ``mcmc_ensemble`` so it can be passed
+    as ``sampler=haar_ensemble`` anywhere a sampler callable is expected.
+    Useful as a baseline or for architecture sanity-checks before MC is set up.
+    """
+    configs = torch.stack([random_links(L, D, group, dtype=dtype) for _ in range(n_configs)])
+    return configs, 1.0, []
+
+
+# Registry: maps GaugeGroup subclass → default sweep function.
+# Add one line here when a new group/algorithm pair is ready.
+_SWEEP_FN: dict = {
+    Z2: metropolis_sweep,
+    # U1:  heatbath_sweep,   ← future
+    # SU2: heatbath_sweep,
+    # SU3: cabibbo_marinari_sweep,
+}
+
+
+def mcmc_ensemble(
     L: int,
     D: int,
     group: GaugeGroup,
@@ -135,6 +167,7 @@ def generate_ensemble(
     n_configs: int,
     n_therm: int = 200,
     n_skip: int = 5,
+    sweep_fn=None,
     dtype: torch.dtype = torch.float32,
     device: Optional[torch.device] = None,
 ) -> Tuple[torch.Tensor, float, List[float]]:
@@ -151,15 +184,30 @@ def generate_ensemble(
     n_configs : number of configurations to collect
     n_therm   : thermalisation sweeps before collection begins
     n_skip    : sweeps between collected configurations (decorrelation)
-    dtype, device : passed to ``random_links`` / sweep
+    sweep_fn  : single-sweep callable ``(U, group, beta) → (U_new, acc)``.
+                If ``None``, dispatches automatically via ``_SWEEP_FN[type(group)]``.
+                To pin a custom sweep from a call site that only accepts a sampler
+                argument, use ``functools.partial``::
+
+                    sampler = functools.partial(mcmc_ensemble, sweep_fn=my_sweep)
+                    full_pipeline(..., sampler=sampler)
+    dtype, device : passed to ``random_links``
 
     Returns
     -------
     (configs, mean_acceptance, action_history)
         ``configs``        : ``(n_configs, D, *Λ, nc, nc)`` on CPU
-        ``mean_acceptance``: mean Metropolis acceptance rate over production run
+        ``mean_acceptance``: mean acceptance rate over production run
         ``action_history`` : action S at every sweep (thermalisation + production)
     """
+    if sweep_fn is None:
+        sweep_fn = _SWEEP_FN.get(type(group))
+        if sweep_fn is None:
+            raise NotImplementedError(
+                f"No sweep function registered for {type(group).__name__}. "
+                f"Pass sweep_fn= explicitly or add an entry to sampler._SWEEP_FN."
+            )
+
     if device is None:
         if torch.cuda.is_available():
             device = torch.device("cuda")
@@ -173,13 +221,13 @@ def generate_ensemble(
     action_history = []
 
     for _ in range(n_therm):
-        U, _ = metropolis_sweep(U, group, beta)
+        U, _ = sweep_fn(U, group, beta)
         action_history.append(action(U, group, beta).cpu().item())
 
     configs: List[torch.Tensor] = []
     acc_rates: List[float] = []
     for i in range(n_configs * n_skip):
-        U, acc = metropolis_sweep(U, group, beta)
+        U, acc = sweep_fn(U, group, beta)
         action_history.append(action(U, group, beta).cpu().item())
         if (i + 1) % n_skip == 0:
             configs.append(U.cpu())

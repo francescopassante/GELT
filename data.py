@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Sequence
 
 import torch
 from torch.utils.data import TensorDataset, random_split
@@ -10,9 +10,8 @@ from lattice import (
     as_ml_input,
     as_ml_plaquettes,
     plaquette_tensor,
-    random_links,
 )
-from sampler import generate_ensemble
+from sampler import mcmc_ensemble
 
 
 def build_link_datasets(
@@ -21,22 +20,30 @@ def build_link_datasets(
     L: int,
     group: GaugeGroup,
     beta: float = 1.0,
+    n_therm: int = 200,
+    n_skip: int = 5,
+    sampler=None,
     splits: Sequence[float] = (0.7, 0.15, 0.15),
     save: bool = False,
     dtype: torch.dtype = torch.float32,
     structured: bool = True,
 ):
-    """Dataset of (link configuration, action).
+    """Dataset of (link config, action).
 
-    ``structured=True``(default) : X shape ``(N, D, *Λ, nc, nc)`` — full matrix layout, for G-GAT.
-    ``structured=False`` : X shape ``(N, D · nc², *Λ)`` — flattened color axes, for CNN.
+    ``sampler`` : ensemble-generator callable with the same signature as
+    ``mcmc_ensemble``.  Defaults to ``mcmc_ensemble`` (Metropolis MC).
+    Pass ``sampler=haar_ensemble`` for Haar-uniform configurations.
+
+    ``structured=True`` (default): X shape ``(N, D, *Λ, nc, nc)`` — full matrix layout, for G-GAT.
+    ``structured=False``         : X shape ``(N, D · nc², *Λ)``    — flattened color axes, for CNN.
     """
-    Xs, ys = [], []
-    for _ in range(N):
-        U = random_links(L, D, group, dtype=dtype)
-        Xs.append(U if structured else as_ml_input(U))
-        ys.append(action(U, group, beta=beta))
-    X, y = torch.stack(Xs), torch.stack(ys)
+    if sampler is None:
+        sampler = mcmc_ensemble
+    configs, _, _ = sampler(
+        L, D, group, beta, N, n_therm=n_therm, n_skip=n_skip, dtype=dtype
+    )
+    X = configs if structured else torch.stack([as_ml_input(c) for c in configs])
+    y = torch.stack([action(c, group, beta=beta) for c in configs])
 
     prefix = _dataset_prefix(
         group.name.lower(), "link", L, D, N, beta, dtype, structured
@@ -50,82 +57,37 @@ def build_plaquette_datasets(
     L: int,
     group: GaugeGroup,
     beta: float = 1.0,
+    n_therm: int = 200,
+    n_skip: int = 5,
+    sampler=None,
     splits: Sequence[float] = (0.7, 0.15, 0.15),
     save: bool = False,
     dtype: torch.dtype = torch.float32,
     structured: bool = False,
 ):
-    """Dataset of (plaquette configuration, action).
+    """Dataset of (plaquette config, action).
+
+    ``sampler`` : ensemble-generator callable with the same signature as
+    ``mcmc_ensemble``.  Defaults to ``mcmc_ensemble`` (Metropolis MC).
+    Pass ``sampler=haar_ensemble`` for Haar-uniform configurations.
 
     ``structured=False`` (default): X shape ``(N, n_pairs · nc², *Λ)`` — flattened color axes, for CNN.
-    ``structured=True``: X shape ``(N, n_pairs, *Λ, nc, nc)`` — full matrix layout, for G-GAT.
+    ``structured=True``            : X shape ``(N, n_pairs, *Λ, nc, nc)`` — full matrix layout, for G-GAT.
     """
-    Xs, ys = [], []
-    for _ in range(N):
-        U = random_links(L, D, group, dtype=dtype)
-        P = plaquette_tensor(U, group)
-        Xs.append(P if structured else as_ml_plaquettes(P))
-        ys.append(action(U, group, beta=beta, plaquettes=P))
-    X, y = torch.stack(Xs), torch.stack(ys)
+    if sampler is None:
+        sampler = mcmc_ensemble
+    configs, _, _ = sampler(
+        L, D, group, beta, N, n_therm=n_therm, n_skip=n_skip, dtype=dtype
+    )
+    Ps = torch.stack([plaquette_tensor(c, group) for c in configs])
+    X = Ps if structured else torch.stack([as_ml_plaquettes(p) for p in Ps])
+    y = torch.stack(
+        [action(configs[i], group, beta=beta, plaquettes=Ps[i]) for i in range(N)]
+    )
 
     prefix = _dataset_prefix(
         group.name.lower(), "plaquette", L, D, N, beta, dtype, structured
     )
-    return _split(X, y, splits, save, prefix=prefix)
-
-
-def build_mc_link_datasets(
-    N: int,
-    D: int,
-    L: int,
-    group: GaugeGroup,
-    beta: float = 1.0,
-    n_therm: int = 200,
-    n_skip: int = 5,
-    splits: Sequence[float] = (0.7, 0.15, 0.15),
-    save: bool = False,
-    seed: Optional[int] = None,
-    dtype: torch.dtype = torch.float32,
-    structured: bool = True,
-):
-    """Dataset of (link config, action) drawn from the Boltzmann distribution.
-
-    Replaces Haar-random sampling with Metropolis MC at inverse coupling ``beta``.
-    Same interface as ``build_link_datasets`` except ``seed`` controls the MC chain.
-    """
-    configs, _ = generate_ensemble(
-        L, D, group, beta, N, n_therm=n_therm, n_skip=n_skip, seed=seed, dtype=dtype,
-    )  # (N, D, *Λ, nc, nc)
-    X = configs if structured else torch.stack([as_ml_input(c) for c in configs])
-    y = torch.stack([action(c, group, beta=beta) for c in configs])
-
-    prefix = _dataset_prefix(group.name.lower(), "mc_link", L, D, N, beta, dtype, structured)
-    return _split(X, y, splits, save, prefix=prefix)
-
-
-def build_mc_plaquette_datasets(
-    N: int,
-    D: int,
-    L: int,
-    group: GaugeGroup,
-    beta: float = 1.0,
-    n_therm: int = 200,
-    n_skip: int = 5,
-    splits: Sequence[float] = (0.7, 0.15, 0.15),
-    save: bool = False,
-    seed: Optional[int] = None,
-    dtype: torch.dtype = torch.float32,
-    structured: bool = False,
-):
-    """Dataset of (plaquette config, action) drawn from the Boltzmann distribution."""
-    configs, _ = generate_ensemble(
-        L, D, group, beta, N, n_therm=n_therm, n_skip=n_skip, seed=seed, dtype=dtype,
-    )  # (N, D, *Λ, nc, nc)
-    Ps = torch.stack([plaquette_tensor(c, group) for c in configs])
-    X  = Ps if structured else torch.stack([as_ml_plaquettes(p) for p in Ps])
-    y  = torch.stack([action(configs[i], group, beta=beta, plaquettes=Ps[i]) for i in range(N)])
-
-    prefix = _dataset_prefix(group.name.lower(), "mc_plaquette", L, D, N, beta, dtype, structured)
     return _split(X, y, splits, save, prefix=prefix)
 
 

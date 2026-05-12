@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from lattice import Z2, plaquette_tensor
-from sampler import generate_ensemble, _re_tr
+from sampler import mcmc_ensemble, _re_tr
 
 group = Z2()
 
@@ -42,7 +42,7 @@ def _plaq_stats(configs):
 print("1/4  Thermalization histories …")
 therm: dict = {}
 for beta in [0.2, 0.5, 0.8, 1.2]:
-    _, _, hist = generate_ensemble(
+    _, _, hist = mcmc_ensemble(
         L=8, D=2, group=group, beta=beta, n_configs=1, n_therm=400, n_skip=1
     )
     n_plaq = 8**2
@@ -53,7 +53,7 @@ print("2/4  2D β-scan …")
 scan2: dict = {L: ([], []) for L in LS_2D}
 for L in LS_2D:
     for b in BETAS_2D:
-        cfgs, _, _ = generate_ensemble(
+        cfgs, _, _ = mcmc_ensemble(
             L=L, D=2, group=group, beta=float(b),
             n_configs=N_CONFIGS, n_therm=N_THERM, n_skip=N_SKIP,
         )
@@ -67,7 +67,7 @@ print("3/4  3D β-scan …")
 scan3: dict = {L: ([], []) for L in LS_3D}
 for L in LS_3D:
     for b in BETAS_3D:
-        cfgs, _, _ = generate_ensemble(
+        cfgs, _, _ = mcmc_ensemble(
             L=L, D=3, group=group, beta=float(b),
             n_configs=N_CONFIGS, n_therm=N_THERM, n_skip=N_SKIP,
         )
@@ -84,7 +84,7 @@ print("4/4  Autocorrelation …")
 AC_BETA   = 0.8
 N_AC      = 1000
 MAX_LAG   = 50
-_, _, full_hist = generate_ensemble(
+_, _, full_hist = mcmc_ensemble(
     L=8, D=2, group=group, beta=AC_BETA,
     n_configs=N_AC, n_therm=200, n_skip=1,
 )

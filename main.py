@@ -15,15 +15,18 @@ if __name__ == "__main__":
         N=N,
         model=model,
         group=Z2(),
+        beta=0.8,
         splits=(0.7, 0.15, 0.15),
-        lr=1e-5,
-        epochs=300,
+        lr=1e-4,
+        epochs=400,
         patience=10,
         plots=True,
         verbose=True,
         input="plaquettes",
         seed=0,
         checkpoint_path=f"best_model_L{int(L)}.pth",
+        n_therm=200,
+        n_skip=5,
     )
     test_loss = result["test_loss"]
     test_label_var = result["test_label_var"]
