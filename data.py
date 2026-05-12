@@ -1,12 +1,11 @@
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Sequence
 
 import torch
 from torch.utils.data import TensorDataset, random_split
 
 from lattice import (
     GaugeGroup,
-    Z2,
     action,
     as_ml_input,
     as_ml_plaquettes,
@@ -19,76 +18,93 @@ def build_link_datasets(
     N: int,
     D: int,
     L: int,
-    group: Optional[GaugeGroup] = None,
+    group: GaugeGroup,
     beta: float = 1.0,
     splits: Sequence[float] = (0.7, 0.15, 0.15),
     save: bool = False,
-    seed: Optional[int] = None,
     dtype: torch.dtype = torch.float32,
+    structured: bool = True,
 ):
-    """Dataset of (link configuration, action). X shape ``(N, D · nc², *Λ)``."""
-    group = group if group is not None else Z2()
-    generator = _make_generator(seed)
+    """Dataset of (link configuration, action).
 
-    sample_x = as_ml_input(random_links(L, D, group, generator, dtype=dtype))
-    X = torch.zeros((N,) + sample_x.shape, dtype=sample_x.dtype)
-    y = torch.zeros(N, dtype=dtype)
+    ``structured=True``(default) : X shape ``(N, D, *Λ, nc, nc)`` — full matrix layout, for G-GAT.
+    ``structured=False`` : X shape ``(N, D · nc², *Λ)`` — flattened color axes, for CNN.
+    """
+    Xs, ys = [], []
+    for _ in range(N):
+        U = random_links(L, D, group, dtype=dtype)
+        Xs.append(U if structured else as_ml_input(U))
+        ys.append(action(U, group, beta=beta))
+    X, y = torch.stack(Xs), torch.stack(ys)
 
-    # Reset generator so iteration 0 is reproducible (we already drew a sample above).
-    generator = _make_generator(seed)
-    for i in range(N):
-        U = random_links(L, D, group, generator, dtype=dtype)
-        X[i] = as_ml_input(U)
-        y[i] = action(U, group, beta=beta)
-
-    return _split(X, y, splits, save, prefix=f"{group.name.lower()}_link", generator=generator)
+    prefix = _dataset_prefix(
+        group.name.lower(), "link", L, D, N, beta, dtype, structured
+    )
+    return _split(X, y, splits, save, prefix=prefix)
 
 
 def build_plaquette_datasets(
     N: int,
     D: int,
     L: int,
-    group: Optional[GaugeGroup] = None,
+    group: GaugeGroup,
     beta: float = 1.0,
     splits: Sequence[float] = (0.7, 0.15, 0.15),
     save: bool = False,
-    seed: Optional[int] = None,
     dtype: torch.dtype = torch.float32,
+    structured: bool = False,
 ):
-    """Dataset of (plaquette configuration, action). X shape ``(N, n_pairs · nc², *Λ)``."""
-    group = group if group is not None else Z2()
-    generator = _make_generator(seed)
+    """Dataset of (plaquette configuration, action).
 
-    sample_x = as_ml_plaquettes(
-        plaquette_tensor(random_links(L, D, group, generator, dtype=dtype), group)
-    )
-    X = torch.zeros((N,) + sample_x.shape, dtype=sample_x.dtype)
-    y = torch.zeros(N, dtype=dtype)
-
-    generator = _make_generator(seed)
-    for i in range(N):
-        U = random_links(L, D, group, generator, dtype=dtype)
+    ``structured=False`` (default): X shape ``(N, n_pairs · nc², *Λ)`` — flattened color axes, for CNN.
+    ``structured=True``: X shape ``(N, n_pairs, *Λ, nc, nc)`` — full matrix layout, for G-GAT.
+    """
+    Xs, ys = [], []
+    for _ in range(N):
+        U = random_links(L, D, group, dtype=dtype)
         P = plaquette_tensor(U, group)
-        X[i] = as_ml_plaquettes(P)
-        y[i] = action(U, group, beta=beta, plaquettes=P)
+        Xs.append(P if structured else as_ml_plaquettes(P))
+        ys.append(action(U, group, beta=beta, plaquettes=P))
+    X, y = torch.stack(Xs), torch.stack(ys)
 
-    return _split(X, y, splits, save, prefix=f"{group.name.lower()}_plaquette", generator=generator)
-
-
-def _make_generator(seed: Optional[int]) -> torch.Generator:
-    g = torch.Generator()
-    if seed is not None:
-        g.manual_seed(seed)
-    return g
+    prefix = _dataset_prefix(
+        group.name.lower(), "plaquette", L, D, N, beta, dtype, structured
+    )
+    return _split(X, y, splits, save, prefix=prefix)
 
 
-def _split(X, y, splits, save, prefix, generator):
+def _dataset_prefix(
+    group_name: str,
+    kind: str,
+    L: int,
+    D: int,
+    N: int,
+    beta: float,
+    dtype: torch.dtype,
+    structured: bool,
+) -> str:
+    dtype_tag = str(dtype).replace("torch.", "")
+    layout = "structured" if structured else "flat"
+    return f"{group_name}_{kind}_L{L}_D{D}_N{N}_beta{beta}_dtype{dtype_tag}_{layout}"
+
+
+def _split(X, y, splits, save, prefix):
+    if len(splits) != 3 or any(s <= 0 for s in splits):
+        raise ValueError(f"Expected three positive split fractions, got {splits}.")
+
     full = TensorDataset(X, y)
-    train, val, test = random_split(full, list(splits), generator=generator)
+    train, val, test = random_split(full, list(splits))
+
     if save:
         out_dir = Path("datasets")
         out_dir.mkdir(exist_ok=True)
-        torch.save(train, out_dir / f"train_dataset_{prefix}.pt")
-        torch.save(val, out_dir / f"val_dataset_{prefix}.pt")
-        torch.save(test, out_dir / f"test_dataset_{prefix}.pt")
+
+        train_ds = TensorDataset(X[train.indices], y[train.indices])
+        val_ds = TensorDataset(X[val.indices], y[val.indices])
+        test_ds = TensorDataset(X[test.indices], y[test.indices])
+
+        torch.save(train_ds, out_dir / f"train_dataset_{prefix}.pt")
+        torch.save(val_ds, out_dir / f"val_dataset_{prefix}.pt")
+        torch.save(test_ds, out_dir / f"test_dataset_{prefix}.pt")
+
     return train, val, test

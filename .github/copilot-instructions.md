@@ -38,6 +38,5 @@ Design documents (`gauge_invariant_NN_review.md`, `architecture.md`, `roadmap.md
 - Use explicit matrix algebra everywhere: `A @ B` for products and `group.dagger(...)` for inverses/conjugate-transpose.
 - Periodic boundary conditions are implemented with `torch.roll`; do not replace with manual modulo indexing.
 - Wilson action convention is fixed: `S = beta * sum_p(1 - Re Tr(P_p)/nc)`.
-- Reproducibility is seed-driven (`torch.Generator` and explicit `seed` threading through data/training entry points).
 - `LatticeCNN` is intentionally **2D-only** (`Conv2d`, raises for `D != 2`) and serves as a non-equivariant baseline.
 - Current datasets are Haar-random link configurations; a Metropolis/heat-bath MC data path is still a pending milestone.

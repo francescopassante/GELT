@@ -61,7 +61,7 @@ result. See "Why the saved L-scan losses are not signal" below.
 
 - **`lattice.py`** — `GaugeGroup` ABC + `Z2` implementation; pure tensor
   functions:
-  - `random_links(L, D, group, generator, dtype)` → `(D, *Λ, nc, nc)`.
+  - `random_links(L, D, group, dtype)` → `(D, *Λ, nc, nc)`.
   - `plaquette_tensor(U, group)` → `(D(D-1)/2, *Λ, nc, nc)`.
   - `action(U, group, beta=1.0, plaquettes=None)` → scalar Wilson action
     `β Σ_p (1 − Re Tr P / nc)`.
@@ -69,8 +69,8 @@ result. See "Why the saved L-scan losses are not signal" below.
     axes for ML input. Real groups give `(D · nc², *Λ)`; complex groups
     split real/imag, giving `(2 · D · nc², *Λ)`.
 - **`data.py`** — `build_link_datasets`, `build_plaquette_datasets`. Take
-  `seed`, `dtype`, `group`, `beta`. Reproducible via a seeded
-  `torch.Generator` threaded through `random_split`. `save=True` writes
+  `seed`, `dtype`, `group`, `beta`. 
+  `save=True` writes
   to `datasets/`.
 - **`model.py`** — `LatticeCNN(L, D, in_channels, hidden_channels)`.
   CNN baseline only; circular-padded `Conv2d`. Not gauge-equivariant —
@@ -108,9 +108,6 @@ result. See "Why the saved L-scan losses are not signal" below.
   dataset builders for high-precision gauge-invariance unit tests once
   `gauge_transform` exists. Worst-case-Ω stress tests (`architecture.md`
   §7.2) should report drift in double precision.
-- **Reproducibility:** every entry point that consumes randomness threads
-  a `seed` through `torch.Generator`. Pre-refactor runs that didn't pass
-  a seed cannot be reproduced — re-run them with `seed=` if needed.
 
 ## Running
 

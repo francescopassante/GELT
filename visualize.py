@@ -14,7 +14,9 @@ def visualize_lattice(U: torch.Tensor, title: str = None):
     if U.ndim == 5:
         # (D, L, L, 1, 1) → (D, L, L)
         U = U.squeeze(-1).squeeze(-1)
-    assert U.ndim == 3 and U.shape[0] == 2, f"Expected shape (2, L, L); got {tuple(U.shape)}"
+    assert U.ndim == 3 and U.shape[0] == 2, (
+        f"Expected shape (2, L, L); got {tuple(U.shape)}"
+    )
 
     L = U.shape[1]
     fig, ax = plt.subplots(figsize=(max(4, L), max(4, L)))
@@ -43,6 +45,5 @@ def visualize_lattice(U: torch.Tensor, title: str = None):
 if __name__ == "__main__":
     from lattice import Z2, random_links
 
-    g = torch.Generator().manual_seed(0)
-    U = random_links(L=5, D=2, group=Z2(), generator=g)
+    U = random_links(L=5, D=2, group=Z2())
     visualize_lattice(U)

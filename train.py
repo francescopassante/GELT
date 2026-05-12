@@ -1,4 +1,3 @@
-from collections import namedtuple
 from typing import Optional, Sequence
 
 import torch
@@ -6,13 +5,7 @@ import torch.nn as nn
 import torch.optim as optim
 from tqdm import tqdm
 
-from lattice import GaugeGroup, Z2
-from model import LatticeCNN
-
-TrainResult = namedtuple(
-    "TrainResult",
-    ["test_loss", "test_label_var", "test_r2", "epochs", "train_losses", "val_losses"],
-)
+from lattice import GaugeGroup
 
 
 def train_model(
@@ -35,6 +28,7 @@ def train_model(
     for epoch in range(epochs):
         model.train()
         train_loss = 0.0
+        train_count = 0
         wrap = tqdm if verbose else (lambda x: x)
         for inputs, targets in wrap(train_loader):
             inputs, targets = inputs.to(device), targets.to(device)
@@ -43,21 +37,26 @@ def train_model(
             loss = criterion(outputs, targets)
             loss.backward()
             optimizer.step()
-            train_loss += loss.item()
+            batch_size = targets.shape[0]
+            train_loss += loss.item() * batch_size
+            train_count += batch_size
 
-        train_loss /= len(train_loader)
+        train_loss /= train_count
         train_losses.append(train_loss)
 
         model.eval()
         val_loss = 0.0
+        val_count = 0
         with torch.no_grad():
             for inputs, targets in wrap(val_loader):
                 inputs, targets = inputs.to(device), targets.to(device)
                 outputs = model(inputs)
                 loss = criterion(outputs, targets)
-                val_loss += loss.item()
+                batch_size = targets.shape[0]
+                val_loss += loss.item() * batch_size
+                val_count += batch_size
 
-        val_loss /= len(val_loader)
+        val_loss /= val_count
         val_losses.append(val_loss)
 
         if val_loss < best_val_loss:
@@ -84,8 +83,8 @@ def full_pipeline(
     L: int,
     D: int,
     N: int,
-    hidden_channels: Sequence[int],
-    group: Optional[GaugeGroup] = None,
+    model: nn.Module,
+    group: GaugeGroup,
     beta: float = 1.0,
     splits: Sequence[float] = (0.7, 0.15, 0.15),
     lr: float = 1e-3,
@@ -94,30 +93,40 @@ def full_pipeline(
     plots: bool = False,
     verbose: bool = True,
     input: str = "plaquette",
+    batch_size: int = 32,
     seed: Optional[int] = None,
     checkpoint_path: str = "best_model.pth",
-) -> TrainResult:
+) -> dict:
     from data import build_link_datasets, build_plaquette_datasets
-
-    group = group if group is not None else Z2()
 
     if seed is not None:
         torch.manual_seed(seed)
 
-    builder = build_plaquette_datasets if input.lower() == "plaquette" else build_link_datasets
+    input_key = input.lower()
+    if input_key not in {"plaquette", "plaquettes", "link", "links"}:
+        raise ValueError(
+            "input must be one of: 'plaquette', 'plaquettes', 'link', 'links'."
+        )
+
+    builder = (
+        build_plaquette_datasets
+        if input_key in {"plaquette", "plaquettes"}
+        else build_link_datasets
+    )
     train_dataset, val_dataset, test_dataset = builder(
-        N, D, L, group=group, beta=beta, splits=splits, seed=seed
+        N, D, L, group=group, beta=beta, splits=splits, structured=False
     )
 
-    # Derive in_channels from the actual data instead of hard-coding it.
-    sample_x, _ = train_dataset[0]
-    in_channels = sample_x.shape[0]
+    train_loader = torch.utils.data.DataLoader(
+        train_dataset, batch_size=batch_size, shuffle=True
+    )
+    val_loader = torch.utils.data.DataLoader(
+        val_dataset, batch_size=batch_size, shuffle=False
+    )
+    test_loader = torch.utils.data.DataLoader(
+        test_dataset, batch_size=batch_size, shuffle=False
+    )
 
-    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=32, shuffle=True)
-    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=32, shuffle=False)
-    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=32, shuffle=False)
-
-    model = LatticeCNN(L, D, in_channels=in_channels, hidden_channels=hidden_channels)
     device = torch.device(
         "cuda"
         if torch.cuda.is_available()
@@ -142,10 +151,13 @@ def full_pipeline(
         checkpoint_path=checkpoint_path,
     )
 
-    model.load_state_dict(torch.load(checkpoint_path, weights_only=True))
+    model.load_state_dict(
+        torch.load(checkpoint_path, map_location=device, weights_only=True)
+    )
     model.eval()
 
     test_loss = 0.0
+    test_count = 0
     all_targets = []
     all_outputs = []
     with torch.no_grad():
@@ -154,11 +166,13 @@ def full_pipeline(
             inputs, targets = inputs.to(device), targets.to(device)
             outputs = model(inputs)
             loss = criterion(outputs, targets)
-            test_loss += loss.item()
+            batch_size = targets.shape[0]
+            test_loss += loss.item() * batch_size
+            test_count += batch_size
             all_targets.append(targets.cpu())
             all_outputs.append(outputs.cpu())
 
-    test_loss /= len(test_loader)
+    test_loss /= test_count
     all_targets = torch.cat(all_targets)
     all_outputs = torch.cat(all_outputs)
     # Population variance of the labels — the natural scale to normalise MSE by.
@@ -192,11 +206,11 @@ def full_pipeline(
         plt.grid(True)
         plt.show()
 
-    return TrainResult(
-        test_loss=test_loss,
-        test_label_var=test_label_var,
-        test_r2=test_r2,
-        epochs=full_epochs,
-        train_losses=train_losses,
-        val_losses=val_losses,
-    )
+    return {
+        "test_loss": test_loss,
+        "test_label_var": test_label_var,
+        "test_r2": test_r2,
+        "epochs": full_epochs,
+        "train_losses": train_losses,
+        "val_losses": val_losses,
+    }

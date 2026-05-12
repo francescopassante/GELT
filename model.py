@@ -2,7 +2,6 @@ from typing import Sequence
 
 import torch
 import torch.nn as nn
-from torchsummary import summary
 
 
 class LatticeCNN(nn.Module):
@@ -12,7 +11,14 @@ class LatticeCNN(nn.Module):
     architecture is compared.
     """
 
-    def __init__(self, L: int, D: int, in_channels: int, hidden_channels: Sequence[int]):
+    def __init__(
+        self,
+        L: int,
+        D: int,
+        in_channels: int,
+        hidden_channels: Sequence[int],
+        kernel_size: int = 3,
+    ):
         super().__init__()
         if D != 2:
             raise NotImplementedError("LatticeCNN currently uses Conv2d (D=2 only).")
@@ -24,9 +30,15 @@ class LatticeCNN(nn.Module):
         layers = []
         for chan_in, chan_out in zip(channels, channels[1:]):
             layers.append(
-                nn.Conv2d(chan_in, chan_out, kernel_size=3, padding=1, padding_mode="circular")
+                nn.Conv2d(
+                    chan_in,
+                    chan_out,
+                    kernel_size=kernel_size,
+                    padding=1,
+                    padding_mode="circular",
+                )
             )
-            layers.append(nn.ReLU())
+        layers.append(nn.ReLU())
         layers.append(nn.Flatten())
         self.conv = nn.Sequential(*layers)
 
@@ -48,6 +60,8 @@ class LatticeCNN(nn.Module):
 
 
 if __name__ == "__main__":
+    from torchsummary import summary
+
     L = 5
     D = 2
     in_channels = 2  # D=2 link channels for Z₂

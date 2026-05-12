@@ -113,19 +113,21 @@ def action(
     group
         Gauge group (used to compute plaquettes if needed).
     beta
-        Coupling. Default 1.0 reproduces the unnormalised ``n_plaq − Σ P`` form
-        used by the original baseline experiments.
+        Coupling.
     plaquettes
         Pre-computed plaquette tensor; if ``None`` it is computed from ``U``.
     """
     P = plaquettes if plaquettes is not None else plaquette_tensor(U, group)
     re_tr_over_nc = P.diagonal(dim1=-2, dim2=-1).sum(dim=-1).real / group.nc
     n_plaq = re_tr_over_nc.numel()
+    # equivalent to beta (sum_p 1 - P_p)
     return beta * (n_plaq - re_tr_over_nc.sum())
 
 
 def as_ml_input(U: torch.Tensor) -> torch.Tensor:
     """Flatten a link tensor ``(D, *Λ, nc, nc)`` into ML input ``(C, *Λ)``.
+
+    Used for non-equivariant models only (breaks group structure by collapsing everything)
 
     Real groups: ``C = D · nc²``.
     Complex groups: ``C = 2 · D · nc²`` (real and imaginary parts as separate channels).
