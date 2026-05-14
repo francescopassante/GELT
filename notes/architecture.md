@@ -2,10 +2,14 @@
 
 This document specifies a gauge-equivariant transformer / graph-attention
 architecture for SU(N_c) lattice gauge theory. It follows the L-CNN framework
-(arXiv:2012.12901) for primitives and gauge-equivariance proofs, but replaces
-the L-Conv + L-Bilin stack with an attention block whose **value path is
-matrix-bilinear** (not just scalar-weighted), so that L-CNN's loop-doubling
-universality argument transfers directly.
+(arXiv:2012.12901) for primitives and gauge-equivariance proofs, but with
+two departures: (i) the L-Conv + L-Bilin stack is replaced by an attention
+block whose **value path is matrix-bilinear** (not just scalar-weighted),
+so that L-CNN's loop-doubling universality argument transfers directly;
+(ii) parallel transport between sites is **averaged over all shortest
+lattice paths** rather than fixed to a single axis-aligned path, so each
+block already reaches the full L1-ball receptive field with non-axis-aligned
+loop content.
 
 The reader is expected to have read `gauge_invariant_NN_review.md` in this
 directory (especially Sec. 0 and Sec. 1). Equation references like "Eq. 5"
@@ -98,11 +102,19 @@ that loop area roughly doubles per block (same scaling rule as L-CB:
 |--------|----------------------------------------------------------|
 | `H`    | number of attention heads                                |
 | `d`    | per-head channel dimension (so total channels = H · d)   |
-| `R`    | attention range (max axis offset; receptive field = 2R+1 along each axis) |
-| `paths`| set of allowed (axis μ, signed offset k) for k ∈ [−R, R], k ≠ 0 |
+| `R`    | attention range — Manhattan radius of the receptive field (L1-ball) |
+| `offsets` | set of allowed lattice offsets `Δx ∈ Z^(D+1)` with `0 < |Δx|_1 ≤ R`, where `|Δx|_1 = Σ_μ |Δx_μ|` |
 
-Receptive field is axis-aligned only — same path-convention as L-Conv (no
-diagonal patches). Number of neighbors per site: `|paths| = (D+1) · 2R`.
+Receptive field is the full L1-ball — diagonal and multi-axis offsets are
+included, with parallel transport averaged over all shortest paths
+(Sec. 3.3). Offset count in D+1 = 4 (generating function `[(1+z)/(1-z)]⁴`):
+
+| R | non-origin offsets `\|Δx\|_1 ≤ R` |
+|---|---|
+| 1 | 8   |
+| 2 | 40  |
+| 3 | 128 |
+| 4 | 320 |
 
 ### 3.2 On-site channel projections (Q, K, V)
 
@@ -123,25 +135,62 @@ Implementation: a single `einsum("hajc,bjcxyz...mn->bhaxyz...mn", w, W̃)`
 contraction per Q/K/V, where `c` indexes channels and `x y z...` are lattice
 axes; `m n` are color indices.
 
-### 3.3 Parallel transport along axis paths
+### 3.3 Parallel transport: average over shortest paths
 
-For a neighbor `y = x + k·μ̂` with `k > 0`, the straight-line transport from
-`x` to `y` is
+For a neighbor `y = x + Δx`, parallel transport from x to y depends on
+which lattice path you choose. A single fixed axis-aligned path (L-Conv's
+choice) is gauge-covariant but arbitrary; the **sum over all shortest
+lattice paths** is also gauge-covariant (sum of covariants), uses no
+direction preferentially, and is strictly more expressive per block. We
+adopt the unweighted sum:
 ```
-U_P(x → x + k·μ̂)  =  U_{x, μ} · U_{x+μ̂, μ} · ... · U_{x+(k−1)μ̂, μ}
+T_Δx(x)  =  Σ_{P : x → x+Δx, |P| = |Δx|_1}  U_P                 (gauge-covariant)
 ```
-For `k < 0`, use Hermitian conjugates of the preceding links. Cache these
-products per offset.
+with `|Δx|_1 = Σ_μ |Δx_μ|` the Manhattan length, and `U_P` the ordered
+product of links along path P. By linearity it transforms as
+`T_Δx(x) → Ω_x · T_Δx(x) · Ω†_{x+Δx}`.
+
+**Compute via DP, not enumeration.** The multinomial
+`|Δx|_1! / Π_μ |Δx_μ|!` paths fold into a recursion on the first step:
+```
+T_Δx(x)  =  Σ_{μ : Δx_μ > 0}  U_{x, μ}  ·  T_{Δx − μ̂}(x + μ̂)
+```
+Build `T_Δx` over the lattice for all Δx in the positive octant of the
+L1-ball, in order of increasing `|Δx|_1`. Cost per new offset: ≤ D+1
+matmuls per site, irrespective of path count.
+
+**Octant trick.** Negative-octant transports are obtained from the
+positive-octant table by
+```
+T_{−Δx}(x)  =  dagger( T_Δx(x − Δx) )
+```
+Cuts compute and memory by ~2^(D+1).
 
 Transport K and V back to x:
 ```
-K̃_{y→x, h, a}  =  U_P(x→y) · K_{y, h, a} · U†_P(x→y)
-Ṽ_{y→x, h, a}  =  U_P(x→y) · V_{y, h, a} · U†_P(x→y)
+K̃_{Δx → x, h, a}  =  T_Δx(x) · K_{x + Δx, h, a} · T†_Δx(x)
+Ṽ_{Δx → x, h, a}  =  T_Δx(x) · V_{x + Δx, h, a} · T†_Δx(x)
 ```
-Both transform as `Ω_x · ( · ) · Ω†_x` — locally covariant *at site x*.
+Both are locally covariant at x.
 
-Implementation hint: compute `U_P` once per offset `(μ, k)` and reuse for
-both K and V. This is the bottleneck in 4D; consider a fused kernel.
+**Cost in 4D** (per block, complex64, N_c = 2; memory for storing all
+`T_Δx` in the positive octant — both K and V branches share this table):
+
+| Lattice  | R=2 (40 off.) | R=3 (128 off.) | R=4 (320 off.) |
+|----------|---------------|----------------|----------------|
+| 4⁴       | <1 MB         | <1 MB          | ~5 MB          |
+| 8⁴       | ~10 MB        | ~30 MB         | ~80 MB         |
+| 16⁴      | ~170 MB       | ~540 MB        | ~1.3 GB        |
+
+Multiply by batch size. **`R = 3` is the practical sweet spot** for
+lattices up through 16⁴; `R = 4` is feasible at ≤ 8⁴ but starts pushing
+memory at 16⁴. Don't go past `R = 4` — the second block's loop-doubling
+rule (Sec. 3.6) cheaply outgrows any single-block reach.
+
+Implementation hint: build `T_Δx` once per batch and reuse across all
+H heads and the K, V branches. This is the dominant cost in 4D and
+benefits substantially from `torch.compile` and from a single fused
+loop ordered by `|Δx|_1`.
 
 ### 3.4 Attention score (gauge invariant)
 
@@ -164,8 +213,11 @@ to `Re Tr[Q†_a · K̃_a]` for the standard Frobenius-style inner product.
 **Relative position bias.** Translation equivariance is automatic from
 weight sharing; per-offset learned scalars are still useful:
 ```
-s_{x → y, h}  +=  b_h(μ, k)        (scalar, real, trainable)
+s_{x → y, h}  +=  b_h(Δx)          (scalar, real, trainable)
 ```
+Optionally tie `b_h` across the lattice point group's orbit of Δx
+(90° rotations + parity) for discrete point-group equivariance at
+near-zero parameter cost — see §12.
 
 **On "identity at init" (CASK-style).** The block as a whole acts as the
 identity map at init through the residual (Sec 3.8) combined with small
@@ -254,33 +306,33 @@ def G_Attn_block(U, W_in, weights):
     K = einsum("haj,bjxmn->bhaxmn", weights.wK, W_aug)
     V = einsum("haj,bjxmn->bhaxmn", weights.wV, W_aug)
 
-    # 3.3 transport for each (μ, k) offset (k may be negative)
-    # link_product handles the sign of k:
-    #   k > 0:  U_P = U_{x,μ} · U_{x+μ̂,μ} · ... · U_{x+(k−1)μ̂,μ}
-    #   k < 0:  U_P = U†_{x−μ̂,μ} · U†_{x−2μ̂,μ} · ... · U†_{x+kμ̂,μ}
-    # so that Up @ X_{x+kμ̂} @ dagger(Up) is parallel-transported to x for either sign.
+    # 3.3 build shortest-path-averaged transport sums T_Δx for all
+    # Δx in the positive octant of the L1-ball of radius R, via DP
+    # ordered by |Δx|_1. Negative-octant transports derive as
+    # T_{-Δx}(x) = dagger(T_Δx(x - Δx)).
+    T = build_transport_sums(U, R)        # dict: Δx (tuple) -> (B, *Λ, Nc, Nc)
     scores = []
-    Vt    = []
-    for (mu, k) in paths:
-        Up = link_product(U, mu, k)                           # (B, *Λ, Nc, Nc)
-        K_shift = roll(K, axis=mu, shift=-k)                  # bring K_{x+kμ̂} to index x (either sign)
-        V_shift = roll(V, axis=mu, shift=-k)
-        Kt = Up @ K_shift @ dagger(Up)                        # parallel-transported K
-        Vt_off = Up @ V_shift @ dagger(Up)
+    Vt = []
+    for dx in offsets_in_L1_ball(D+1, R):  # all Δx with 0 < |Δx|_1 ≤ R
+        T_dx    = transport_sum(T, dx)     # uses octant trick + dagger for negatives
+        K_shift = roll_multi(K, shift=tuple(-d for d in dx))  # bring K_{x+Δx} to index x
+        V_shift = roll_multi(V, shift=tuple(-d for d in dx))
+        Kt      = T_dx @ K_shift @ dagger(T_dx)               # parallel-transported (averaged) K
+        Vt_off  = T_dx @ V_shift @ dagger(T_dx)
         # 3.4 score: contract a, take Re Tr
-        prod  = einsum("bhaxmn,bhaxnp->bhaxmp", Q, Kt)
-        s     = real(trace(prod, axes=(-2,-1))).sum(axis_a)   # (B, H, *Λ)
-        s    /= sqrt(Nc * d)
-        s    += weights.bias[mu, k]                           # relative position (no score subtraction; see 3.4)
+        prod    = einsum("bhaxmn,bhaxnp->bhaxmp", Q, Kt)
+        s       = real(trace(prod, axes=(-2,-1))).sum(axis_a) # (B, H, *Λ)
+        s      /= sqrt(Nc * d)
+        s      += weights.bias[orbit_of(dx)]  # point-group-tied relative position
         scores.append(s)
         Vt.append(Vt_off)
 
     # 3.5 softmax over offsets
-    alpha = softmax(stack(scores, axis=offset), axis=offset)  # (B, H, *Λ, |paths|)
+    alpha = softmax(stack(scores, axis=offset), axis=offset)  # (B, H, *Λ, |offsets|)
 
     # 3.6 multiplicative value path
     W_out_hd = zeros_like(Q)
-    for o, (mu, k) in enumerate(paths):
+    for o, dx in enumerate(offsets_in_L1_ball(D+1, R)):
         # Q · Ṽ is the bilinear; α is a scalar gain
         W_out_hd += alpha[..., o, None, None] * (Q @ Vt[o])
 
@@ -454,14 +506,18 @@ induction as L-CNN's Sec. 3.2 of the Letter:
 Quote this argument by reduction to L-CNN universality + softmax /
 tanh-attention as a special case of L-Act gating.
 
-**Caveat on loop shapes.** Because the path set is axis-aligned (Sec. 3.1),
-a single block extends loops in W by *straight* segments only. T-shapes,
-staples, and other non-rectangular loop contents only appear via stacking;
-after L blocks the receptive field over loop *shapes* is still composed
-of axis-aligned segments. This is strictly smaller than L-CB with general
-staples — it does not affect universality in the L → ∞ limit, but it does
-affect the constants at finite L. The "staple-shaped neighborhoods"
-variant in Sec. 12 recovers the L-CB shape space at extra cost per block.
+**Per-block loop content.** Because parallel transport is averaged over
+**all** shortest lattice paths in the L1-ball of radius R (Sec. 3.3), a
+single G-Attn block already produces W-channels that are linear
+combinations of every shortest-path loop closing within `|Δx|_1 ≤ R` of
+x — including all multi-axis and "corner" loops, not just rectangular
+ones. The `|Δx|_1! / Π_μ |Δx_μ|!` multinomial paths per offset all
+contribute (the DP folds them transparently). This recovers, per block,
+the non-axis-aligned loop content that L-CNN's axis-aligned L-Conv only
+reaches by stacking, and gives a strictly richer loop *shape* set per
+block than CASK's `s = 1..R` extended staples (which fix one ν direction
+per staple). Loop-doubling per block still holds via the bilinear `Q · Ṽ`
+product (Sec. 3.6).
 
 ---
 
@@ -495,8 +551,12 @@ Replicate L-CNN's benchmarks first to confirm the implementation is sound:
 
 Build in this order. Verify each step before moving on.
 
-1. Lattice utilities: roll-with-PBC, link-product `U_P(μ, k)` for arbitrary
-   `(μ, k)`, dagger.
+1. Lattice utilities: roll-with-PBC, dagger, and `build_transport_sums(U, R)`
+   — a DP routine that materialises the shortest-path-averaged transport
+   `T_Δx(x)` for every Δx in the positive octant of the L1-ball of radius
+   R (Sec. 3.3), in order of increasing `|Δx|_1`. Verify against brute-force
+   path enumeration for `|Δx|_1 ≤ 2` (40 offsets in 4D); test the octant
+   trick `T_{-Δx}(x) = dagger(T_Δx(x - Δx))` under a random gauge transform.
 2. Plaq, Poly, augment, Trace (fixed ops). Test each: apply random Ω, check
    transformation laws hold to machine precision.
 3. On-site Q/K/V projection. Test: `Q(T_Ω W̃) = T_Ω Q(W̃)`.
@@ -535,8 +595,15 @@ Build in this order. Verify each step before moving on.
 
 - **Decoupled output query** `Q'` (separate from score Q). +33% projection
   params, may help when the score and bilinear want different feature mixes.
-- **Staple-shaped neighborhoods** (CASK-style): replace axis-aligned paths
-  by 1×s extended staples. Adds rectangular loop content per block.
+- **CASK-style extended staples** as an alternative kernel: replace the
+  shortest-path-averaged transport by 1×s extended staples (one ν per
+  staple). Strictly less expressive per block than the L1-ball path
+  average (which mixes ν directions automatically), but useful as an
+  ablation since CASK is the closest published baseline.
+- **Single fixed shortest path** (L-CNN-style): replace `T_Δx` by one
+  chosen path per offset. Cheaper but breaks the discrete point-group
+  symmetry of the transport. Run as an ablation to isolate the
+  contribution of path-averaging vs the rest of the architecture.
 - **Tanh score** instead of softmax: sometimes more stable on small lattices.
 - **Multi-block residual stream à la pre-norm transformer**: separate the
   attention residual from the L-Act residual.
@@ -545,9 +612,10 @@ Build in this order. Verify each step before moving on.
 - **Point-group equivariance** (90° rotations + reflections of the
   hypercubic lattice). Translation equivariance is automatic from weight
   sharing; the discrete rotational/reflection group is not. Tie
-  `b_h(μ, k)` across the lattice point group's `(μ, k)` orbits (share
-  across all μ for rotation symmetry; share `+k`/`−k` for parity).
-  Expected to improve MSE on rotation-symmetric targets (Wilson loops,
-  topological charge) at zero parameter cost. Cheap to try after Sec. 9.1.
+  `b_h(Δx)` across the lattice point group's orbits of Δx (e.g. all 8
+  axis-aligned `|Δx|_1 = 1` offsets share one weight; all 24 corner
+  `|Δx|_1 = 2` offsets share one; etc.). Expected to improve MSE on
+  rotation-symmetric targets (Wilson loops, topological charge) at near-
+  zero parameter cost. Cheap to try after Sec. 9.1.
 
 Defer all of these until Sec. 9.1 passes.
