@@ -16,8 +16,9 @@ Conventions
 - Periodic boundary conditions throughout (``torch.roll`` for shifts).
 """
 
+import itertools
 from abc import ABC, abstractmethod
-from typing import Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import torch
 
@@ -183,3 +184,115 @@ def gauge_transformation(
         omega_shifted = torch.roll(omega, shifts=-1, dims=mu)  # Ω(x + μ̂)
         out.append(omega @ U[mu] @ group.dagger(omega_shifted))
     return torch.stack(out, dim=0)
+
+
+def l1_ball_offsets(D: int, R: int) -> List[Tuple[int, ...]]:
+    """All non-zero offsets Δx with |Δx|₁ ≤ R, sorted by L1 norm.
+
+    Parameters
+    ----------
+    D
+        Number of lattice directions.
+    R
+        Manhattan radius.
+
+    Returns
+    -------
+    List of offset tuples ``(Δx₀, …, Δx_{D-1})``, sorted so that entries
+    with smaller ``|Δx|₁`` come first (ties broken by lexicographic order).
+    The ordering guarantees that when building the DP table, every
+    sub-step offset ``Δx ± ê_μ`` is already present when ``Δx`` is reached.
+    """
+    return sorted(
+        (
+            dx
+            for dx in itertools.product(range(-R, R + 1), repeat=D)
+            if 0 < sum(abs(d) for d in dx) <= R
+        ),
+        key=lambda dx: sum(abs(d) for d in dx),
+    )
+
+
+def build_transport_sums(
+    U: torch.Tensor,
+    R: int,
+    group: GaugeGroup,
+) -> Dict[Tuple[int, ...], torch.Tensor]:
+    """Shortest-path-averaged parallel transports for all offsets 0 < |Δx|₁ ≤ R.
+
+    For each lattice offset Δx the returned tensor ``T_Δx`` has shape
+    ``(*Λ, nc, nc)`` and equals the **unweighted sum over all shortest lattice
+    paths** from x to x+Δx:
+
+        T_Δx(x)  =  Σ_{P : x→x+Δx, |P|=|Δx|₁}  U_P
+
+    This is gauge-covariant: under site-local Ω,
+
+        T_Δx(x)  →  Ω(x) · T_Δx(x) · Ω†(x+Δx)
+
+    Computed via the DP recursion (§3.3 of ``notes/architecture.md``):
+
+        T_Δx(x) = Σ_{μ : Δx_μ > 0}  U_μ(x)      · T_{Δx−ê_μ}(x+ê_μ)
+                + Σ_{μ : Δx_μ < 0}  U†_μ(x−ê_μ)  · T_{Δx+ê_μ}(x−ê_μ)
+
+    Offsets are processed in order of increasing |Δx|₁ so that every
+    sub-step is already in the table when needed.  The zero offset is used
+    as the DP base (identity matrix) and is not included in the output.
+
+    Parameters
+    ----------
+    U
+        Link tensor of shape ``(D, *Λ, nc, nc)``.
+    R
+        Manhattan radius; all offsets with ``0 < |Δx|₁ ≤ R`` are computed.
+    group
+        Gauge group — used for ``dagger`` on backward link steps.
+
+    Returns
+    -------
+    Dict mapping each non-zero offset tuple to a tensor of shape
+    ``(*Λ, nc, nc)``.
+    """
+    D = U.shape[0]
+    spatial_shape = U.shape[1:-2]
+    nc = U.shape[-1]
+
+    # Identity matrix tiled over the spatial volume — the zero-offset base case.
+    identity = (
+        torch.eye(nc, dtype=U.dtype, device=U.device)
+        .expand(*spatial_shape, nc, nc)
+        .contiguous()
+    )
+
+    zero: Tuple[int, ...] = (0,) * D
+    table: Dict[Tuple[int, ...], torch.Tensor] = {zero: identity}
+
+    for dx in l1_ball_offsets(D, R):
+        t: Optional[torch.Tensor] = None
+        for mu in range(D):
+            if dx[mu] == 0:
+                continue
+            s = 1 if dx[mu] > 0 else -1
+            # One step closer to the origin along axis mu.
+            prev_dx: Tuple[int, ...] = tuple(
+                v - s if i == mu else v for i, v in enumerate(dx)
+            )
+
+            if s > 0:
+                # U_μ(x) · T_{Δx−ê_μ}(x+ê_μ)
+                # roll by -1 in dim mu brings x+ê_μ into position x.
+                link = U[mu]
+                prev = torch.roll(table[prev_dx], shifts=-1, dims=mu)
+            else:
+                # U†_μ(x−ê_μ) · T_{Δx+ê_μ}(x−ê_μ)
+                # roll by +1 in dim mu brings x−ê_μ into position x.
+                link = group.dagger(torch.roll(U[mu], shifts=1, dims=mu))
+                prev = torch.roll(table[prev_dx], shifts=1, dims=mu)
+
+            contrib = link @ prev
+            t = contrib if t is None else t + contrib
+
+        table[dx] = t  # type: ignore[assignment]  # t is set for every non-zero dx
+
+    del table[zero]
+    return table

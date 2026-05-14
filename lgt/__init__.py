@@ -3,7 +3,9 @@ from .lattice import (
     Z2,
     GaugeGroup,
     action,
+    build_transport_sums,
     gauge_transformation,
+    l1_ball_offsets,
     plaquette_tensor,
     random_links,
 )
