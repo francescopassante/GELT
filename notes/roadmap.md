@@ -81,17 +81,26 @@ to test against, on a problem small enough to fit on a workstation.
   on the dual Ising representation if Metropolis autocorrelation hurts.
 
 ### 1.2 Tasks
-1. **Order-parameter regression**: predict the **vortex free energy** /
-   't Hooft loop (the dual order parameter). On finite volumes this is the
-   logarithm of a ratio of partition functions with twisted boundary
-   conditions — non-trivial to evaluate by MC, an honest learning target.
+1. **Order-parameter proxy regression**: predict the **per-configuration
+   't Hooft loop operator** — the product of links along a non-contractible
+   loop with twisted boundary conditions — as a per-configuration scalar.
+   The true vortex free energy `F_twist = −log(Z_twist/Z_periodic)` is a
+   ratio of partition functions and has no per-configuration definition; it
+   must be computed as a post-hoc MC measurement (two separate simulations)
+   at each β and compared against the ensemble mean of the network's
+   't Hooft-loop predictions.
 2. **Phase classification**: train a binary classifier (confined /
    deconfined). Recover `β_c` from the inflection point of the network's
    confidence as a function of β.
-3. **Wilson-loop area-law detection**: predict `−log <W^{(R×T)}>` for
-   variable (R, T); fit `σ R T + c (R + T) + d` to extract the **string
-   tension σ(β)**. Compare against high-temperature expansion
-   `σ ≈ −log tanh(β)` deep in the confined phase.
+3. **Wilson-loop area-law detection**: for each configuration predict the
+   per-configuration Wilson loop value `W^{(R×T)}` (no ensemble average)
+   at variable (R, T). After inference, compute `−log ⟨W^{(R×T)}⟩` by
+   averaging the network's outputs over the ensemble at each β; fit
+   `σ R T + c (R + T) + d` to that averaged curve to extract the **string
+   tension σ(β)**. The label per training configuration is the
+   per-configuration Wilson loop, not the ensemble average — the average is
+   a downstream analysis step. Compare against the high-temperature
+   expansion `σ ≈ −log tanh(β)` deep in the confined phase.
 4. **Critical exponent extraction**: from the network's response on
    different volumes, do finite-size scaling on the order parameter to
    extract `ν` (correlation length exponent). 3D Ising universality class
@@ -150,9 +159,13 @@ later refined). It's the natural step before SU(N).
 ### 2.2 Tasks
 1. **Plaquette regression**: standard sanity check.
 2. **Photon-mass / Coulomb-phase test**: in the deconfined phase the
-   transverse plaquette correlator decays as `1/r²` (massless photon). The
-   network predicts `<P_{0,1}(x) P_{0,1}(0)>(r)` — compare against analytic
-   lattice perturbation theory at large β.
+   transverse plaquette correlator decays as `1/r²` (massless photon).
+   The network predicts the per-site plaquette field `P_{0,1}(x)` for each
+   configuration. The two-point function `⟨P_{0,1}(x) P_{0,1}(0)⟩(r)` is
+   then computed by ensemble-averaging the product of network outputs at
+   separation r — it is not a per-configuration regression target. Compare
+   the resulting correlator against analytic lattice perturbation theory at
+   large β.
 3. **Monopole density**: in 4D compact U(1) the deconfinement is driven by
    monopole condensation (DeGrand-Toussaint construction). Train on the MC
    monopole density; test whether the network correctly identifies the

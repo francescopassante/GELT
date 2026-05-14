@@ -1,4 +1,11 @@
-from lgt.lattice import GaugeGroup, Z2, random_links, plaquette_tensor, action, gauge_transformation
-from lgt.sampler import mcmc_ensemble, haar_ensemble
-from lgt.data import build_link_datasets, build_plaquette_datasets
-from lgt.model import LatticeCNN
+from .data import build_link_datasets, build_plaquette_datasets
+from .lattice import (
+    Z2,
+    GaugeGroup,
+    action,
+    gauge_transformation,
+    plaquette_tensor,
+    random_links,
+)
+from .model import LatticeCNN
+from .sampler import haar_ensemble, mcmc_ensemble
