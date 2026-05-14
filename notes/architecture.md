@@ -233,6 +233,65 @@ A previous draft motivated this via a subtraction
 does not type-check (`w^Q ∈ ℂ^{d × C̃}` is not square), and the residual
 handles the same job cleanly.
 
+**Physical interpretation: the score is a two-loop correlator.**
+Substituting the transport rule from §3.3 (a similarity transform) into
+the score gives, schematically per head and per feature `a`:
+```
+s_{x → y, h, a}  ∝  Re Tr [  Q_{x, h, a}  ·  T_{Δx}(x)  ·  K_{y, h, a}  ·  T_{Δx}(x)†  ]
+```
+where `T_{Δx}(x)` is the shortest-path-averaged Wilson line from `x` to
+`y = x + Δx`. This is exactly the form of the gauge-invariant **two-loop
+correlator** that appears throughout lattice physics — glueball
+propagators, string-tension measurements, and Polyakov-loop correlators
+are all built from objects of the type
+`<Tr[O(x) · U(x, y) · O(y) · U†(x, y)]>`. The G-Attn block is therefore
+asking, at every site and for every neighbor in the L1-ball, "how
+correlated is my local loop content with my neighbor's, after
+parallel-transporting the neighbor into my frame?"
+
+This interpretation tells us when attention should fire:
+
+- **High score** when `Q_x` and the transported `K_y` are aligned in
+  color space — i.e. the two loops carry correlated gauge content.
+  In a confined phase, neighboring plaquettes are highly correlated, so
+  short-range attention weights should be large.
+- **Low score** when the two loops are uncorrelated — e.g. one near a
+  topological defect, the other in a smooth bulk region. The trace
+  averages near zero and the softmax weight is suppressed.
+- **Approximately uniform attention** when `Q` and `K̃` are essentially
+  random with respect to each other (the generic init regime). The
+  block then behaves like a learned-radius averaging operator, with
+  data-dependent corrections built up during training.
+
+The score is therefore *not* an arbitrary learned similarity: it is a
+constrained class function of the pair `(Q_x, K̃_y)`, identical in
+structure to the correlators that physicists already compute by hand.
+Multi-head attention (Sec 3.1) recovers expressivity by giving the
+block access to multiple independent such correlators per pair.
+
+**Where this inductive bias should pay off:**
+
+- *Heterogeneous configurations* — instantons, defects, near
+  deconfinement — where the relevant neighbors differ from site to
+  site. Attention reweights dynamically; a static gauge-equivariant
+  convolution kernel cannot.
+- *Multi-β / cross-β tasks* — the physical correlation length changes
+  with β, and the attention pattern can adapt the effective receptive
+  field without retraining a fixed kernel.
+- *CASK precedent* (2501.16955) — an analogous Frobenius-style
+  attention score on smeared link matrices has already been
+  demonstrated to work for SU(3) pure gauge, which establishes that
+  the inductive bias is at least not broken.
+
+**Where it may *not* pay off.** A periodic translation-invariant lattice
+is structurally homogeneous: there is no `[CLS]`-style token, and every
+site has the same neighborhood graph. The learned attention pattern can
+in principle collapse to an almost position-independent kernel, in which
+case the block degenerates to (a more expensive) gauge-equivariant
+convolution. The empirical question for Phase 0 / Phase 3 of the
+roadmap is whether *data-dependent* reweighting actually beats a static
+kernel of the same receptive field.
+
 ### 3.5 Softmax
 
 For each `(x, h)`, normalize over the neighborhood:
