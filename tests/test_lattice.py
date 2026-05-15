@@ -6,7 +6,7 @@ Run with:  pytest test_lattice.py -v
 import torch
 import pytest
 
-from lgt.lattice import Z2, random_links, plaquette_tensor, action, gauge_transformation
+from gelt.lattice import SU, Z2, augment, random_links, plaquette_tensor, action, gauge_transformation
 
 
 @pytest.fixture
@@ -86,6 +86,51 @@ def test_plaquette_covariance_z2(z2, L, D):
     assert torch.allclose(P_prime, P_expected, atol=0.0), (
         f"Plaquette covariance P'=ΩPΩ† violated (L={L}, D={D}); "
         f"max diff = {(P_prime - P_expected).abs().max().item()}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Shape preservation
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# augment (§2.3): W → [1, W, W†]
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("L,D", [(4, 2), (6, 2), (4, 3)])
+def test_augment_structure_z2(z2, L, D):
+    """augment prepends identity and appends daggers; shape (2C+1, *Λ, nc, nc)."""
+    torch.manual_seed(0)
+    U = random_links(L, D, z2, dtype=torch.float64)
+    W = plaquette_tensor(U, z2)  # (n_pairs, *Λ, 1, 1)
+    C = W.shape[0]
+
+    W_aug = augment(W, z2)
+    assert W_aug.shape == (2 * C + 1,) + W.shape[1:]
+
+    identity = torch.eye(z2.nc, dtype=W.dtype).expand_as(W_aug[0])
+    assert torch.equal(W_aug[0], identity)
+    assert torch.equal(W_aug[1 : 1 + C], W)
+    assert torch.equal(W_aug[1 + C :], z2.dagger(W))
+
+
+def test_augment_covariance_su2():
+    """For SU(2), augmented channels transform covariantly: aug(ΩWΩ†) = Ω·aug(W)·Ω†."""
+    L, D = 4, 2
+    su2 = SU(2)
+    torch.manual_seed(0)
+    U = random_links(L, D, su2, dtype=torch.complex128)
+    omega = su2.random((L,) * D, dtype=torch.complex128)
+
+    W = plaquette_tensor(U, su2)
+    W_prime = plaquette_tensor(gauge_transformation(U, omega, su2), su2)
+
+    aug_before = omega @ augment(W, su2) @ su2.dagger(omega)
+    aug_after = augment(W_prime, su2)
+
+    assert torch.allclose(aug_before, aug_after, atol=1e-12), (
+        f"augment covariance violated; max diff = "
+        f"{(aug_before - aug_after).abs().max().item()}"
     )
 
 

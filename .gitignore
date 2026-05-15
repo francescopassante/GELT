@@ -4,4 +4,4 @@ datasets/
 __pycache__/
 *.pyc
 .claude/
-lgt.egg-info/
+gelt.egg-info/

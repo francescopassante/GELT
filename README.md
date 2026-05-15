@@ -17,7 +17,7 @@ the natural matrix generalisation of the standard inner product `q†k`, and a
 well-known observable in lattice QCD (glueball propagators, Polyakov-loop
 correlators, string-tension measurements).
 
-The CNN in `lgt/cnn_baseline.py` serves as a non-equivariant reference.
+The CNN in `gelt/cnn_baseline.py` serves as a non-equivariant reference.
 The G-GAT is not yet implemented; the codebase is at Phase 0 of the roadmap.
 
 ---
@@ -55,7 +55,7 @@ Input: link configuration U  (D, *Λ, N_c, N_c)
 ## Repository layout
 
 ```
-lgt/                    library (install editable via pyproject.toml)
+gelt/                   library (install editable via pyproject.toml)
   lattice.py            GaugeGroup ABC + Z2; plaquette, action, gauge_transformation
   sampler.py            Metropolis sweep (checkerboard); mcmc_ensemble, haar_ensemble
   data.py               build_link_datasets, build_plaquette_datasets
@@ -116,7 +116,7 @@ python scripts/validate_sampler.py
 pytest tests/
 
 # CNN architecture summary (5×5, D=2)
-python -m lgt.cnn_baseline
+python -m gelt.cnn_baseline
 ```
 
 ---

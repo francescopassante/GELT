@@ -1,8 +1,8 @@
 import torch
 
-from lgt.lattice import Z2
-from lgt.cnn_baseline import LatticeCNN
-from lgt.train import full_pipeline
+from gelt.lattice import Z2
+from gelt.cnn_baseline import LatticeCNN
+from gelt.train import full_pipeline
 
 if __name__ == "__main__":
     D = 2

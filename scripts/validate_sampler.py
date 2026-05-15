@@ -15,8 +15,8 @@ import math
 import matplotlib.pyplot as plt
 import numpy as np
 
-from lgt.lattice import Z2, plaquette_tensor
-from lgt.sampler import mcmc_ensemble, _re_tr
+from gelt.lattice import Z2, plaquette_tensor
+from gelt.sampler import mcmc_ensemble, _re_tr
 
 group = Z2()
 

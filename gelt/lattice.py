@@ -130,6 +130,36 @@ def plaquette_tensor(U: torch.Tensor, group: GaugeGroup) -> torch.Tensor:
     return torch.stack(plaqs, dim=0)
 
 
+def augment(W: torch.Tensor, group: GaugeGroup) -> torch.Tensor:
+    """Expand W-channels to ``2C + 1`` by prepending the identity and appending daggers.
+
+        W → [ 1, W_1, …, W_C, W†_1, …, W†_C ]
+
+    Per notes/architecture.html §2.3. Each output channel is locally covariant:
+    the identity transforms as ``Ω · 1 · Ω† = 1`` and the dagger block as
+    ``(Ω W Ω†)† = Ω W† Ω†``. Applied inside the G-Attn block before Q, K, V;
+    gives bias and orientation-reversal "for free" and is the only way the
+    bilinear block can reduce to identity at init.
+
+    Parameters
+    ----------
+    W
+        Covariant field of shape ``(C, *Λ, nc, nc)``.
+    group
+        Gauge group (used for the dagger operation).
+
+    Returns
+    -------
+    Tensor of shape ``(2C + 1, *Λ, nc, nc)``.
+    """
+    spatial_shape = W.shape[1:-2]
+    nc = W.shape[-1]
+    identity = torch.eye(nc, dtype=W.dtype, device=W.device).expand(
+        1, *spatial_shape, nc, nc
+    )
+    return torch.cat([identity, W, group.dagger(W)], dim=0)
+
+
 def action(
     U: torch.Tensor,
     group: GaugeGroup,

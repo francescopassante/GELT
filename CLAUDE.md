@@ -54,7 +54,7 @@ The codebase was refactored from the original OO scaffolding
 (`Site` / `Link` / `Plaquette` / `Lattice` classes) to **pure tensor
 operations** suitable for autograd, vectorisation, and clean generalisation
 to U(1)/SU(N). It was then reorganised into a proper Python package:
-`lgt/` (library), `scripts/` (entry points), `tests/` (pytest). The CNN
+`gelt/` (library), `scripts/` (entry points), `tests/` (pytest). The CNN
 baseline (`LatticeCNN`) is unchanged and trains identically; the saved
 L-scan numbers in `scripts/L_scan.py` are still meaningful as a baseline.
 
@@ -76,10 +76,10 @@ numbers in `scripts/L_scan.py` are still Haar-random baseline results.
 
 ## Layout
 
-Library lives in `lgt/`; entry-point scripts in `scripts/`; pytest in
+Library lives in `gelt/`; entry-point scripts in `scripts/`; pytest in
 `tests/`. The package is installed editable via `pyproject.toml`.
 
-### `lgt/`
+### `gelt/`
 
 - **`lattice.py`** — `GaugeGroup` ABC + `Z2` implementation; pure tensor
   functions:
@@ -175,7 +175,7 @@ python scripts/L_scan.py              # replay saved L-scan, regenerate R² plot
 python scripts/lr_scan.py             # CNN LR sweep
 python scripts/validate_sampler.py    # Z₂ Metropolis four-panel sanity check
 python scripts/visualize.py           # plot a seeded random 5×5 lattice
-python -m lgt.cnn_baseline            # torchsummary for a 5×5 CNN
+python -m gelt.cnn_baseline           # torchsummary for a 5×5 CNN
 pytest tests                          # unit tests
 ```
 

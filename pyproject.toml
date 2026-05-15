@@ -3,10 +3,10 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "lgt"
+name = "gelt"
 version = "0.1.0"
 requires-python = ">=3.10"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["lgt*"]
+include = ["gelt*"]

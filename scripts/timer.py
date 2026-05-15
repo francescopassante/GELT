@@ -6,7 +6,7 @@ import statistics
 import time
 
 if __name__ == "__main__":
-    from lgt.lattice import SU, build_transport_sums, random_links
+    from gelt.lattice import SU, build_transport_sums, random_links
 
     SU3 = SU(3)
     warmup = 2

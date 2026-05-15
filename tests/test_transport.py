@@ -21,7 +21,7 @@ Verification strategy:
 import torch
 import pytest
 
-from lgt.lattice import (
+from gelt.lattice import (
     GaugeGroup,
     Z2,
     build_transport_sums,
