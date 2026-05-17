@@ -125,7 +125,7 @@ if __name__ == "__main__":
 
     train_parameters = {
         "lr": 1e-3,
-        "batch_size": 16,
+        "batch_size": 128,
         "epochs": 300,
         "patience": 30,
         "checkpoint_path": "best_model.pth",
@@ -163,7 +163,12 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=train_parameters["batch_size"], shuffle=True
+        train_dataset,
+        batch_size=train_parameters["batch_size"],
+        shuffle=True,
+        pin_memory=True,
+        num_workers=2,
+        persistent_workers=True,
     )
     val_loader = torch.utils.data.DataLoader(
         val_dataset, batch_size=train_parameters["batch_size"], shuffle=False
