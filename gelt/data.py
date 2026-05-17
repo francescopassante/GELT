@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Sequence
+from typing import Optional, Sequence
 
 import torch
 from torch.utils.data import TensorDataset, random_split
@@ -9,9 +9,35 @@ from gelt.lattice import (
     action,
     as_ml_input,
     as_ml_plaquettes,
+    build_transport_sums,
+    l1_ball_offsets,
     plaquette_tensor,
 )
 from gelt.sampler import mcmc_ensemble
+
+
+def _stack_transport_for_configs(
+    configs: torch.Tensor,
+    R: int,
+    gaugegroup: GaugeGroup,
+) -> torch.Tensor:
+    """Precompute the shortest-path-averaged transport tensor for every config.
+
+    Returns a single stacked tensor of shape
+    ``(N, n_offsets, *Λ, nc, nc)`` with offset axis ordered by
+    :func:`gelt.lattice.l1_ball_offsets` ``(D, R)`` — i.e. by ``|Δx|₁`` then
+    lexicographically. ``D`` is taken from ``configs.shape[1]``.
+
+    The transport depends only on the link configuration ``U``; precomputing it
+    here moves the entire DP out of the model's forward pass.
+    """
+    D = configs.shape[1]
+    offsets = l1_ball_offsets(D, R)
+    per_config = []
+    for c in configs:
+        T_dict = build_transport_sums(c, R=R, gaugegroup=gaugegroup)
+        per_config.append(torch.stack([T_dict[off] for off in offsets], dim=0))
+    return torch.stack(per_config, dim=0)
 
 
 def build_link_datasets(
@@ -27,8 +53,9 @@ def build_link_datasets(
     save: bool = False,
     dtype: torch.dtype = torch.float32,
     structured: bool = True,
+    R: Optional[int] = None,
 ):
-    """Dataset of (link config, action).
+    """Dataset of (link config, action), optionally with precomputed transports.
 
     ``sampler`` : ensemble-generator callable with the same signature as
     ``mcmc_ensemble``.  Defaults to ``mcmc_ensemble`` (Metropolis MC).
@@ -36,6 +63,12 @@ def build_link_datasets(
 
     ``structured=True`` (default): X shape ``(N, D, *Λ, nc, nc)`` — full matrix layout, for G-GAT.
     ``structured=False``         : X shape ``(N, D · nc², *Λ)``    — flattened color axes, for CNN.
+
+    ``R`` : if given, the shortest-path-averaged transport tensor is computed
+    once per config and stored alongside ``X`` and ``y``, with offset axis
+    ordered by :func:`gelt.lattice.l1_ball_offsets` ``(D, R)``.  The returned
+    splits then yield ``(X, T, y)`` triples instead of ``(X, y)``.  This moves
+    the transport DP out of the model's forward pass.
     """
     _validate_n_configs(N)
     if sampler is None:
@@ -45,11 +78,12 @@ def build_link_datasets(
     )
     X = configs if structured else torch.stack([as_ml_input(c) for c in configs])
     y = torch.stack([action(c, gaugegroup, beta=beta) for c in configs])
+    T = _stack_transport_for_configs(configs, R, gaugegroup) if R is not None else None
 
     prefix = _dataset_prefix(
-        gaugegroup.name.lower(), "link", L, D, N, beta, dtype, structured
+        gaugegroup.name.lower(), "link", L, D, N, beta, dtype, structured, R
     )
-    return _split(X, y, splits, save, prefix=prefix)
+    return _split(X, y, splits, save, prefix=prefix, T=T)
 
 
 def build_plaquette_datasets(
@@ -65,8 +99,9 @@ def build_plaquette_datasets(
     save: bool = False,
     dtype: torch.dtype = torch.float32,
     structured: bool = False,
+    R: Optional[int] = None,
 ):
-    """Dataset of (plaquette config, action).
+    """Dataset of (plaquette config, action), optionally with precomputed transports.
 
     ``sampler`` : ensemble-generator callable with the same signature as
     ``mcmc_ensemble``.  Defaults to ``mcmc_ensemble`` (Metropolis MC).
@@ -74,6 +109,10 @@ def build_plaquette_datasets(
 
     ``structured=False`` (default): X shape ``(N, n_pairs · nc², *Λ)`` — flattened color axes, for CNN.
     ``structured=True``            : X shape ``(N, n_pairs, *Λ, nc, nc)`` — full matrix layout, for G-GAT.
+
+    ``R`` : if given, the shortest-path-averaged transport tensor is computed
+    once per link config (from which the plaquettes were derived) and stored
+    alongside ``X`` and ``y``.  See :func:`build_link_datasets` for details.
     """
     _validate_n_configs(N)
     if sampler is None:
@@ -86,11 +125,12 @@ def build_plaquette_datasets(
     y = torch.stack(
         [action(configs[i], gaugegroup, beta=beta, plaquettes=Ps[i]) for i in range(N)]
     )
+    T = _stack_transport_for_configs(configs, R, gaugegroup) if R is not None else None
 
     prefix = _dataset_prefix(
-        gaugegroup.name.lower(), "plaquette", L, D, N, beta, dtype, structured
+        gaugegroup.name.lower(), "plaquette", L, D, N, beta, dtype, structured, R
     )
-    return _split(X, y, splits, save, prefix=prefix)
+    return _split(X, y, splits, save, prefix=prefix, T=T)
 
 
 def _dataset_prefix(
@@ -102,10 +142,12 @@ def _dataset_prefix(
     beta: float,
     dtype: torch.dtype,
     structured: bool,
+    R: Optional[int] = None,
 ) -> str:
     dtype_tag = str(dtype).replace("torch.", "")
     layout = "structured" if structured else "flat"
-    return f"{group_name}_{kind}_L{L}_D{D}_N{N}_beta{beta}_dtype{dtype_tag}_{layout}"
+    base = f"{group_name}_{kind}_L{L}_D{D}_N{N}_beta{beta}_dtype{dtype_tag}_{layout}"
+    return base if R is None else f"{base}_R{R}"
 
 
 def _validate_n_configs(N: int):
@@ -113,12 +155,16 @@ def _validate_n_configs(N: int):
         raise ValueError(f"N must be positive, got {N}.")
 
 
-def _split(X, y, splits, save, prefix):
+def _split(X, y, splits, save, prefix, T: Optional[torch.Tensor] = None):
     if len(splits) != 3 or any(s <= 0 for s in splits):
         raise ValueError(f"Expected three positive split fractions, got {splits}.")
     if len(X) != len(y):
         raise ValueError(
             f"X and y must have the same length, got {len(X)} and {len(y)}."
+        )
+    if T is not None and len(T) != len(y):
+        raise ValueError(
+            f"T and y must have the same length, got {len(T)} and {len(y)}."
         )
     if abs(sum(splits) - 1.0) > 1e-6:
         raise ValueError(f"Split fractions must sum to 1.0, got {splits}.")
@@ -133,19 +179,35 @@ def _split(X, y, splits, save, prefix):
             f"computed split lengths {tuple(lengths)}."
         )
 
-    full = TensorDataset(X, y)
+    tensors = (X, y) if T is None else (X, T, y)
+    full = TensorDataset(*tensors)
     train, val, test = random_split(full, lengths)
 
     if save:
         out_dir = Path("datasets")
         out_dir.mkdir(exist_ok=True)
 
-        train_ds = TensorDataset(X[train.indices], y[train.indices])
-        val_ds = TensorDataset(X[val.indices], y[val.indices])
-        test_ds = TensorDataset(X[test.indices], y[test.indices])
+        def _subset(idxs):
+            return TensorDataset(*(t[idxs] for t in tensors))
 
-        torch.save(train_ds, out_dir / f"train_dataset_{prefix}.pt")
-        torch.save(val_ds, out_dir / f"val_dataset_{prefix}.pt")
-        torch.save(test_ds, out_dir / f"test_dataset_{prefix}.pt")
+        torch.save(_subset(train.indices), out_dir / f"train_dataset_{prefix}.pt")
+        torch.save(_subset(val.indices), out_dir / f"val_dataset_{prefix}.pt")
+        torch.save(_subset(test.indices), out_dir / f"test_dataset_{prefix}.pt")
 
     return train, val, test
+
+
+if __name__ == "__main__":
+    from gelt import SU, haar_ensemble
+
+    train, val, test = build_plaquette_datasets(
+        N=100,
+        D=3,
+        L=5,
+        gaugegroup=SU(3),
+        beta=1.0,
+        structured=True,
+        sampler=haar_ensemble,
+        R=3,
+    )
+    print(train[0])

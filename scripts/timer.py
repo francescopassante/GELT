@@ -6,15 +6,29 @@ import statistics
 import time
 
 if __name__ == "__main__":
-    from gelt.lattice import SU, build_transport_sums, random_links
+    from gelt import (
+        SU,
+        build_plaquette_datasets,
+        build_transport_sums,
+        haar_ensemble,
+        random_links,
+    )
 
     SU3 = SU(3)
-    warmup = 2
-    repeats = 10
+    warmup = 1
+    repeats = 3
 
     def func():
-        U = random_links(gaugegroup=SU3, L=16, D=4).to("mps")
-        T = build_transport_sums(U, R=4, gaugegroup=SU3)
+        train, val, test = build_plaquette_datasets(
+            N=100,
+            D=3,
+            L=5,
+            gaugegroup=SU(3),
+            beta=1.0,
+            structured=True,
+            sampler=haar_ensemble,
+            R=3,
+        )
 
     for _ in range(warmup):
         func()
