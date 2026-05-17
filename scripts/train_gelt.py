@@ -154,6 +154,25 @@ if __name__ == "__main__":
         **dataset_parameters
     )
 
+    # Standardize the target (notes/architecture.html §6.1). Compute (μ_y, σ_y)
+    # on the train split, then mutate the shared full-y tensor in place — all
+    # three subsets are Subsets of the same TensorDataset, so val/test see the
+    # normalized labels too. Paired with the zero-init of the MLP's last layer
+    # (gelt/blocks.py), the untrained model is the constant predictor at the
+    # normalized mean (= 0), giving R² = 0 — the trivial mean-baseline.
+    # Predictions and saved targets are denormalized at the end for plotting.
+    #
+    # MUST run before the DataLoaders are created: with num_workers > 0, the
+    # workers fork/spawn off the parent's memory snapshot at first iteration
+    # and would carry the *un*standardized y forever (persistent_workers=True
+    # makes that snapshot survive across epochs). Standardizing first means
+    # workers fork the already-normalized tensor.
+    y_train = train_dataset.dataset.tensors[-1][train_dataset.indices]
+    mu_y = y_train.mean()
+    sigma_y = y_train.std(unbiased=False).clamp_min(1e-12)
+    train_dataset.dataset.tensors[-1].sub_(mu_y).div_(sigma_y)
+    print(f"target scaler fit: μ_y = {mu_y.item():.4f} | σ_y = {sigma_y.item():.4f}")
+
     model = GELT(**model_parameters)
 
     criterion = nn.MSELoss()
@@ -162,13 +181,14 @@ if __name__ == "__main__":
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    # TensorDataset lives entirely in RAM (no decoding / disk I/O), so worker
+    # processes only add overhead and the staleness footgun above. pin_memory
+    # still helps the host→GPU copy on CUDA.
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=train_parameters["batch_size"],
         shuffle=True,
         pin_memory=True,
-        num_workers=2,
-        persistent_workers=True,
     )
     val_loader = torch.utils.data.DataLoader(
         val_dataset, batch_size=train_parameters["batch_size"], shuffle=False
@@ -176,19 +196,6 @@ if __name__ == "__main__":
     test_loader = torch.utils.data.DataLoader(
         test_dataset, batch_size=train_parameters["batch_size"], shuffle=False
     )
-
-    # Standardize the target (notes/architecture.html §6.1). Compute (μ_y, σ_y)
-    # on the train split, then mutate the shared full-y tensor in place — all
-    # three subsets are Subsets of the same TensorDataset, so val/test see the
-    # normalized labels too. Paired with the zero-init of the MLP's last layer
-    # (gelt/blocks.py), the untrained model is the constant predictor at the
-    # normalized mean (= 0), giving R² = 0 — the trivial mean-baseline.
-    # Predictions and saved targets are denormalized at the end for plotting.
-    y_train = torch.cat([batch[-1] for batch in train_loader])
-    mu_y = y_train.mean()
-    sigma_y = y_train.std(unbiased=False).clamp_min(1e-12)
-    train_dataset.dataset.tensors[-1].sub_(mu_y).div_(sigma_y)
-    print(f"target scaler fit: μ_y = {mu_y.item():.4f} | σ_y = {sigma_y.item():.4f}")
 
     X, T, y = next(iter(train_loader))
     n_params = sum(p.numel() for p in model.parameters())
