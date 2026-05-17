@@ -351,6 +351,15 @@ class GELT(nn.Module):
         real_dtype = torch.float64 if dtype == torch.complex128 else torch.float32
         self.trace = Trace()
         self.mlp = MLP(2 * d_input, mlp_hidden, mlp_out).to(real_dtype)
+        # Zero-init the MLP's last linear layer: at init the model outputs 0
+        # at every site, so the untrained prediction is exactly 0. Paired
+        # with the train-script-side target standardization (notes/
+        # architecture.html §6.1), this makes the untrained model the
+        # constant predictor at the (normalized) target mean, i.e. R² = 0
+        # — the trivial mean-baseline. Gradients still flow on the first
+        # step via fc1 → fc2.
+        nn.init.zeros_(self.mlp.fc2.weight)
+        nn.init.zeros_(self.mlp.fc2.bias)
 
     def attn(self, W, T):
         for layer in self.gemhsa_models:
