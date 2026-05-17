@@ -147,10 +147,26 @@ if __name__ == "__main__":
         test_dataset, batch_size=train_parameters["batch_size"], shuffle=False
     )
 
+    # Standardize the target (notes/architecture.html §6.1). Same recipe as
+    # scripts/train_gelt.py so the two models train against an identically
+    # scaled regression problem and R² is directly comparable. Mutates the
+    # shared full-y tensor in place — all three subsets share it.
+    y_train = torch.cat([batch[-1] for batch in train_loader])
+    mu_y = y_train.mean()
+    sigma_y = y_train.std(unbiased=False).clamp_min(1e-12)
+    train_dataset.dataset.tensors[-1].sub_(mu_y).div_(sigma_y)
+    print(f"target scaler fit: μ_y = {mu_y.item():.4f} | σ_y = {sigma_y.item():.4f}")
+
+    # Zero-init the last linear layer of the CNN head so the untrained model
+    # outputs exactly 0 (constant predictor at the normalized mean → R² = 0).
+    # Matches the zero-init pairing used inside GELT (gelt/blocks.py).
+    nn.init.zeros_(model.fc[-1].weight)
+    nn.init.zeros_(model.fc[-1].bias)
+
     X, y = next(iter(train_loader))
     n_params = sum(p.numel() for p in model.parameters())
     print(
-        f"GELT | params: {n_params:,} | "
+        f"CNN | params: {n_params:,} | "
         f"X {tuple(X.shape)} {X.dtype} "
         f"out {model(X).shape}"
     )
@@ -191,12 +207,22 @@ if __name__ == "__main__":
 
     # Plots and visualizations
 
-    # Population variance of the labels — the natural scale to normalise MSE by.
+    # ``test_loss`` and the saved arrays are in normalized space (y was
+    # standardized in place above). R² is invariant under linear label
+    # transforms, so we can compute it either way. Denormalize to show the
+    # scatter plot in physical Wilson-action units.
+    all_targets = all_targets * sigma_y + mu_y
+    all_outputs = all_outputs * sigma_y + mu_y
     test_label_var = all_targets.var(unbiased=False).item()
-    test_r2 = 1.0 - test_loss / test_label_var if test_label_var > 0 else float("nan")
+    test_mse_physical = ((all_outputs - all_targets) ** 2).mean().item()
+    test_r2 = (
+        1.0 - test_mse_physical / test_label_var if test_label_var > 0 else float("nan")
+    )
 
     print(
-        f"Test Loss: {test_loss:.4f} | Var(y): {test_label_var:.4f} | R²: {test_r2:.4f}"
+        f"Test Loss (norm): {test_loss:.4f} | "
+        f"Test MSE (physical): {test_mse_physical:.4f} | "
+        f"Var(y): {test_label_var:.4f} | R²: {test_r2:.4f}"
     )
 
     import matplotlib.pyplot as plt
