@@ -253,7 +253,8 @@ if __name__ == "__main__":
     plt.title("Training and Validation Loss")
     plt.legend()
     plt.grid(True)
-    plt.show()
+    plt.savefig("gelt_loss.png", dpi=150, bbox_inches="tight")
+    plt.close()
 
     plt.figure(figsize=(8, 8))
     plt.scatter(all_targets.numpy(), all_outputs.numpy(), alpha=0.5)
@@ -261,7 +262,8 @@ if __name__ == "__main__":
     plt.ylabel("Predictions")
     plt.title("True vs Predicted Values (Test Set)")
     plt.grid(True)
-    plt.show()
+    plt.savefig("gelt_scatter.png", dpi=150, bbox_inches="tight")
+    plt.close()
 
     results = {
         "test_loss": test_loss,
