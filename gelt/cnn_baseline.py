@@ -79,7 +79,7 @@ class LatticeCNN(nn.Module):
         layers = []
         for chan_in, chan_out in zip(channels, channels[1:]):
             layers.append(_make_conv(chan_in, chan_out, D, kernel_size))
-        layers.append(nn.ReLU())
+            layers.append(nn.ReLU())
         layers.append(nn.Flatten())
         self.conv = nn.Sequential(*layers)
 

@@ -75,7 +75,7 @@ class SU(GaugeGroup):
             torch.complex128: torch.complex128,
         }[dtype]
         # Haar sampling on U(N) via QR of a complex Ginibre matrix with the
-        # Mezzadri (2007) diagonal-phase correction: PyTorch's QR fixes the
+        # Mezzadri diagonal-phase correction: PyTorch's QR fixes the
         # phase of Q by a convention that is not Haar-uniform, so we absorb
         # the phases of diag(R) back into Q's columns.
         z = torch.randn(*shape, self.nc, self.nc, dtype=complex_dtype)
@@ -136,36 +136,6 @@ def plaquette_tensor(U: torch.Tensor, gaugegroup: GaugeGroup) -> torch.Tensor:
     return torch.stack(plaqs, dim=0)
 
 
-def augment(W: torch.Tensor, gaugegroup: GaugeGroup) -> torch.Tensor:
-    """Expand W-channels to ``2C + 1`` by prepending the identity and appending daggers.
-
-        W → [ 1, W_1, …, W_C, W†_1, …, W†_C ]
-
-    Per notes/architecture.html §2.3. Each output channel is locally covariant:
-    the identity transforms as ``Ω · 1 · Ω† = 1`` and the dagger block as
-    ``(Ω W Ω†)† = Ω W† Ω†``. Applied inside the G-Attn block before Q, K, V;
-    gives bias and orientation-reversal "for free" and is the only way the
-    bilinear block can reduce to identity at init.
-
-    Parameters
-    ----------
-    W
-        Covariant field of shape ``(C, *Λ, nc, nc)``.
-    gaugegroup
-        Gauge group (used for the dagger operation).
-
-    Returns
-    -------
-    Tensor of shape ``(2C + 1, *Λ, nc, nc)``.
-    """
-    spatial_shape = W.shape[1:-2]
-    nc = W.shape[-1]
-    identity = torch.eye(nc, dtype=W.dtype, device=W.device).expand(
-        1, *spatial_shape, nc, nc
-    )
-    return torch.cat([identity, W, gaugegroup.dagger(W)], dim=0)
-
-
 def action(
     U: torch.Tensor,
     gaugegroup: GaugeGroup,
@@ -192,65 +162,31 @@ def action(
     return beta * (n_plaq - re_tr_over_nc.sum())
 
 
-def as_ml_input(U: torch.Tensor) -> torch.Tensor:
-    """Flatten a link tensor ``(D, *Λ, nc, nc)`` into ML input ``(C, *Λ)``.
-
-    Used for non-equivariant models only (breaks group structure by collapsing everything)
-
-    Real groups: ``C = D · nc²``.
-    Complex groups: ``C = 2 · D · nc²`` (real and imaginary parts as separate channels).
-    For Z₂ (``nc = 1``, real) the output collapses to ``(D, *Λ)``, matching the
-    legacy CNN baseline interface.
-    """
-    D = U.shape[0]
-    spatial = U.shape[1:-2]
-    nc = U.shape[-1]
-    if torch.is_complex(U):
-        re_im = torch.stack([U.real, U.imag], dim=1)  # (D, 2, *Λ, nc, nc)
-        return re_im.reshape(D * 2 * nc * nc, *spatial)
-    return U.reshape(D * nc * nc, *spatial)
-
-
-def as_ml_plaquettes(P: torch.Tensor) -> torch.Tensor:
-    """Same flattening as :func:`as_ml_input` for the plaquette tensor."""
-    n_pairs = P.shape[0]
-    spatial = P.shape[1:-2]
-    nc = P.shape[-1]
-    if torch.is_complex(P):
-        re_im = torch.stack([P.real, P.imag], dim=1)
-        return re_im.reshape(n_pairs * 2 * nc * nc, *spatial)
-    return P.reshape(n_pairs * nc * nc, *spatial)
-
-
-def gauge_transformation(
+def link_gauge_transformation(
     U: torch.Tensor,
     omega: torch.Tensor,
     gaugegroup: GaugeGroup,
 ) -> torch.Tensor:
     """Apply a site-local gauge transformation Ω to a link configuration.
-
     For each direction μ:
         U'_μ(x) = Ω(x) · U_μ(x) · Ω†(x + μ̂)
-
-    Parameters
-    ----------
-    U
-        Link tensor of shape ``(D, *Λ, nc, nc)``.
-    omega
-        Gauge transformation elements of shape ``(*Λ, nc, nc)``.
-    gaugegroup
-        Gauge group (used for the dagger operation).
-
-    Returns
-    -------
-    Transformed link tensor of the same shape as ``U``.
     """
+
     D = U.shape[0]
     out = []
     for mu in range(D):
         omega_shifted = torch.roll(omega, shifts=-1, dims=mu)  # Ω(x + μ̂)
         out.append(omega @ U[mu] @ gaugegroup.dagger(omega_shifted))
     return torch.stack(out, dim=0)
+
+
+def local_gauge_transformation(W, omega, gaugegroup):
+    """Adjoint-field gauge transform: W_g(x) = Ω(x) · W(x) · Ω†(x).
+
+    W : (B, C, *Λ, nc, nc); omega : (*Λ, nc, nc). Broadcasts over (B, C).
+    """
+    omega_b = omega.unsqueeze(0).unsqueeze(0)  # (1, 1, *Λ, nc, nc)
+    return omega_b @ W @ gaugegroup.dagger(omega_b)
 
 
 def l1_ball_offsets(D: int, R: int) -> List[Tuple[int, ...]]:

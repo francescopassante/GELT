@@ -1,14 +1,14 @@
 from .cnn_baseline import LatticeCNN
-from .data import build_link_datasets, build_plaquette_datasets
+from .data import build_plaquette_datasets
 from .lattice import (
     SU,
     Z2,
     GaugeGroup,
     action,
-    augment,
     build_transport_sums,
-    gauge_transformation,
     l1_ball_offsets,
+    link_gauge_transformation,
+    local_gauge_transformation,
     plaquette_tensor,
     random_links,
 )

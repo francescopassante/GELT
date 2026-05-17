@@ -1,11 +1,37 @@
-from typing import Optional, Sequence
-
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from tqdm import tqdm
 
-from gelt.lattice import GaugeGroup
+from gelt import LatticeCNN, haar_ensemble
+
+
+def evaluate(model, test_loader, criterion, device, save_outputs=False):
+    model.eval()
+
+    test_loss = 0.0
+    test_count = 0
+    if save_outputs:
+        all_targets = []
+        all_outputs = []
+    with torch.no_grad():
+        for inputs, targets in tqdm(test_loader):
+            inputs, targets = inputs.to(device), targets.to(device)
+            outputs = model(inputs)
+            loss = criterion(outputs, targets)
+            batch_size = targets.shape[0]
+            test_loss += loss.item() * batch_size
+            test_count += batch_size
+            if save_outputs:
+                all_targets.append(targets.cpu())
+                all_outputs.append(outputs.cpu())
+
+    test_loss /= test_count
+    if save_outputs:
+        all_targets = torch.cat(all_targets)
+        all_outputs = torch.cat(all_outputs)
+        return test_loss, all_targets, all_outputs
+    return test_loss
 
 
 def train_model(
@@ -44,19 +70,7 @@ def train_model(
         train_loss /= train_count
         train_losses.append(train_loss)
 
-        model.eval()
-        val_loss = 0.0
-        val_count = 0
-        with torch.no_grad():
-            for inputs, targets in wrap(val_loader):
-                inputs, targets = inputs.to(device), targets.to(device)
-                outputs = model(inputs)
-                loss = criterion(outputs, targets)
-                batch_size = targets.shape[0]
-                val_loss += loss.item() * batch_size
-                val_count += batch_size
-
-        val_loss /= val_count
+        val_loss = evaluate(model, val_loader, criterion, device)
         val_losses.append(val_loss)
 
         if val_loss < best_val_loss:
@@ -79,70 +93,56 @@ def train_model(
     return train_losses, val_losses, epoch + 1
 
 
-def full_pipeline(
-    L: int,
-    D: int,
-    N: int,
-    gaugegroup: GaugeGroup,
-    model: nn.Module,
-    beta: float = 1.0,
-    splits: Sequence[float] = (0.7, 0.15, 0.15),
-    lr: float = 1e-3,
-    epochs: int = 100,
-    patience: int = 10,
-    plots: bool = False,
-    verbose: bool = True,
-    input: str = "plaquette",
-    batch_size: int = 32,
-    seed: Optional[int] = None,
-    checkpoint_path: str = "best_model.pth",
-    sampler=None,
-    n_therm: int = 200,
-    n_skip: int = 5,
-) -> dict:
-    """
-    ``sampler`` : ensemble-generator callable with the same interface as
-                  ``mcmc_ensemble``.  ``None`` (default) auto-dispatches
-                  to the registered sweep for ``gaugegroup`` via ``_SWEEP_FN``.
-                  Pass ``sampler=haar_ensemble`` for Haar-uniform configurations.
-    """
-    from gelt.data import build_link_datasets, build_plaquette_datasets
+if __name__ == "__main__":
+    torch.manual_seed(0)
+    from gelt import SU, build_plaquette_datasets
 
-    if seed is not None:
-        torch.manual_seed(seed)
+    D = 3
+    L = 8
 
-    input_key = input.lower()
-    if input_key not in {"plaquette", "plaquettes", "link", "links"}:
-        raise ValueError(
-            "input must be one of: 'plaquette', 'plaquettes', 'link', 'links'."
-        )
+    dataset_parameters = {
+        "N": 100,
+        "D": D,
+        "L": L,
+        "gaugegroup": SU(2),
+        "R": None,
+        "splits": [0.7, 0.15, 0.15],
+        "save": True,
+        "structured": False,
+        "sampler": haar_ensemble,
+        "beta": 1,
+        "n_therm": 200,
+        "n_skip": 5,
+        "dtype": torch.float32,
+    }
 
-    builder = (
-        build_plaquette_datasets
-        if input_key in {"plaquette", "plaquettes"}
-        else build_link_datasets
+    train_parameters = {
+        "lr": 1e-4,
+        "epochs": 100,
+        "patience": 10,
+        "checkpoint_path": "best_model.pth",
+        "batch_size": 16,
+    }
+
+    train_dataset, val_dataset, test_dataset = build_plaquette_datasets(
+        **dataset_parameters
     )
-    train_dataset, val_dataset, test_dataset = builder(
-        N,
-        D,
-        L,
-        gaugegroup=gaugegroup,
-        beta=beta,
-        splits=splits,
-        structured=False,
-        sampler=sampler,
-        n_therm=n_therm,
-        n_skip=n_skip,
+
+    # Derive in_channels from the data so it stays in sync with structured/dtype/group:
+    # for SU(N) with structured=False, flatten_color yields 2 · n_pairs · nc² channels.
+    in_channels = train_dataset[0][0].shape[0]
+    model = LatticeCNN(
+        L, D, in_channels=in_channels, hidden_channels=[16, 32], kernel_size=3
     )
 
     train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=batch_size, shuffle=True
+        train_dataset, batch_size=train_parameters["batch_size"], shuffle=True
     )
     val_loader = torch.utils.data.DataLoader(
-        val_dataset, batch_size=batch_size, shuffle=False
+        val_dataset, batch_size=train_parameters["batch_size"], shuffle=False
     )
     test_loader = torch.utils.data.DataLoader(
-        test_dataset, batch_size=batch_size, shuffle=False
+        test_dataset, batch_size=train_parameters["batch_size"], shuffle=False
     )
 
     device = torch.device(
@@ -154,7 +154,7 @@ def full_pipeline(
     )
     model = model.to(device)
     criterion = nn.MSELoss()
-    optimizer = optim.Adam(model.parameters(), lr=lr)
+    optimizer = optim.Adam(model.parameters(), lr=train_parameters["lr"])
 
     train_losses, val_losses, full_epochs = train_model(
         model=model,
@@ -163,68 +163,54 @@ def full_pipeline(
         criterion=criterion,
         optimizer=optimizer,
         device=device,
-        epochs=epochs,
-        patience=patience,
-        verbose=verbose,
-        checkpoint_path=checkpoint_path,
+        epochs=train_parameters["epochs"],
+        patience=train_parameters["patience"],
+        checkpoint_path=train_parameters["checkpoint_path"],
     )
 
+    # Load best model to evaluate on test set
     model.load_state_dict(
-        torch.load(checkpoint_path, map_location=device, weights_only=True)
+        torch.load(
+            train_parameters["checkpoint_path"], map_location=device, weights_only=True
+        )
     )
-    model.eval()
 
-    test_loss = 0.0
-    test_count = 0
-    all_targets = []
-    all_outputs = []
-    with torch.no_grad():
-        wrap = tqdm if verbose else (lambda x: x)
-        for inputs, targets in wrap(test_loader):
-            inputs, targets = inputs.to(device), targets.to(device)
-            outputs = model(inputs)
-            loss = criterion(outputs, targets)
-            batch_size = targets.shape[0]
-            test_loss += loss.item() * batch_size
-            test_count += batch_size
-            all_targets.append(targets.cpu())
-            all_outputs.append(outputs.cpu())
+    test_loss, all_targets, all_outputs = evaluate(
+        model, test_loader, criterion, device, save_outputs=True
+    )
 
-    test_loss /= test_count
-    all_targets = torch.cat(all_targets)
-    all_outputs = torch.cat(all_outputs)
+    # Plots and visualizations
+
     # Population variance of the labels — the natural scale to normalise MSE by.
     test_label_var = all_targets.var(unbiased=False).item()
     test_r2 = 1.0 - test_loss / test_label_var if test_label_var > 0 else float("nan")
 
-    if verbose:
-        print(
-            f"Test Loss: {test_loss:.4f} | Var(y): {test_label_var:.4f} | R²: {test_r2:.4f}"
-        )
+    print(
+        f"Test Loss: {test_loss:.4f} | Var(y): {test_label_var:.4f} | R²: {test_r2:.4f}"
+    )
 
-    if plots:
-        import matplotlib.pyplot as plt
+    import matplotlib.pyplot as plt
 
-        plt.figure(figsize=(10, 5))
-        plt.plot(train_losses, label="Train Loss")
-        plt.plot(val_losses, label="Validation Loss")
-        plt.yscale("log")
-        plt.xlabel("Epochs")
-        plt.ylabel("Loss")
-        plt.title("Training and Validation Loss")
-        plt.legend()
-        plt.grid(True)
-        plt.show()
+    plt.figure(figsize=(10, 5))
+    plt.plot(train_losses, label="Train Loss")
+    plt.plot(val_losses, label="Validation Loss")
+    plt.yscale("log")
+    plt.xlabel("Epochs")
+    plt.ylabel("Loss")
+    plt.title("Training and Validation Loss")
+    plt.legend()
+    plt.grid(True)
+    plt.show()
 
-        plt.figure(figsize=(8, 8))
-        plt.scatter(all_targets.numpy(), all_outputs.numpy(), alpha=0.5)
-        plt.xlabel("True Values")
-        plt.ylabel("Predictions")
-        plt.title("True vs Predicted Values (Test Set)")
-        plt.grid(True)
-        plt.show()
+    plt.figure(figsize=(8, 8))
+    plt.scatter(all_targets.numpy(), all_outputs.numpy(), alpha=0.5)
+    plt.xlabel("True Values")
+    plt.ylabel("Predictions")
+    plt.title("True vs Predicted Values (Test Set)")
+    plt.grid(True)
+    plt.show()
 
-    return {
+    results = {
         "test_loss": test_loss,
         "test_label_var": test_label_var,
         "test_r2": test_r2,

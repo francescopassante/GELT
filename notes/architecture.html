@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>G-GAT — Implementation Plan</title>
+<title>GELT — Implementation Plan</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..700;1,8..60,300..700&family=JetBrains+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
@@ -208,7 +208,7 @@ em { color: var(--ink-soft); }
 
   <article>
     <h1>Gauge-Equivariant Graph Attention Network</h1>
-    <p class="subtitle">G-GAT — Implementation Plan</p>
+    <p class="subtitle">GELT — Implementation Plan</p>
 
     <p>A gauge-equivariant attention architecture for SU(N<sub>c</sub>) lattice gauge theory. Follows the L-CNN framework (arXiv:2012.12901) for primitives and proofs, with two departures:</p>
     <ol>
@@ -459,7 +459,7 @@ g_softplus(W) = softplus( Re Tr[W] / N_c )      # never vanishes</code></pre>
     </ul>
 
     <h3>6.4 Parameter counting</h3>
-    <p>For matched-parameter comparison against real-valued baselines, count each complex weight as <strong>two real parameters</strong>. Projections <code>w^Q, w^K, w^V ∈ ℂ^{d × C̃}</code> and mix <code>m ∈ ℂ^{C_out × H × d}</code> are complex; not doubling them silently gives G-GAT 2× capacity. Biases <code>b_h(Δx) ∈ ℝ</code> count as one <em>per point-group orbit</em>; untying inflates by the average orbit size (8–24 in 4D).</p>
+    <p>For matched-parameter comparison against real-valued baselines, count each complex weight as <strong>two real parameters</strong>. Projections <code>w^Q, w^K, w^V ∈ ℂ^{d × C̃}</code> and mix <code>m ∈ ℂ^{C_out × H × d}</code> are complex; not doubling them silently gives GELT 2× capacity. Biases <code>b_h(Δx) ∈ ℝ</code> count as one <em>per point-group orbit</em>; untying inflates by the average orbit size (8–24 in 4D).</p>
 
     <hr />
     <h2 id="s7">7. Validation: gauge invariance tests</h2>
@@ -474,7 +474,7 @@ g_softplus(W) = softplus( Re Tr[W] / N_c )      # never vanishes</code></pre>
     <p>A unit test of the <em>implementation</em>: if exactly equivariant, loss is analytically zero for all <code>Ω</code>; the optimizer only probes the float-point ceiling. Finds worst-case <code>Ω</code> that exposes implementation bugs hidden in a thin slice of gauge space.</p>
     <p>Parametrize <code>Ω_x = exp(i t^a ρ^a_x)</code> with trainable <code>ρ^a_x ∈ ℝ</code>. Optimize ρ via AdamW (lr <code>1e-2</code>, ~200 steps) to <strong>maximize</strong></p>
     <pre><code>L_stress = | y_pred(U, W) − y_pred(T_Ω(ρ) U, T_Ω(ρ) W) |</code></pre>
-    <p>A correctly-implemented G-GAT keeps <code>L_stress</code> bounded by floating-point noise. Anything larger is a bug — almost always a missed dagger or a non-axis-aligned transport path.</p>
+    <p>A correctly-implemented GELT keeps <code>L_stress</code> bounded by floating-point noise. Anything larger is a bug — almost always a missed dagger or a non-axis-aligned transport path.</p>
 
     <hr />
     <h2 id="s8">8. Universality argument</h2>

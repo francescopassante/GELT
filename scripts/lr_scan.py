@@ -1,19 +1,69 @@
+"""Learning-rate sweep for the CNN baseline at fixed L on 2D Z₂ data."""
+
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+import torch.nn as nn
+import torch.optim as optim
 from tqdm import tqdm
 
-from gelt.cnn_baseline import LatticeCNN
-from gelt.lattice import Z2
-from gelt.train import full_pipeline
+from gelt import LatticeCNN, Z2, build_plaquette_datasets, mcmc_ensemble
+from gelt.train import evaluate, train_model
 
 if __name__ == "__main__":
-    L = 8
-    D = 2
-    N = 1000
     seed = 0
+    D = 2
+    L = 8
     hidden_channels = [16, 32]
     lrs = np.logspace(-2, -5, 7)  # 1e-2 … 1e-5, seven points
+
+    dataset_parameters = {
+        "N": 1000,
+        "D": D,
+        "L": L,
+        "gaugegroup": Z2(),
+        "R": None,
+        "splits": [0.7, 0.15, 0.15],
+        "save": False,
+        "structured": False,
+        "sampler": mcmc_ensemble,
+        "beta": 1.0,
+        "n_therm": 200,
+        "n_skip": 5,
+        "dtype": torch.float32,
+    }
+
+    train_parameters = {
+        "epochs": 2000,
+        "patience": 20,
+        "batch_size": 32,
+    }
+
+    # The dataset doesn't depend on lr — build it once.
+    torch.manual_seed(seed)
+    train_dataset, val_dataset, test_dataset = build_plaquette_datasets(
+        **dataset_parameters
+    )
+    in_channels = train_dataset[0][0].shape[0]
+
+    train_loader = torch.utils.data.DataLoader(
+        train_dataset, batch_size=train_parameters["batch_size"], shuffle=True
+    )
+    val_loader = torch.utils.data.DataLoader(
+        val_dataset, batch_size=train_parameters["batch_size"], shuffle=False
+    )
+    test_loader = torch.utils.data.DataLoader(
+        test_dataset, batch_size=train_parameters["batch_size"], shuffle=False
+    )
+
+    device = torch.device(
+        "cuda"
+        if torch.cuda.is_available()
+        else "mps"
+        if torch.backends.mps.is_available()
+        else "cpu"
+    )
+    criterion = nn.MSELoss()
 
     test_losses = np.zeros(len(lrs))
     test_label_vars = np.zeros(len(lrs))
@@ -24,29 +74,42 @@ if __name__ == "__main__":
 
     for i, lr in enumerate(tqdm(lrs)):
         torch.manual_seed(seed)
-        model = LatticeCNN(L, D, in_channels=1, hidden_channels=hidden_channels)
-        result = full_pipeline(
-            L=L,
-            D=D,
-            N=N,
+        model = LatticeCNN(
+            L, D, in_channels=in_channels, hidden_channels=hidden_channels, kernel_size=3
+        ).to(device)
+        optimizer = optim.Adam(model.parameters(), lr=float(lr))
+        checkpoint_path = f"best_model_lr{lr:.0e}.pth"
+
+        train_losses, val_losses, full_epochs = train_model(
             model=model,
-            gaugegroup=Z2(),
-            splits=(0.7, 0.15, 0.15),
-            lr=float(lr),
-            epochs=2000,
-            patience=20,
-            plots=False,
-            verbose=True,
-            input="plaquettes",
-            seed=seed,
-            checkpoint_path=f"best_model_lr{lr:.0e}.pth",
+            train_loader=train_loader,
+            val_loader=val_loader,
+            criterion=criterion,
+            optimizer=optimizer,
+            device=device,
+            epochs=train_parameters["epochs"],
+            patience=train_parameters["patience"],
+            checkpoint_path=checkpoint_path,
+            verbose=False,
         )
-        test_losses[i] = result["test_loss"]
-        test_label_vars[i] = result["test_label_var"]
-        test_r2s[i] = result["test_r2"]
-        train_epochs[i] = result["epochs"]
-        train_losses_all.append(np.array(result["train_losses"]))
-        val_losses_all.append(np.array(result["val_losses"]))
+
+        model.load_state_dict(
+            torch.load(checkpoint_path, map_location=device, weights_only=True)
+        )
+        test_loss, all_targets, all_outputs = evaluate(
+            model, test_loader, criterion, device, save_outputs=True
+        )
+        test_label_var = all_targets.var(unbiased=False).item()
+        test_r2 = (
+            1.0 - test_loss / test_label_var if test_label_var > 0 else float("nan")
+        )
+
+        test_losses[i] = test_loss
+        test_label_vars[i] = test_label_var
+        test_r2s[i] = test_r2
+        train_epochs[i] = full_epochs
+        train_losses_all.append(np.array(train_losses))
+        val_losses_all.append(np.array(val_losses))
 
     print("lrs:          ", lrs)
     print("test_loss:    ", test_losses)

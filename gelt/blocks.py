@@ -147,8 +147,7 @@ class GEMHSA(nn.Module):
         return nn.Parameter(torch.randn(*shape, dtype=dtype) * sigma)
 
     def _augment(self, W):
-        # Batched form of gelt.lattice.augment:
-        #   (B, C, *Λ, nc, nc) -> (B, 2C+1, *Λ, nc, nc)
+        # Channel augmentation: (B, C, *Λ, nc, nc) -> (B, 2C+1, *Λ, nc, nc).
         # Prepend the site-local identity, append the daggered channels.
         spatial = W.shape[2:-2]
         nc = W.shape[-1]

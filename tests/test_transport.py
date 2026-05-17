@@ -25,8 +25,8 @@ from gelt.lattice import (
     Z2,
     GaugeGroup,
     build_transport_sums,
-    gauge_transformation,
     l1_ball_offsets,
+    link_gauge_transformation,
     random_links,
 )
 
@@ -293,7 +293,7 @@ def test_gauge_covariance_z2(R):
 
     T = build_transport_sums(U, R=R, gaugegroup=gaugegroup)
     T_prime = build_transport_sums(
-        gauge_transformation(U, omega, gaugegroup), R=R, gaugegroup=gaugegroup
+        link_gauge_transformation(U, omega, gaugegroup), R=R, gaugegroup=gaugegroup
     )
 
     for dx, T_dx_prime in T_prime.items():
@@ -319,7 +319,7 @@ def test_gauge_covariance_complex(R):
 
     T = build_transport_sums(U, R=R, gaugegroup=gaugegroup)
     T_prime = build_transport_sums(
-        gauge_transformation(U, omega, gaugegroup), R=R, gaugegroup=gaugegroup
+        link_gauge_transformation(U, omega, gaugegroup), R=R, gaugegroup=gaugegroup
     )
 
     for dx, T_dx_prime in T_prime.items():

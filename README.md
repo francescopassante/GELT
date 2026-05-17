@@ -1,6 +1,6 @@
 # GELT — Gauge-Equivariant Lattice Transformer
 
-Master's thesis: a gauge-equivariant graph-attention network (G-GAT) for
+Master's thesis: a gauge-equivariant graph-attention network (GELT) for
 SU(N_c) lattice gauge theory. The architecture is built on the L-CNN framework
 ([Favoni et al., 2021](https://arxiv.org/abs/2012.12901)) with two departures:
 
@@ -18,7 +18,7 @@ well-known observable in lattice QCD (glueball propagators, Polyakov-loop
 correlators, string-tension measurements).
 
 The CNN in `gelt/cnn_baseline.py` serves as a non-equivariant reference.
-The G-GAT is not yet implemented; the codebase is at Phase 0 of the roadmap.
+The GELT is not yet implemented; the codebase is at Phase 0 of the roadmap.
 
 ---
 
@@ -56,7 +56,7 @@ Input: link configuration U  (D, *Λ, N_c, N_c)
 
 ```
 gelt/                   library (install editable via pyproject.toml)
-  lattice.py            GaugeGroup ABC + Z2; plaquette, action, gauge_transformation
+  lattice.py            GaugeGroup ABC + Z2; plaquette, action, link_gauge_transformation
   sampler.py            Metropolis sweep (checkerboard); mcmc_ensemble, haar_ensemble
   data.py               build_link_datasets, build_plaquette_datasets
   cnn_baseline.py       LatticeCNN — non-equivariant reference, D=2/3/4+
@@ -70,11 +70,11 @@ scripts/
   visualize.py          2D lattice visualisation
 
 tests/
-  test_lattice.py       gauge-invariance unit tests (plaquette, action, gauge_transformation)
+  test_lattice.py       gauge-invariance unit tests (plaquette, action, link_gauge_transformation)
   test_data_model.py    split validation + CNN shape guards
 
 notes/
-  architecture.md       full G-GAT spec (§10 build-order checklist)
+  architecture.md       full GELT spec (§10 build-order checklist)
   roadmap.md            phased plan — Z₂ through SU(3), plus novel directions
   papers_review.md      literature review: L-CNN, CovResNet, CASK
   sampling.md           MC sampler strategy
@@ -148,7 +148,7 @@ python -m gelt.cnn_baseline
 | **5** | 4D SU(3) | String tension, glueball mass, topological susceptibility |
 | **6** | Various | Cross-β transfer, attention-as-ξ, trivializing flows, … |
 
-Current position: **Phase 0** (post-refactor, G-GAT not yet implemented).
+Current position: **Phase 0** (post-refactor, GELT not yet implemented).
 The next concrete step is `build_transport_sums(U, R)` — the DP routine for
 shortest-path-averaged parallel transport (see `notes/architecture.md` §10).
 
@@ -162,7 +162,7 @@ plaquette" — a product the convolutional kernel cannot express with its additi
 inductive bias. R² ≈ 0 across all L confirms this on Haar-random data.
 With plaquettes as input, R² ≈ 0.99: the task collapses to a linear sum.
 
-The G-GAT closes this gap by construction: the matrix-bilinear value path
+The GELT closes this gap by construction: the matrix-bilinear value path
 `Q† · Ṽ` directly encodes multiplicative loop content, and the attention scores
 weight neighbors by physical relevance — in principle learning to look exactly
 as far as the correlation length demands.

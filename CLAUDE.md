@@ -23,7 +23,7 @@ All in `notes/`. Read in order before touching the equivariant model:
   gauge-covariant ResNet (Nagai-Tomiya 2103.11965), and CASK (2501.16955).
   Sections 0 (lattice primer) and 1 (L-CNN) are the prerequisites for
   `architecture.html`. Equation references in `architecture.html` point here.
-- `notes/architecture.html` — implementation spec for the G-GAT block:
+- `notes/architecture.html` — implementation spec for the GELT block:
   on-site Q/K/V projections, **shortest-path-averaged** parallel
   transport over the L1-ball (§3.3), gauge-invariant attention scores via
   `Re Tr[Q† · K̃]` (physically a two-loop correlator function — §3.4),
@@ -59,16 +59,22 @@ to U(1)/SU(N). It was then reorganised into a proper Python package:
 baseline (`LatticeCNN`) is unchanged and trains identically; the saved
 L-scan numbers in `scripts/L_scan.py` are still meaningful as a baseline.
 
+The **GELT block** (`gelt/blocks.py`) is implemented end-to-end:
+`GEMHSA` (single equivariant attention layer) plus `GELT` (stacked
+blocks → trace readout → MLP → sum over sites). Gauge equivariance is
+covered by `tests/test_blocks.py` (SU(2) complex128, Z₂ float64, both
+gate branches, shape + finite-grad backward on SU(3)).
+
 What still does **not** exist (in priority order, per
 `notes/architecture.html` §10 + `notes/roadmap.md` Phase 0):
 
-1. The **G-GAT block** itself. `build_transport_sums(U, R, group)` — the
-   DP routine that materialises shortest-path-averaged transports
-   `T_Δx(x)` over the full signed L1-ball (§3.3) — is implemented and
-   covered by `tests/test_transport.py` (counts, brute force per octant
-   pattern, octant relation, gauge covariance under unitary Ω for both
-   Z₂ and nc=2 complex).
-2. Gauge-implementation stress-test validation (`notes/architecture.html` §7).
+1. **Gauge-implementation stress test** on the untrained block
+   (`notes/architecture.html` §7) — random Ω + worst-case-Ω search
+   via AdamW on `ρ^a_x`, drift must stay at machine ε in float64.
+2. A training entry point for `GELT` (the inline pattern in
+   `gelt/train.py:__main__` is wired for `LatticeCNN` + `structured=False`;
+   training `GELT` needs `structured=True`, an `R`, and a loader that
+   unpacks `(X, T, y)` triples).
 3. Non-Z₂ gauge groups and their production samplers.
 
 The default dataset path uses the Z₂ Metropolis sampler. Haar-random
@@ -86,19 +92,14 @@ Library lives in `gelt/`; entry-point scripts in `scripts/`; pytest in
   pure tensor functions:
   - `random_links(L, D, group, dtype)` → `(D, *Λ, nc, nc)`.
   - `plaquette_tensor(U, group)` → `(D(D-1)/2, *Λ, nc, nc)`.
-  - `augment(W, group)` — expand a covariant field of `C` channels to
-    `2C + 1` by prepending the identity and appending daggers
-    (`[1, W_1, …, W_C, W†_1, …, W†_C]`). Per
-    `notes/architecture.html` §2.3; applied inside the G-Attn block
-    before Q/K/V so the bilinear path can reduce to identity at init.
   - `action(U, group, beta=1.0, plaquettes=None)` → scalar Wilson action
     `β Σ_p (1 − Re Tr P / nc)`.
-  - `gauge_transformation(U, omega, group)` — apply site-local Ω to
-    every link; used by the gauge-invariance unit tests and (once it
-    exists) by the G-GAT stress test.
-  - `as_ml_input(U)`, `as_ml_plaquettes(P)` — flatten the trailing color
-    axes for ML input. Real groups give `(D · nc², *Λ)`; complex groups
-    split real/imag, giving `(2 · D · nc², *Λ)`.
+  - `link_gauge_transformation(U, omega, group)` — apply site-local Ω to
+    every link (`U_μ(x) → Ω(x) · U_μ(x) · Ω†(x+μ̂)`); used by the
+    gauge-invariance unit tests and the GELT stress test.
+  - `local_gauge_transformation(W, omega, group)` — apply site-local Ω to
+    an adjoint field (`W(x) → Ω(x) · W(x) · Ω†(x)`); used in the GELT
+    equivariance tests.
   - `l1_ball_offsets(D, R)` → list of signed Δx tuples with
     `1 ≤ |Δx|_1 ≤ R`, ordered by `|Δx|_1`.
   - `build_transport_sums(U, R, group)` — DP routine that materialises
@@ -110,18 +111,31 @@ Library lives in `gelt/`; entry-point scripts in `scripts/`; pytest in
   `haar_ensemble` (Haar-uniform, ignores β — shares the sampler
   interface for sanity checks). To plug in U(1)/SU(N) later, add a
   sweep function and register it in `_SWEEP_FN`.
-- **`data.py`** — `build_link_datasets`, `build_plaquette_datasets`.
-  Take `dtype`, `group`, `beta`, sampler controls, and validated split
-  fractions. `structured=True` keeps the full `(N, D, *Λ, nc, nc)` /
-  `(N, n_pairs, *Λ, nc, nc)` matrix layout for G-GAT; `structured=False`
-  flattens color axes for the CNN baseline. `save=True` writes to
-  `datasets/`.
-- **`cnn_baseline.py`** — `LatticeCNN(L, D, in_channels, hidden_channels)`.
-  CNN baseline only; circular-padded `Conv2d`. Not gauge-equivariant —
-  this is the reference against which the G-GAT will be compared.
+- **`data.py`** — `build_plaquette_datasets`. Takes `dtype`, `group`,
+  `beta`, sampler controls, and validated split fractions.
+  `structured=True` keeps the full `(N, n_pairs, *Λ, nc, nc)` matrix
+  layout for GELT; `structured=False` calls `flatten_color` (also in
+  this module) to split color axes for the CNN baseline — real groups
+  give `(D · nc², *Λ)`, complex groups split real/imag for
+  `(2 · D · nc², *Λ)`. With `R` set, the shortest-path-averaged transport
+  is precomputed per config via `build_transport` and the splits yield
+  `(X, T, y)` triples. `save=True` writes to `datasets/`.
+- **`cnn_baseline.py`** — `LatticeCNN(L, D, in_channels, hidden_channels,
+  kernel_size=3)`. CNN baseline only; uses `Conv2d`/`Conv3d` for D=2/3
+  and a roll-based `_RollConvND` for D≥4. Not gauge-equivariant — this
+  is the reference against which the GELT will be compared.
+- **`blocks.py`** — `GEMHSA` (gauge-equivariant multi-head self-attention
+  block: augment → Q/K/V → adjoint transport → score → softmax →
+  multiplicative value → channel mix → residual + L-Act gate);
+  `Trace` (gauge-invariant readout); `MLP`; and `GELT`, the full model
+  (stacked `GEMHSA` blocks → `Trace` → `MLP` → sum over sites). The
+  transport `T` is precomputed by the dataset builder and threaded
+  through `forward(W, T)`.
 - **`train.py`** — `train_model` (early stopping, configurable
-  `checkpoint_path`); `full_pipeline` returns a dict with `test_loss`,
-  `test_label_var`, `test_r2`, `epochs`, and the loss curves. Device order:
+  `checkpoint_path`) and `evaluate` (loss + optional `(targets, outputs)`
+  collection). The `__main__` block contains an inline reference
+  pipeline (build dataset → derive `in_channels` → build model → loaders
+  → train → reload best checkpoint → evaluate → plot). Device order:
   cuda → mps → cpu.
 
 ### `scripts/`
@@ -143,13 +157,17 @@ Library lives in `gelt/`; entry-point scripts in `scripts/`; pytest in
 ### `tests/`
 
 - **`test_lattice.py`** — gauge-invariance checks on `plaquette_tensor` /
-  `action` under `gauge_transformation` (bit-exact in Z₂ float64).
+  `action` under `link_gauge_transformation` (bit-exact in Z₂ float64).
 - **`test_data_model.py`** — split-validation and CNN-baseline shape
   guards.
 - **`test_transport.py`** — coverage for `l1_ball_offsets` and
   `build_transport_sums`: offset counts, brute-force per-octant pattern,
   octant-relation consistency, and gauge covariance under unitary Ω for
   both Z₂ and `nc = 2` complex.
+- **`test_blocks.py`** — gauge equivariance of `GEMHSA` end-to-end
+  (`forward(W_g, T_g) == Ω · forward(W, T) · Ω†`) for SU(2) in
+  complex128 and Z₂ in float64; both gate branches; shape preservation
+  and finite-grad backward pass on a batched SU(3) example.
 
 ## Conventions
 
@@ -221,7 +239,7 @@ distinct regimes:
 | plaquettes | R² ≈ 0.99 across all L | trivial: the action is a linear sum of inputs |
 | links | R² ≈ 0 across all L | the CNN cannot reconstruct plaquettes from links — no inductive bias for "multiply four specific link values" |
 
-This is the inductive-bias gap that motivates the G-GAT. Even a perfect
+This is the inductive-bias gap that motivates the GELT. Even a perfect
 action regressor on Haar-random data is only memorising the action
 *function*; β-dependent physics requires the Metropolis data path.
 
@@ -230,7 +248,7 @@ action regressor on Haar-random data is only memorising the action
 - **Do not silently broadcast across color axes.** Every matmul should
   be explicit (`A @ B`) and every dagger explicit (`group.dagger(A)`);
   for Z₂ both are no-ops, but for U(1)/SU(N) any laxity is a bug that
-  Z₂ cannot catch. The same applies to the future G-GAT transport: a
+  Z₂ cannot catch. The same applies to the future GELT transport: a
   missed dagger or a wrong shortest-path step will pass Z₂ tests and
   fail at the first non-abelian Ω.
 - **`LatticeCNN` is 2D-only** (`Conv2d` with circular padding); raises
@@ -252,15 +270,15 @@ action regressor on Haar-random data is only memorising the action
 In strict order, per `notes/architecture.html` §10 / `notes/roadmap.md`
 Phase 0:
 
-1. **G-GAT block.** Build incrementally per the §10 checklist (Plaq /
-   Poly / augment / Trace → Q/K/V → transport → score → softmax →
-   multiplicative value → channel mix → residual + L-Act), with a
-   covariance unit test after each step.
-2. **Gauge-implementation stress test** on the untrained G-GAT before
-   training (`notes/architecture.html` §7) — random Ω + worst-case-Ω
-   search via AdamW on `ρ^a_x`. Drift must stay at machine epsilon;
-   anything larger is a bug (almost always a missed dagger or a
-   non-axis-aligned transport path).
+1. **Gauge-implementation stress test** on the untrained `GEMHSA`
+   before training (`notes/architecture.html` §7) — random Ω +
+   worst-case-Ω search via AdamW on `ρ^a_x`. Drift must stay at machine
+   epsilon in float64; anything larger is a bug (almost always a missed
+   dagger or a non-axis-aligned transport path).
+2. **`GELT` training pipeline.** Extend the inline pattern in
+   `gelt/train.py:__main__` (or add a sibling script) to use
+   `structured=True`, pass `R`, unpack `(X, T, y)` from the loader, and
+   call `model(W, T)`. Verify identity-at-init behaviour first.
 3. **Replicate Phase 3 (SU(2) Wilson loops + topological charge)** of
    `notes/roadmap.md` once the architecture is validated on Z₂. The
    matched-parameter shootout vs. L-CNN at low parameter count and the

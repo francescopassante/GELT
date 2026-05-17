@@ -7,16 +7,13 @@ from torch.utils.data import TensorDataset, random_split
 from gelt.lattice import (
     GaugeGroup,
     action,
-    as_ml_input,
-    as_ml_plaquettes,
     build_transport_sums,
     l1_ball_offsets,
     plaquette_tensor,
 )
-from gelt.sampler import mcmc_ensemble
 
 
-def _stack_transport_for_configs(
+def build_transport(
     configs: torch.Tensor,
     R: int,
     gaugegroup: GaugeGroup,
@@ -40,50 +37,21 @@ def _stack_transport_for_configs(
     return torch.stack(per_config, dim=0)
 
 
-def build_link_datasets(
-    N: int,
-    D: int,
-    L: int,
-    gaugegroup: GaugeGroup,
-    beta: float = 1.0,
-    n_therm: int = 200,
-    n_skip: int = 5,
-    sampler=None,
-    splits: Sequence[float] = (0.7, 0.15, 0.15),
-    save: bool = False,
-    dtype: torch.dtype = torch.float32,
-    structured: bool = True,
-    R: Optional[int] = None,
-):
-    """Dataset of (link config, action), optionally with precomputed transports.
+def flatten_color(U: torch.Tensor) -> torch.Tensor:
+    """Flatten color dimensions of a tensor ``(D, *Λ, nc, nc)`` into ML input ``(C, *Λ)``.
 
-    ``sampler`` : ensemble-generator callable with the same signature as
-    ``mcmc_ensemble``.  Defaults to ``mcmc_ensemble`` (Metropolis MC).
-    Pass ``sampler=haar_ensemble`` for Haar-uniform configurations.
+    Used for non-equivariant models only (breaks group structure)
 
-    ``structured=True`` (default): X shape ``(N, D, *Λ, nc, nc)`` — full matrix layout, for G-GAT.
-    ``structured=False``         : X shape ``(N, D · nc², *Λ)``    — flattened color axes, for CNN.
-
-    ``R`` : if given, the shortest-path-averaged transport tensor is computed
-    once per config and stored alongside ``X`` and ``y``, with offset axis
-    ordered by :func:`gelt.lattice.l1_ball_offsets` ``(D, R)``.  The returned
-    splits then yield ``(X, T, y)`` triples instead of ``(X, y)``.  This moves
-    the transport DP out of the model's forward pass.
+    Real groups: ``C = D · nc²``.
+    Complex groups: ``C = 2 · D · nc²`` (real and imaginary parts as separate channels).
     """
-    _validate_n_configs(N)
-    if sampler is None:
-        sampler = mcmc_ensemble
-    configs, _, _ = sampler(
-        L, D, gaugegroup, beta, N, n_therm=n_therm, n_skip=n_skip, dtype=dtype
-    )
-    X = configs if structured else torch.stack([as_ml_input(c) for c in configs])
-    y = torch.stack([action(c, gaugegroup, beta=beta) for c in configs])
-    T = _stack_transport_for_configs(configs, R, gaugegroup) if R is not None else None
-
-    prefix = _dataset_prefix(
-        gaugegroup.name.lower(), "link", L, D, N, beta, dtype, structured, R
-    )
-    return _split(X, y, splits, save, prefix=prefix, T=T)
+    D = U.shape[0]
+    spatial = U.shape[1:-2]
+    nc = U.shape[-1]
+    if torch.is_complex(U):
+        re_im = torch.stack([U.real, U.imag], dim=1)  # (D, 2, *Λ, nc, nc)
+        return re_im.reshape(D * 2 * nc * nc, *spatial)
+    return U.reshape(D * nc * nc, *spatial)
 
 
 def build_plaquette_datasets(
@@ -98,42 +66,37 @@ def build_plaquette_datasets(
     splits: Sequence[float] = (0.7, 0.15, 0.15),
     save: bool = False,
     dtype: torch.dtype = torch.float32,
-    structured: bool = False,
+    structured: bool = True,
     R: Optional[int] = None,
 ):
     """Dataset of (plaquette config, action), optionally with precomputed transports.
 
-    ``sampler`` : ensemble-generator callable with the same signature as
-    ``mcmc_ensemble``.  Defaults to ``mcmc_ensemble`` (Metropolis MC).
-    Pass ``sampler=haar_ensemble`` for Haar-uniform configurations.
+    ``sampler`` : ensemble-generator
 
     ``structured=False`` (default): X shape ``(N, n_pairs · nc², *Λ)`` — flattened color axes, for CNN.
-    ``structured=True``            : X shape ``(N, n_pairs, *Λ, nc, nc)`` — full matrix layout, for G-GAT.
+    ``structured=True``            : X shape ``(N, n_pairs, *Λ, nc, nc)`` — full matrix layout, for GELT.
 
     ``R`` : if given, the shortest-path-averaged transport tensor is computed
     once per link config (from which the plaquettes were derived) and stored
     alongside ``X`` and ``y``.  See :func:`build_link_datasets` for details.
     """
-    _validate_n_configs(N)
-    if sampler is None:
-        sampler = mcmc_ensemble
     configs, _, _ = sampler(
         L, D, gaugegroup, beta, N, n_therm=n_therm, n_skip=n_skip, dtype=dtype
     )
     Ps = torch.stack([plaquette_tensor(c, gaugegroup) for c in configs])
-    X = Ps if structured else torch.stack([as_ml_plaquettes(p) for p in Ps])
+    X = Ps if structured else torch.stack([flatten_color(p) for p in Ps])
     y = torch.stack(
         [action(configs[i], gaugegroup, beta=beta, plaquettes=Ps[i]) for i in range(N)]
     )
-    T = _stack_transport_for_configs(configs, R, gaugegroup) if R is not None else None
+    T = build_transport(configs, R, gaugegroup) if R is not None else None
 
-    prefix = _dataset_prefix(
+    prefix = dataset_prefix(
         gaugegroup.name.lower(), "plaquette", L, D, N, beta, dtype, structured, R
     )
-    return _split(X, y, splits, save, prefix=prefix, T=T)
+    return split(X, y, splits, save, prefix=prefix, T=T)
 
 
-def _dataset_prefix(
+def dataset_prefix(
     group_name: str,
     kind: str,
     L: int,
@@ -150,12 +113,7 @@ def _dataset_prefix(
     return base if R is None else f"{base}_R{R}"
 
 
-def _validate_n_configs(N: int):
-    if N <= 0:
-        raise ValueError(f"N must be positive, got {N}.")
-
-
-def _split(X, y, splits, save, prefix, T: Optional[torch.Tensor] = None):
+def split(X, y, splits, save, prefix, T: Optional[torch.Tensor] = None):
     if len(splits) != 3 or any(s <= 0 for s in splits):
         raise ValueError(f"Expected three positive split fractions, got {splits}.")
     if len(X) != len(y):

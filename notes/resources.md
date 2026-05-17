@@ -23,7 +23,7 @@ for this thesis.
 
 ## ML-for-LGT entry points
 
-- **Favoni et al. 2012.12901 (L-CNN)** — the architecture our G-GAT extends; already in our reading list.
+- **Favoni et al. 2012.12901 (L-CNN)** — the architecture our GELT extends; already in our reading list.
 - **Albergo, Kanwar, Shanahan 1904.12072** — the original flow-based sampling paper; short and clear, best first exposure to the idea.
 - **Boyda et al. 2008.05456** — gauge-equivariant normalizing flows for SU(N); the reference flow paper.
 - **Boyda et al., *Applications of Machine Learning to Lattice Quantum Field Theory* (2202.05838)** — Snowmass white paper; broad survey of the whole ML-for-LGT landscape.
@@ -33,4 +33,4 @@ for this thesis.
 1. **Rothe ch. 1–4** (or Gattringer–Lang ch. 1–4) — lattice action, links, plaquettes, Wilson loops. Build the basic mental model.
 2. **DeGrand–DeTar ch. 1–4** — Metropolis / heat-bath / overrelaxation / HMC. This is what we'll implement in `sampling.md`.
 3. **Gattringer–Lang ch. 4 + Creutz** — Cabibbo–Marinari specifically, for the SU(N) heat-bath kernel.
-4. **Favoni 2012.12901 + Boyda 2008.05456** — once the architecture work begins (G-GAT block, eventually flow backbones in Phase 6).
+4. **Favoni 2012.12901 + Boyda 2008.05456** — once the architecture work begins (GELT block, eventually flow backbones in Phase 6).

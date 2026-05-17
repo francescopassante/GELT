@@ -1,8 +1,8 @@
 import pytest
 import torch
 
-from gelt.data import _split
 from gelt.cnn_baseline import LatticeCNN
+from gelt.data import split
 
 
 def test_split_rejects_empty_partition():
@@ -10,7 +10,7 @@ def test_split_rejects_empty_partition():
     y = torch.arange(2).float()
 
     with pytest.raises(ValueError, match="too small"):
-        _split(X, y, (0.7, 0.15, 0.15), save=False, prefix="test")
+        split(X, y, (0.7, 0.15, 0.15), save=False, prefix="test")
 
 
 def test_split_rejects_fractions_that_do_not_sum_to_one():
@@ -18,7 +18,7 @@ def test_split_rejects_fractions_that_do_not_sum_to_one():
     y = torch.arange(10).float()
 
     with pytest.raises(ValueError, match="sum to 1.0"):
-        _split(X, y, (0.7, 0.2, 0.2), save=False, prefix="test")
+        split(X, y, (0.7, 0.2, 0.2), save=False, prefix="test")
 
 
 def test_lattice_cnn_rejects_even_kernel_size():

@@ -12,7 +12,7 @@ Z₂ to potentially novel research directions. Each phase has:
   PyTorch and lattice basics.
 - **Pitfalls** specific to that phase.
 
-The architecture is the **G-GAT** of `architecture.md` (gauge-equivariant
+The architecture is the **GELT** of `architecture.md` (gauge-equivariant
 graph attention with multiplicative value path). All phases reuse the same
 codebase; the gauge group, dimension, and head are the only things that
 change.
@@ -221,20 +221,20 @@ count** is the first publishable result.
 - Topological-charge MSE ≤ 1.1 × L-CNN-Small reported (≈ 3 × 10⁻⁹).
 - Volume generalization: MSE flat ±20 % across volumes.
 
-### 3.4 Tasks (novel — G-GAT vs L-CNN)
+### 3.4 Tasks (novel — GELT vs L-CNN)
 1. **Matched-parameter shootout**. For each Wilson loop task, train an
-   L-CNN and a G-GAT with the **same number of trainable parameters** (use
+   L-CNN and a GELT with the **same number of trainable parameters** (use
    the L-CNN sizes: 35 / 1305 / 13521 / 39905). Plot MSE vs. parameters.
 2. **Long-range correlation regime**. Push β closer to the bulk-transition
    crossover (β ≈ 2.3) where the spatial correlation length grows.
-   Hypothesis: at fixed parameter count, G-GAT pulls ahead of L-CNN as
+   Hypothesis: at fixed parameter count, GELT pulls ahead of L-CNN as
    ξ/R_kernel increases, because attention with range R can see structure
    beyond the L-Conv receptive field. Quantify with `ΔMSE(ξ/R)`.
-3. **Receptive-field sweep**. Train G-GAT at attention range R ∈ {1, 2, 3, 4};
+3. **Receptive-field sweep**. Train GELT at attention range R ∈ {1, 2, 3, 4};
    show how the optimal R correlates with the spatial correlation length
    measured on the same configurations. This is interpretable: the network
    is *learning to look as far as the physics demands*.
-4. **Point-group equivariance ablation.** Train two G-GAT variants:
+4. **Point-group equivariance ablation.** Train two GELT variants:
    (a) translation-equivariant only (default), (b) translation +
    hypercubic point group via tied `b_h(μ, k)` across μ-orbits and ±k
    (cf. `architecture.md` §12). Compare MSE at matched parameter count on
@@ -244,7 +244,7 @@ count** is the first publishable result.
    action. A clean, small, defensible result.
 
 ### 3.5 Pass criteria — novel
-- At ≤ 10⁴ parameters and ξ/a ≥ 3, G-GAT beats L-CNN by ≥ 2× on Wilson-loop
+- At ≤ 10⁴ parameters and ξ/a ≥ 3, GELT beats L-CNN by ≥ 2× on Wilson-loop
   MSE. (If it doesn't, that itself is an interesting null result and you
   should publish it.)
 - Optimal R tracks ξ/a within a factor of 2 across β ∈ [2.0, 2.5].
@@ -256,7 +256,7 @@ count** is the first publishable result.
 - The network has **no GAP**. Predict per-site, sum at the end if you need
   global Q. Do not collapse to a single output before the per-site Trace.
 - For the matched-parameter comparison, *count complex parameters as 2
-  reals*. Otherwise you'll silently double the G-GAT capacity.
+  reals*. Otherwise you'll silently double the GELT capacity.
 
 ---
 
@@ -282,7 +282,7 @@ proposal accepts as if it were running at light mass.
 2. **SLHMC run**. Use `S_θ` as the molecular-dynamics Hamiltonian, accept
    with the true action. Measure acceptance rate, autocorrelation of
    plaquette and chiral condensate.
-3. **G-GAT vs CASK vs CovNet**. At matched parameter count and matched
+3. **GELT vs CASK vs CovNet**. At matched parameter count and matched
    training cost, compare:
    - Final loss (lower is better).
    - HMC acceptance.
@@ -293,7 +293,7 @@ proposal accepts as if it were running at light mass.
 ### 4.3 Pass criteria
 - Reproduce CASK figure 2: loss decrease across training, plaquette
   histogram match between SLHMC and ground-truth HMC (KS test p > 0.05).
-- G-GAT matches CASK loss within 20 % at matched parameter count, and
+- GELT matches CASK loss within 20 % at matched parameter count, and
   beats CovNet by ≥ 30 %.
 - HMC acceptance ≥ 60 % at m_l = 0.3, m_h = 0.5 (CASK reports ≈ similar).
 
@@ -307,7 +307,7 @@ time over CASK on the same setup is publishable on its own.
 - Pseudofermion noise in the gradient is the main training bottleneck. Use
   several stochastic estimators per training step.
 - Smearing layer count > 4 starts to over-smear and destroy short-range
-  fermion physics. Stick to L = 2–3 G-GAT blocks for the smearing tower.
+  fermion physics. Stick to L = 2–3 GELT blocks for the smearing tower.
 - CASK uses sparse attention (s ≤ 3); resist the temptation to crank it up
   before validating that the loss benefit isn't a regularization artifact.
 
@@ -415,9 +415,9 @@ Mitigation: use larger R and a softer init.
 
 ---
 
-### 6.3 Trivializing flow / normalizing flow with G-GAT
+### 6.3 Trivializing flow / normalizing flow with GELT
 
-**Question.** Use stacked G-GAT blocks with L-Exp heads as a normalizing
+**Question.** Use stacked GELT blocks with L-Exp heads as a normalizing
 flow `U → U_eff` such that `U_eff` is distributed according to a target
 action. Sample directly without HMC.
 
@@ -429,7 +429,7 @@ landmark result. Compare with Albergo, Kanwar, Boyda et al.
 
 **Concrete plan.**
 - Phase 3 setup: 4D SU(2) at β = 2.5, `8⁴`.
-- Train a flow `U → V_θ(U)` with `V_θ` = stack of G-GAT + L-Exp.
+- Train a flow `U → V_θ(U)` with `V_θ` = stack of GELT + L-Exp.
 - Loss: reverse KL `D(p_target || p_θ)` via importance sampling (standard
   in the flow literature).
 - Diagnostic: effective sample size, autocorrelation of Q across draws,
@@ -444,14 +444,14 @@ publishable as a benchmark.
 **Comparison targets.**
 - Boyda et al. (2008.05456): SU(N) flows on small lattices.
 - Albergo et al. (2305.02402): trivializing flows for full QCD.
-- Abbott et al. (2401.10874): residual flows — your G-GAT *is* a residual
+- Abbott et al. (2401.10874): residual flows — your GELT *is* a residual
   flow with attention.
 
 ---
 
 ### 6.4 Continuous-time limit: neural ODE = Wilson flow
 
-**Question.** Take L → ∞, weight scale → 0, and identify your G-GAT stack
+**Question.** Take L → ∞, weight scale → 0, and identify your GELT stack
 with a learned **continuous gradient flow** on configuration space. Train
 the flow's vector field directly.
 
@@ -460,7 +460,7 @@ operation; replacing it with a learnable gauge-equivariant flow gives a
 **task-adapted Wilson flow** that should outperform the fixed one.
 
 **Concrete plan.**
-- Take the gauge-covariant ResNet (paper 3 / your G-GAT without softmax),
+- Take the gauge-covariant ResNet (paper 3 / your GELT without softmax),
   treat layer index as time, integrate with `torchdiffeq`.
 - Task: scale-setting (`t_0`-flow). Standard Wilson flow defines `t_0` via
   `t² <E>(t) = 0.3`. Train your flow to *also* satisfy this, but with
@@ -476,7 +476,7 @@ operation; replacing it with a learnable gauge-equivariant flow gives a
 
 ### 6.5 Topological-sector sampling
 
-**Question.** Augment HMC with a G-GAT-driven proposal that explicitly
+**Question.** Augment HMC with a GELT-driven proposal that explicitly
 biases toward topology change. Reduce topological autocorrelation by ≥ 10×
 at fine β.
 
@@ -488,7 +488,7 @@ detailed-balance treatment would make a real impact.
 **Concrete plan.**
 - Phase 5 setup: SU(3) at β = 6.4 (already in topological-freezing regime
   on `16⁴`).
-- Train a G-GAT to predict **the gradient of |Q − Q_target|** with respect
+- Train a GELT to predict **the gradient of |Q − Q_target|** with respect
   to U; use this as a Langevin-step bias inside Metropolis.
 - Diagnostic: Q autocorrelation time τ_Q; compare against vanilla HMC on
   the same ensemble. Target: τ_Q ↓ by 10× without observable bias on
@@ -507,11 +507,11 @@ current state of the art for ML-assisted HMC.
 **Question.** For QCD with a θ-term or finite chemical potential, the
 action becomes complex and standard MC fails. The **Lefschetz-thimble**
 program deforms the integration contour to suppress the sign oscillation.
-Can a G-GAT parametrize the deformation field?
+Can a GELT parametrize the deformation field?
 
 **Concrete plan.**
 - Toy: 1+1D U(1) with θ-term. Known sign problem; known thimble structure.
-- G-GAT outputs a covariant link-shift `δU` defining a deformed manifold.
+- GELT outputs a covariant link-shift `δU` defining a deformed manifold.
   Train to maximize the average sign.
 - Diagnostic: average phase `<e^{iS_imag}>`; compare against thimble
   literature.
@@ -525,7 +525,7 @@ attempts haven't outperformed analytic constructions.
 
 ### 6.7 Variational ground-state / TRG-style ansatz
 
-**Question.** Use the G-GAT as a *variational wavefunctional* on the
+**Question.** Use the GELT as a *variational wavefunctional* on the
 gauge field — i.e. parametrize `Ψ_θ(U)` as a gauge-invariant scalar
 output of the network and minimize `<H>` directly. This is the lattice
 analogue of neural quantum states (Carleo-Troyer 2017).
@@ -549,7 +549,7 @@ gauge-equivariant analogue is open.
 
 **Question.** Extend to triangular / honeycomb / Kagome lattices for
 condensed-matter applications: Z₂ spin liquids, Kitaev-honeycomb-like
-models. The G-GAT framework needs only that "neighbors" and "links" be
+models. The GELT framework needs only that "neighbors" and "links" be
 defined; the gauge structure is identical.
 
 **Concrete plan.**
@@ -611,7 +611,7 @@ months 11–12: writing + defense
 
 This produces:
 - Independent reimplementation of L-CNN and CASK results (defensive).
-- One genuinely new comparison (G-GAT vs L-CNN under controlled scaling).
+- One genuinely new comparison (GELT vs L-CNN under controlled scaling).
 - One novel small result (3D Z₂ critical exponents from ML, or
   attention-as-correlation-length).
 
@@ -626,10 +626,10 @@ thesis from "solid" to "potentially first-author paper".
 Based on the above, a single paper from the thesis would most naturally
 contain:
 
-- **G-GAT architecture description** (1 figure, 2 pages of equations).
+- **GELT architecture description** (1 figure, 2 pages of equations).
 - **L-CNN replication on 1+1D Wilson loops + 3+1D topological charge**
   (1 table, 1 figure).
-- **Matched-parameter comparison G-GAT vs L-CNN, with the attention-range
+- **Matched-parameter comparison GELT vs L-CNN, with the attention-range
   vs. correlation-length plot** (this is the novelty).
 - **Phase 1 result (3D Z₂ critical exponents from ML) as a secondary check**
   on a different gauge group.

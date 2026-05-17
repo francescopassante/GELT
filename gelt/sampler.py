@@ -9,7 +9,7 @@ from typing import List, Optional, Tuple
 
 import torch
 
-from gelt.lattice import Z2, GaugeGroup, action, plaquette_tensor, random_links
+from gelt.lattice import Z2, GaugeGroup, action, random_links
 
 
 def staple_sum(U: torch.Tensor, mu: int, gaugegroup: GaugeGroup) -> torch.Tensor:
@@ -17,9 +17,7 @@ def staple_sum(U: torch.Tensor, mu: int, gaugegroup: GaugeGroup) -> torch.Tensor
 
     The local Wilson action for link U_μ(x) is
         S_local = -(β/nc) Re Tr[ U_μ(x) · A_μ(x) ]
-    where the staple sum A_μ(x) is::
-
-        (Using LGT convention where the ordering is reverse (from left to right), cyclicity of trace allows it)
+    where the staple sum A_μ(x) is:
         Σ_{ν≠μ} [  U_ν(x+μ̂) · U_μ†(x+ν̂) · U_ν†(x)          (forward staple)
                   + U_ν†(x+μ̂-ν̂) · U_μ†(x-ν̂) · U_ν(x-ν̂) ]  (backward staple)
 
@@ -192,7 +190,7 @@ def mcmc_ensemble(
                  argument, use ``functools.partial``::
 
                      sampler = functools.partial(mcmc_ensemble, sweep_fn=my_sweep)
-                     full_pipeline(..., sampler=sampler)
+                     build_plaquette_datasets(..., sampler=sampler)
     dtype, device : passed to ``random_links``
 
     Returns

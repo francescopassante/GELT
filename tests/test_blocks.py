@@ -14,8 +14,9 @@ from gelt import (
     SU,
     Z2,
     build_transport_sums,
-    gauge_transformation,
     l1_ball_offsets,
+    link_gauge_transformation,
+    local_gauge_transformation,
     random_links,
 )
 from gelt.blocks import GEMHSA
@@ -37,15 +38,6 @@ def _unitary_omega(L, D, nc, seed):
     return Q.reshape(*([L] * D), nc, nc)
 
 
-def _gauge_transform_W(W, omega, gaugegroup):
-    """Adjoint-field gauge transform: W_g(x) = Ω(x) · W(x) · Ω†(x).
-
-    W : (B, C, *Λ, nc, nc); omega : (*Λ, nc, nc). Broadcasts over (B, C).
-    """
-    omega_b = omega.unsqueeze(0).unsqueeze(0)  # (1, 1, *Λ, nc, nc)
-    return omega_b @ W @ gaugegroup.dagger(omega_b)
-
-
 # ---------------------------------------------------------------------------
 # Gauge equivariance (the main guarantee)
 # ---------------------------------------------------------------------------
@@ -59,29 +51,28 @@ def test_gemhsa_gauge_equivariance_sun():
     dtype = torch.complex128
 
     U = random_links(L=L, D=D, gaugegroup=gg, dtype=dtype)  # (D, *Λ, nc, nc)
-    W = (
-        torch.randn(1, C, *([L] * D), nc, nc, dtype=torch.float64)
-        + 1j * torch.randn(1, C, *([L] * D), nc, nc, dtype=torch.float64)
+    W = torch.randn(1, C, *([L] * D), nc, nc, dtype=torch.float64) + 1j * torch.randn(
+        1, C, *([L] * D), nc, nc, dtype=torch.float64
     )
 
     omega = _unitary_omega(L, D, nc, seed=7)
-    U_g = gauge_transformation(U, omega, gg)
-    W_g = _gauge_transform_W(W, omega, gg)
+    U_g = link_gauge_transformation(U, omega, gg)
+    W_g = local_gauge_transformation(W, omega, gg)
 
     offsets = l1_ball_offsets(D, R)
     T = _stack_T(U, R, gg, offsets).unsqueeze(0)  # (1, n_off, *Λ, nc, nc)
     T_g = _stack_T(U_g, R, gg, offsets).unsqueeze(0)
 
-    block = GEMHSA(
-        gaugegroup=gg, L=L, D=D, R=R, d_input=C, nhead=H, dtype=dtype
-    ).to(dtype)
+    block = GEMHSA(gaugegroup=gg, L=L, D=D, R=R, d_input=C, nhead=H, dtype=dtype).to(
+        dtype
+    )
     # Exercise the orbit bias and the gate branch by setting non-trivial values.
     with torch.no_grad():
         block.b_h.copy_(torch.randn_like(block.b_h) * 0.1)
 
     out = block(W, T)
     out_g = block(W_g, T_g)
-    expected = _gauge_transform_W(out, omega, gg)
+    expected = local_gauge_transformation(out, omega, gg)
 
     assert torch.allclose(out_g, expected, atol=1e-9), (
         f"max diff = {(out_g - expected).abs().max().item():.3e}"
@@ -96,13 +87,12 @@ def test_gemhsa_gauge_equivariance_softplus_gate():
     dtype = torch.complex128
 
     U = random_links(L=L, D=D, gaugegroup=gg, dtype=dtype)
-    W = (
-        torch.randn(1, C, *([L] * D), nc, nc, dtype=torch.float64)
-        + 1j * torch.randn(1, C, *([L] * D), nc, nc, dtype=torch.float64)
+    W = torch.randn(1, C, *([L] * D), nc, nc, dtype=torch.float64) + 1j * torch.randn(
+        1, C, *([L] * D), nc, nc, dtype=torch.float64
     )
     omega = _unitary_omega(L, D, nc, seed=11)
-    U_g = gauge_transformation(U, omega, gg)
-    W_g = _gauge_transform_W(W, omega, gg)
+    U_g = link_gauge_transformation(U, omega, gg)
+    W_g = local_gauge_transformation(W, omega, gg)
 
     offsets = l1_ball_offsets(D, R)
     T = _stack_T(U, R, gg, offsets).unsqueeze(0)
@@ -114,7 +104,7 @@ def test_gemhsa_gauge_equivariance_softplus_gate():
 
     out = block(W, T)
     out_g = block(W_g, T_g)
-    expected = _gauge_transform_W(out, omega, gg)
+    expected = local_gauge_transformation(out, omega, gg)
 
     assert torch.allclose(out_g, expected, atol=1e-9)
 
@@ -137,9 +127,7 @@ def test_gemhsa_shape_preserved_and_backward_finite():
     offsets = l1_ball_offsets(D, R)
     T = torch.stack([_stack_T(U_batch[b], R, gg, offsets) for b in range(B)], dim=0)
 
-    W = torch.randn(
-        B, C, *([L] * D), nc, nc, dtype=torch.complex64, requires_grad=True
-    )
+    W = torch.randn(B, C, *([L] * D), nc, nc, dtype=torch.complex64, requires_grad=True)
     block = GEMHSA(gaugegroup=gg, L=L, D=D, R=R, d_input=C, nhead=H)
 
     out = block(W, T)
@@ -167,19 +155,19 @@ def test_gemhsa_gauge_equivariance_z2():
     W = torch.randn(1, C, *([L] * D), 1, 1, dtype=dtype)
 
     omega = gg.random((L,) * D, dtype=dtype)
-    U_g = gauge_transformation(U, omega, gg)
-    W_g = _gauge_transform_W(W, omega, gg)
+    U_g = link_gauge_transformation(U, omega, gg)
+    W_g = local_gauge_transformation(W, omega, gg)
 
     offsets = l1_ball_offsets(D, R)
     T = _stack_T(U, R, gg, offsets).unsqueeze(0)
     T_g = _stack_T(U_g, R, gg, offsets).unsqueeze(0)
 
-    block = GEMHSA(
-        gaugegroup=gg, L=L, D=D, R=R, d_input=C, nhead=H, dtype=dtype
-    ).to(dtype)
+    block = GEMHSA(gaugegroup=gg, L=L, D=D, R=R, d_input=C, nhead=H, dtype=dtype).to(
+        dtype
+    )
 
     out = block(W, T)
     out_g = block(W_g, T_g)
-    expected = _gauge_transform_W(out, omega, gg)
+    expected = local_gauge_transformation(out, omega, gg)
 
     assert torch.allclose(out_g, expected, atol=1e-12)

@@ -26,7 +26,7 @@ workflow. Reasons to **not** use them here:
 - Heavy integration cost vs. the actual code we'd write (samplers are
   small — see §3).
 - Configurations live in proprietary formats; we'd lose GPU
-  co-location with the G-GAT and round-trip through disk.
+  co-location with the GELT and round-trip through disk.
 - Obscures the physics — a thesis benefits from owning the sampler.
 - Their value is multi-node scaling, which we don't need at the
   volumes in `roadmap.md` Phases 0–5.
@@ -80,14 +80,14 @@ physics motivation.
   4D SU(3) volumes** — training cost grows faster than HMC cost.
 
 **Decision for this thesis.** Do **not** use flows to generate the
-G-GAT's training data:
+GELT's training data:
 - We'd be debugging two ML systems against each other.
 - A flow needs validated MC data to train against — chicken-and-egg.
 - Phase 0–3 ensembles are small enough that HB+OR is essentially free.
 
 Flows **are** a legitimate **Phase 6** topic — `roadmap.md` already lists
 "trivializing flows" and "topological-sector sampling." An equivariant
-G-GAT is a plausible flow *backbone*, so this is a natural follow-on
+GELT is a plausible flow *backbone*, so this is a natural follow-on
 rather than a substitute for the conventional sampler.
 
 ## 5. Staples — what the term means
@@ -126,7 +126,7 @@ two lattice points inside its attention block.
 | **CASK staple** | *Individual* open paths used as a transport operator inside a learned layer | NN architecture |
 
 Both are "open chains of links bordering a loop," hence the shared name.
-If/when CASK-like transports enter the G-GAT, disambiguate — call the
+If/when CASK-like transports enter the GELT, disambiguate — call the
 sampling object `staple_sum`.
 
 ## 6. Open implementation questions
