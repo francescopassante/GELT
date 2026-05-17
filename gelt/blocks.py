@@ -62,6 +62,13 @@ class GEMHSA(nn.Module):
         self.H = nhead
         self.C = d_input
         self.d_qkv = d_input // nhead if d_qkv is None else d_qkv
+        if self.d_qkv < 1:
+            raise ValueError(
+                f"d_qkv must be >= 1, got {self.d_qkv} "
+                f"(d_input={d_input}, nhead={nhead}). "
+                f"Pass d_qkv explicitly when d_input < nhead — this happens "
+                f"e.g. with GELT in D=2, where d_input = D(D-1)/2 = 1."
+            )
         if gate not in ("relu", "softplus"):
             raise ValueError(f"gate must be 'relu' or 'softplus', got {gate!r}")
         self.gate = gate
@@ -283,8 +290,10 @@ class MLP(nn.Module):
         self.fc2 = nn.Linear(hidden_features, out_features)
 
     def forward(self, x):
-        # x = (B, 2C, *Λ) -> (B, N, 2C) where N is the number of lattice sites
-        x.reshape(x.shape[0], -1, x.shape[1])
+        # (B, 2C, *Λ) -> (B, *Λ, 2C) so nn.Linear acts on the channel axis.
+        # reshape() would reinterpret memory and scramble the per-site vectors;
+        # movedim is the permutation we actually want.
+        x = x.movedim(1, -1)
         x = F.relu(self.fc1(x))
         x = self.fc2(x)
         return x
@@ -314,19 +323,30 @@ class GELT(nn.Module):
         mlp_out=1,
     ):
         # Plaquette input -> D(D-1)/2 plaquettes per site.
-        d_input = D * (D - 1) / 2
+        d_input = D * (D - 1) // 2
         super(GELT, self).__init__()
-        gemhsa_models = [
-            GEMHSA(gaugegroup, L, D, R, d_input, nhead, d_qkv, gate, dtype)
-            for i in range(gemhsa_layers)
-        ]
-
-        self.attn = nn.Sequential(*gemhsa_models)
+        # ModuleList so the GEMHSA parameters are registered with PyTorch
+        # and picked up by .parameters() / .to() / .state_dict().
+        self.gemhsa_models = nn.ModuleList(
+            [
+                GEMHSA(gaugegroup, L, D, R, d_input, nhead, d_qkv, gate, dtype)
+                for i in range(gemhsa_layers)
+            ]
+        )
 
         self.trace = Trace()
         self.mlp = MLP(2 * d_input, mlp_hidden, mlp_out)
 
+    def attn(self, W, T):
+        for layer in self.gemhsa_models:
+            W = layer(W, T)
+        return W
+
     def forward(self, W, T):
         W_attn = self.attn(W, T)
         trace = self.trace(W_attn)
-        return self.mlp(trace)
+        site_out = self.mlp(trace)  # (B, *Λ, mlp_out)
+        # Sum the site-local readout to an extensive scalar per config
+        # (matches the Wilson action target). squeeze(-1) handles mlp_out=1.
+        spatial_dims = tuple(range(1, site_out.ndim - 1))
+        return site_out.sum(dim=spatial_dims).squeeze(-1)
