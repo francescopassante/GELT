@@ -140,11 +140,17 @@ def main():
 
     run_bench(OriginalGELT, model_parameters, train_loader, val_loader, device, name="Original")
     run_bench(OptimizedGELT, model_parameters, train_loader, val_loader, device, name="Optimized")
+    # AMP is a no-op on complex64 (PyTorch autocast does not cast complex
+    # dtypes), kept here for visibility — should match "Optimized" within noise.
     run_bench(OptimizedGELT, model_parameters, train_loader, val_loader, device, name="Optimized+AMP", use_amp=True)
-    
-    if device.type != "mps":
-        run_bench(OptimizedGELT, model_parameters, train_loader, val_loader, device, name="Optimized+Compiled", compile=True)
-        run_bench(OptimizedGELT, model_parameters, train_loader, val_loader, device, name="Optimized+AMP+Compiled", compile=True, use_amp=True)
+
+    # torch.compile + complex64 currently fails on the bwd graph with
+    # "self.stride(-1) must be 1 to view ComplexFloat as Float" — Inductor's
+    # complex-add decomposition tries to view a complex tensor with non-unit
+    # last-dim stride as real and trips. Both AMP and torch.compile unlock
+    # together once we move to real arithmetic (see notes/architecture.html
+    # §13.2). The compile-enabled variants are intentionally not benchmarked
+    # here.
 
 if __name__ == "__main__":
     main()
