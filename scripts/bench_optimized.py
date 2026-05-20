@@ -123,7 +123,7 @@ def main():
     print(f"[data] build: {time.perf_counter() - t0:.2f}s")
 
     # Bump batch size for V100
-    batch_size = 64
+    batch_size = 128
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=batch_size, shuffle=True
     )
