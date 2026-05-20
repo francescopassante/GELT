@@ -260,9 +260,13 @@ class GEMHSA(nn.Module):
         
         # Contribution from Identity: w_QKV[:, :, 0] * I
         # w_QKV[:, :, 0]: (3, H*d)
-        # Broadcast identity to (3, 1, H, d_qkv, *Λ, nc, nc)
         qkv_id = w_QKV[:, :, 0].view(3, 1, self.H, self.d_qkv, *([1] * (len(spatial) + 2)))
-        eye = torch.eye(nc, dtype=W.dtype, device=W.device).view(*([1] * (3 + 1 + 1 + len(spatial))), nc, nc)
+        
+        # Identity matrix: (nc, nc) -> (1, 1, 1, 1, *([1]*D), nc, nc)
+        eye = torch.eye(nc, dtype=W.dtype, device=W.device)
+        for _ in range(4 + len(spatial)):
+            eye = eye.unsqueeze(0)
+            
         QKV = qkv_id * eye # (3, 1, H, d_qkv, *Λ, nc, nc)
         
         # Contributions from W and W_dag
