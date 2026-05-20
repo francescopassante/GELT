@@ -30,6 +30,12 @@ from gelt.lattice import (
     random_links,
 )
 
+
+def _at(T, offsets, dx):
+    """Look up T_Δx in the (n_offsets, *Λ, nc, nc) tensor by offset tuple."""
+    return T[offsets.index(dx)]
+
+
 # ---------------------------------------------------------------------------
 # Mock gauge group: arbitrary nc=2 complex matrices.
 # Z₂ elements are real and self-inverse, so dagger errors are invisible there.
@@ -111,16 +117,64 @@ def test_full_l1_ball_count(D, R, expected):
     torch.manual_seed(0)
     U = random_links(L=4, D=D, gaugegroup=gaugegroup)
     T = build_transport_sums(U, R=R, gaugegroup=gaugegroup)
-    assert len(T) == expected
+    assert T.shape[0] == expected
 
 
-def test_table_keys_are_signed_l1_ball():
-    """Keys of the returned dict match l1_ball_offsets exactly."""
+def test_offset_axis_matches_l1_ball():
+    """Offset axis length matches l1_ball_offsets exactly; that helper IS the index."""
     gaugegroup = Z2()
     torch.manual_seed(0)
     U = random_links(L=4, D=3, gaugegroup=gaugegroup)
     T = build_transport_sums(U, R=2, gaugegroup=gaugegroup)
-    assert set(T.keys()) == set(l1_ball_offsets(D=3, R=2))
+    assert T.shape[0] == len(l1_ball_offsets(D=3, R=2))
+
+
+# ---------------------------------------------------------------------------
+# Batched DP: one pass over (N, D, *Λ, nc, nc) must match N independent passes.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("R", [1, 2])
+def test_batched_matches_unbatched_z2(R):
+    """Batched DP and per-config DP must produce bit-identical transports."""
+    gaugegroup = Z2()
+    L, D, N = 4, 2, 5
+    torch.manual_seed(9)
+    configs = torch.stack(
+        [
+            random_links(L=L, D=D, gaugegroup=gaugegroup, dtype=torch.float64)
+            for _ in range(N)
+        ],
+        dim=0,
+    )
+
+    T_batched = build_transport_sums(configs, R=R, gaugegroup=gaugegroup, batched=True)
+    T_per = torch.stack(
+        [build_transport_sums(configs[n], R=R, gaugegroup=gaugegroup) for n in range(N)],
+        dim=0,
+    )
+
+    assert T_batched.shape == T_per.shape
+    assert torch.allclose(T_batched, T_per, atol=0.0)
+
+
+def test_batched_matches_unbatched_complex():
+    """Same equivalence at nc=2 complex — catches dagger/roll bugs in the batched path."""
+    gaugegroup = _Gl2()
+    L, D, nc, N = 4, 2, 2, 3
+    torch.manual_seed(10)
+    configs = torch.randn(N, D, L, L, nc, nc, dtype=torch.float64) + 1j * torch.randn(
+        N, D, L, L, nc, nc, dtype=torch.float64
+    )
+
+    T_batched = build_transport_sums(configs, R=2, gaugegroup=gaugegroup, batched=True)
+    T_per = torch.stack(
+        [build_transport_sums(configs[n], R=2, gaugegroup=gaugegroup) for n in range(N)],
+        dim=0,
+    )
+
+    assert T_batched.shape == T_per.shape
+    assert torch.allclose(T_batched, T_per, atol=1e-12)
 
 
 # ---------------------------------------------------------------------------
@@ -135,9 +189,10 @@ def test_base_case_positive(mu):
     torch.manual_seed(0)
     U = random_links(L=4, D=2, gaugegroup=gaugegroup, dtype=torch.float64)
     T = build_transport_sums(U, R=1, gaugegroup=gaugegroup)
+    offsets = l1_ball_offsets(D=2, R=1)
 
     dx = tuple(1 if i == mu else 0 for i in range(2))
-    assert torch.allclose(T[dx], U[mu], atol=0.0)
+    assert torch.allclose(_at(T, offsets, dx), U[mu], atol=0.0)
 
 
 @pytest.mark.parametrize("mu", [0, 1])
@@ -147,10 +202,11 @@ def test_base_case_negative(mu):
     torch.manual_seed(0)
     U = random_links(L=4, D=2, gaugegroup=gaugegroup, dtype=torch.float64)
     T = build_transport_sums(U, R=1, gaugegroup=gaugegroup)
+    offsets = l1_ball_offsets(D=2, R=1)
 
     dx = tuple(-1 if i == mu else 0 for i in range(2))
     expected = gaugegroup.dagger(torch.roll(U[mu], shifts=1, dims=mu))
-    assert torch.allclose(T[dx], expected, atol=0.0)
+    assert torch.allclose(_at(T, offsets, dx), expected, atol=0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -167,12 +223,13 @@ def test_brute_force_positive_l1_2():
     torch.manual_seed(1)
     U = random_links(L=6, D=2, gaugegroup=gaugegroup, dtype=torch.float64)
     T = build_transport_sums(U, R=2, gaugegroup=gaugegroup)
+    offsets = l1_ball_offsets(D=2, R=2)
 
     expected = (
         U[0] @ torch.roll(U[1], shifts=-1, dims=0)
         + U[1] @ torch.roll(U[0], shifts=-1, dims=1)
     ) / 2
-    assert torch.allclose(T[(1, 1)], expected, atol=1e-12)
+    assert torch.allclose(_at(T, offsets, (1, 1)), expected, atol=1e-12)
 
 
 def test_brute_force_negative_l1_2():
@@ -184,6 +241,7 @@ def test_brute_force_negative_l1_2():
     torch.manual_seed(2)
     U = random_links(L=6, D=2, gaugegroup=gaugegroup, dtype=torch.float64)
     T = build_transport_sums(U, R=2, gaugegroup=gaugegroup)
+    offsets = l1_ball_offsets(D=2, R=2)
 
     path1 = gaugegroup.dagger(torch.roll(U[0], shifts=1, dims=0)) @ gaugegroup.dagger(
         torch.roll(torch.roll(U[1], shifts=1, dims=0), shifts=1, dims=1)
@@ -192,7 +250,7 @@ def test_brute_force_negative_l1_2():
         torch.roll(torch.roll(U[0], shifts=1, dims=0), shifts=1, dims=1)
     )
     expected = (path1 + path2) / 2
-    assert torch.allclose(T[(-1, -1)], expected, atol=1e-12)
+    assert torch.allclose(_at(T, offsets, (-1, -1)), expected, atol=1e-12)
 
 
 def test_brute_force_mixed_l1_2():
@@ -204,6 +262,7 @@ def test_brute_force_mixed_l1_2():
     torch.manual_seed(3)
     U = random_links(L=6, D=2, gaugegroup=gaugegroup, dtype=torch.float64)
     T = build_transport_sums(U, R=2, gaugegroup=gaugegroup)
+    offsets = l1_ball_offsets(D=2, R=2)
 
     # U_0(x) @ U†_1(x + ê_0 − ê_1): roll U[1] by (-1, +1) along (0, 1) brings (x + ê_0 − ê_1) → x.
     U1d_shift = gaugegroup.dagger(
@@ -217,7 +276,7 @@ def test_brute_force_mixed_l1_2():
     path2 = U1d_at_xm1 @ U0_at_xm1
 
     expected = (path1 + path2) / 2
-    assert torch.allclose(T[(1, -1)], expected, atol=1e-12)
+    assert torch.allclose(_at(T, offsets, (1, -1)), expected, atol=1e-12)
 
 
 def test_3d_base_cases():
@@ -226,14 +285,16 @@ def test_3d_base_cases():
     torch.manual_seed(6)
     U = random_links(L=4, D=3, gaugegroup=gaugegroup)
     T = build_transport_sums(U, R=1, gaugegroup=gaugegroup)
+    offsets = l1_ball_offsets(D=3, R=1)
 
-    assert len(T) == 6
+    assert T.shape[0] == 6
     for mu in range(3):
         pos = tuple(1 if i == mu else 0 for i in range(3))
         neg = tuple(-1 if i == mu else 0 for i in range(3))
-        assert torch.allclose(T[pos], U[mu])
+        assert torch.allclose(_at(T, offsets, pos), U[mu])
         assert torch.allclose(
-            T[neg], gaugegroup.dagger(torch.roll(U[mu], shifts=1, dims=mu))
+            _at(T, offsets, neg),
+            gaugegroup.dagger(torch.roll(U[mu], shifts=1, dims=mu)),
         )
 
 
@@ -250,11 +311,12 @@ def test_octant_relation_every_offset(R):
     D = 2
     U = random_links(L=6, D=D, gaugegroup=gaugegroup, dtype=torch.float64)
     T = build_transport_sums(U, R=R, gaugegroup=gaugegroup)
+    offsets = l1_ball_offsets(D=D, R=R)
 
-    for dx, T_dx in T.items():
+    for i, dx in enumerate(offsets):
         neg_dx = tuple(-d for d in dx)
-        manual = gaugegroup.dagger(torch.roll(T_dx, shifts=dx, dims=tuple(range(D))))
-        assert torch.allclose(T[neg_dx], manual, atol=1e-12), (
+        manual = gaugegroup.dagger(torch.roll(T[i], shifts=dx, dims=tuple(range(D))))
+        assert torch.allclose(_at(T, offsets, neg_dx), manual, atol=1e-12), (
             f"Octant relation failed for dx={dx}"
         )
 
@@ -268,11 +330,12 @@ def test_octant_relation_mixed_complex():
     U += 1j * torch.randn(D, L, L, nc, nc, dtype=torch.complex128).imag
 
     T = build_transport_sums(U, R=2, gaugegroup=gaugegroup)
+    offsets = l1_ball_offsets(D=D, R=2)
 
-    for dx, T_dx in T.items():
+    for i, dx in enumerate(offsets):
         neg_dx = tuple(-d for d in dx)
-        manual = gaugegroup.dagger(torch.roll(T_dx, shifts=dx, dims=tuple(range(D))))
-        assert torch.allclose(T[neg_dx], manual, atol=1e-10), (
+        manual = gaugegroup.dagger(torch.roll(T[i], shifts=dx, dims=tuple(range(D))))
+        assert torch.allclose(_at(T, offsets, neg_dx), manual, atol=1e-10), (
             f"Octant relation (complex) failed for dx={dx}"
         )
 
@@ -295,13 +358,14 @@ def test_gauge_covariance_z2(R):
     T_prime = build_transport_sums(
         link_gauge_transformation(U, omega, gaugegroup), R=R, gaugegroup=gaugegroup
     )
+    offsets = l1_ball_offsets(D=D, R=R)
 
-    for dx, T_dx_prime in T_prime.items():
+    for i, dx in enumerate(offsets):
         omega_xdx = torch.roll(
             omega, shifts=tuple(-d for d in dx), dims=tuple(range(D))
         )
-        expected = omega @ T[dx] @ gaugegroup.dagger(omega_xdx)
-        assert torch.allclose(T_dx_prime, expected, atol=1e-12), (
+        expected = omega @ T[i] @ gaugegroup.dagger(omega_xdx)
+        assert torch.allclose(T_prime[i], expected, atol=1e-12), (
             f"Z₂ gauge covariance violated for dx={dx}"
         )
 
@@ -321,12 +385,13 @@ def test_gauge_covariance_complex(R):
     T_prime = build_transport_sums(
         link_gauge_transformation(U, omega, gaugegroup), R=R, gaugegroup=gaugegroup
     )
+    offsets = l1_ball_offsets(D=D, R=R)
 
-    for dx, T_dx_prime in T_prime.items():
+    for i, dx in enumerate(offsets):
         omega_xdx = torch.roll(
             omega, shifts=tuple(-d for d in dx), dims=tuple(range(D))
         )
-        expected = omega @ T[dx] @ gaugegroup.dagger(omega_xdx)
-        assert torch.allclose(T_dx_prime, expected, atol=1e-9), (
+        expected = omega @ T[i] @ gaugegroup.dagger(omega_xdx)
+        assert torch.allclose(T_prime[i], expected, atol=1e-9), (
             f"Complex gauge covariance violated for dx={dx}"
         )

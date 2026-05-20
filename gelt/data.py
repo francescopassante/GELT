@@ -8,7 +8,6 @@ from gelt.lattice import (
     GaugeGroup,
     action,
     build_transport_sums,
-    l1_ball_offsets,
     plaquette_tensor,
 )
 
@@ -20,21 +19,19 @@ def build_transport(
 ) -> torch.Tensor:
     """Precompute the shortest-path-averaged transport tensor for every config.
 
-    Returns a single stacked tensor of shape
-    ``(N, n_offsets, *Λ, nc, nc)`` with offset axis ordered by
-    :func:`gelt.lattice.l1_ball_offsets` ``(D, R)`` — i.e. by ``|Δx|₁`` then
-    lexicographically. ``D`` is taken from ``configs.shape[1]``.
+    One batched DP pass over the whole ``(N, D, *Λ, nc, nc)`` configs tensor,
+    so the matmuls and rolls run on the leading batch in BLAS instead of N
+    independent Python-level calls.
+
+    Returns a single stacked tensor of shape ``(N, n_offsets, *Λ, nc, nc)``
+    with offset axis ordered by :func:`gelt.lattice.l1_ball_offsets` ``(D, R)``
+    — i.e. by ``|Δx|₁`` then lexicographically. ``D`` is taken from
+    ``configs.shape[1]``.
 
     The transport depends only on the link configuration ``U``; precomputing it
     here moves the entire DP out of the model's forward pass.
     """
-    D = configs.shape[1]
-    offsets = l1_ball_offsets(D, R)
-    per_config = []
-    for c in configs:
-        T_dict = build_transport_sums(c, R=R, gaugegroup=gaugegroup)
-        per_config.append(torch.stack([T_dict[off] for off in offsets], dim=0))
-    return torch.stack(per_config, dim=0)
+    return build_transport_sums(configs, R=R, gaugegroup=gaugegroup, batched=True)
 
 
 def flatten_color(U: torch.Tensor) -> torch.Tensor:

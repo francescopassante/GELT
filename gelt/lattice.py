@@ -220,12 +220,13 @@ def build_transport_sums(
     U: torch.Tensor,
     R: int,
     gaugegroup: GaugeGroup,
-) -> Dict[Tuple[int, ...], torch.Tensor]:
+    batched: bool = False,
+) -> torch.Tensor:
     """Shortest-path-averaged parallel transports for **every** offset 0 < |Δx|₁ ≤ R.
 
     For each signed lattice offset Δx in the L1-ball of radius R, the returned
-    tensor ``T_Δx`` has shape ``(*Λ, nc, nc)`` and equals the **average** over
-    all shortest lattice paths from x to x+Δx:
+    tensor entry equals the **average** over all shortest lattice paths from x
+    to x+Δx:
 
         T_Δx(x)  =  (1 / N_Δx)  Σ_{P : x→x+Δx, |P|=|Δx|₁}  U_P
 
@@ -256,73 +257,109 @@ def build_transport_sums(
     Parameters
     ----------
     U
-        Link tensor of shape ``(D, *Λ, nc, nc)``.
+        Link tensor of shape ``(D, *Λ, nc, nc)``. When ``batched=True``,
+        the input has shape ``(N, D, *Λ, nc, nc)`` with a leading
+        configuration batch axis.
     R
         Manhattan radius.
     gaugegroup
         Gauge group (used for the backward-link daggers).
+    batched
+        If ``True``, the leading axis is a configuration batch ``N``: a
+        single DP pass runs once over the whole batch, replacing the
+        ``N`` independent Python-level builds dataset construction would
+        otherwise need.
 
     Returns
     -------
-    Dict mapping each signed offset tuple with ``0 < |Δx|₁ ≤ R`` to a tensor
-    of shape ``(*Λ, nc, nc)``.
+    Stacked transport tensor in canonical offset order — shape
+    ``(n_offsets, *Λ, nc, nc)`` (or ``(N, n_offsets, *Λ, nc, nc)`` when
+    ``batched=True``). The offset axis is ordered by
+    :func:`l1_ball_offsets` ``(D, R)``: sorted by ``|Δx|₁`` then
+    lexicographically. Use that helper to look up the index for a given Δx.
     """
-    D = U.shape[0]
-    spatial_shape = U.shape[1:-2]
+    # Unbatched path is handled by adding a singleton batch axis and squeezing
+    # at the end; the DP itself is a single code path.
+    squeeze_at_end = not batched
+    if squeeze_at_end:
+        U = U.unsqueeze(0)
+
+    N = U.shape[0]
+    D = U.shape[1]
+    spatial_shape = U.shape[2:-2]
     nc = U.shape[-1]
 
-    # Identity is the DP base for the zero offset.
+    # Spatial axis μ counted from the *end*. Color axes are always the trailing
+    # two, so this index works whether or not a batch axis is present.
+    def sdim(mu: int) -> int:
+        return mu - D - 2
+
+    # Identity is the DP base for the zero offset; broadcast over (N, *Λ).
     identity = (
         torch.eye(nc, dtype=U.dtype, device=U.device)
-        .expand(*spatial_shape, nc, nc)
+        .expand(N, *spatial_shape, nc, nc)
         .contiguous()
     )
 
-    # Pre-compute U†_μ(x − ê_μ) once per direction: roll by +1 in dim μ brings
-    # the link tensor's value at site x − ê_μ to index x, then dagger.
+    # Pre-compute U†_μ(x − ê_μ) once per direction: roll by +1 along the
+    # spatial-μ axis brings the link value at site x − ê_μ to index x, then dagger.
     U_back: List[torch.Tensor] = [
-        gaugegroup.dagger(torch.roll(U[mu], shifts=1, dims=mu)) for mu in range(D)
+        gaugegroup.dagger(torch.roll(U[:, mu], shifts=1, dims=sdim(mu)))
+        for mu in range(D)
     ]
 
+    offsets = l1_ball_offsets(D, R)
     zero: Tuple[int, ...] = (0,) * D
     table: Dict[Tuple[int, ...], torch.Tensor] = {zero: identity}
 
-    # All signed offsets in the L1-ball, sorted by |Δx|_1 so every sub-step is ready.
-    for dx in sorted(
-        (
-            dx
-            for dx in itertools.product(range(-R, R + 1), repeat=D)
-            if 0 < sum(abs(d) for d in dx) <= R
-        ),
-        key=lambda dx: sum(abs(d) for d in dx),
-    ):
+    # offsets are pre-sorted by |Δx|_1 so every sub-step is in the table.
+    for dx in offsets:
         t: Optional[torch.Tensor] = None
         for mu in range(D):
             if dx[mu] > 0:
                 prev_dx = tuple(v - 1 if i == mu else v for i, v in enumerate(dx))
                 # U_μ(x) · T_{Δx−ê_μ}(x+ê_μ): roll by −1 brings x+ê_μ to index x.
-                contrib = U[mu] @ torch.roll(table[prev_dx], shifts=-1, dims=mu)
+                contrib = U[:, mu] @ torch.roll(
+                    table[prev_dx], shifts=-1, dims=sdim(mu)
+                )
             elif dx[mu] < 0:
                 prev_dx = tuple(v + 1 if i == mu else v for i, v in enumerate(dx))
                 # U†_μ(x−ê_μ) · T_{Δx+ê_μ}(x−ê_μ): roll by +1 brings x−ê_μ to index x.
-                contrib = U_back[mu] @ torch.roll(table[prev_dx], shifts=1, dims=mu)
+                contrib = U_back[mu] @ torch.roll(
+                    table[prev_dx], shifts=1, dims=sdim(mu)
+                )
             else:
                 continue
             t = contrib if t is None else t + contrib
 
         table[dx] = t
 
-    del table[zero]
+    # Stack offsets at axis 1 so the result is (N, n_off, *Λ, nc, nc).
+    stacked = torch.stack([table[dx] for dx in offsets], dim=1)
+    del table  # release the per-offset references; the stacked tensor owns the data now.
 
-    # Normalise each entry by the number of shortest paths N_Δx.
+    # Normalise each offset slice by the number of shortest paths N_Δx.
     # N_Δx is the multinomial coefficient |Δx|₁! / Π_μ |Δx_μ|!: the |Δx|₁ steps
     # of the path are partitioned into groups of identical moves (|Δx_μ| moves
     # in each direction μ). With N_Δx = 1 for the base |Δx|₁ = 1 offsets,
-    # T_{±ê_μ} is left unchanged.
-    for dx in table:
-        n_paths = math.factorial(sum(abs(d) for d in dx))
+    # T_{±ê_μ} is left unchanged by the division.
+    n_paths_list = []
+    for dx in offsets:
+        n = math.factorial(sum(abs(d) for d in dx))
         for d in dx:
-            n_paths //= math.factorial(abs(d))
-        if n_paths > 1:
-            table[dx] = table[dx] / n_paths
-    return table
+            n //= math.factorial(abs(d))
+        n_paths_list.append(n)
+    real_dtype = (
+        torch.float64
+        if U.dtype in (torch.float64, torch.complex128)
+        else torch.float32
+    )
+    norms = torch.tensor(n_paths_list, dtype=real_dtype, device=U.device)
+    # Broadcast across (batch, n_off, *Λ, nc, nc): target shape (1, n_off, 1, ..., 1).
+    bcast_shape = [1] * stacked.ndim
+    bcast_shape[1] = -1
+    stacked = stacked / norms.view(bcast_shape)
+
+    if squeeze_at_end:
+        stacked = stacked.squeeze(0)
+    return stacked

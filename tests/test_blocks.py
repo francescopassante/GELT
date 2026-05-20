@@ -14,18 +14,11 @@ from gelt import (
     SU,
     Z2,
     build_transport_sums,
-    l1_ball_offsets,
     link_gauge_transformation,
     local_gauge_transformation,
     random_links,
 )
 from gelt.blocks import GEMHSA
-
-
-def _stack_T(U, R, gaugegroup, offsets):
-    """Build the (n_offsets, *Λ, nc, nc) transport tensor in canonical order."""
-    T_dict = build_transport_sums(U, R=R, gaugegroup=gaugegroup)
-    return torch.stack([T_dict[o] for o in offsets], dim=0)
 
 
 def _unitary_omega(L, D, nc, seed):
@@ -59,9 +52,8 @@ def test_gemhsa_gauge_equivariance_sun():
     U_g = link_gauge_transformation(U, omega, gg)
     W_g = local_gauge_transformation(W, omega, gg)
 
-    offsets = l1_ball_offsets(D, R)
-    T = _stack_T(U, R, gg, offsets).unsqueeze(0)  # (1, n_off, *Λ, nc, nc)
-    T_g = _stack_T(U_g, R, gg, offsets).unsqueeze(0)
+    T = build_transport_sums(U, R=R, gaugegroup=gg).unsqueeze(0)  # (1, n_off, *Λ, nc, nc)
+    T_g = build_transport_sums(U_g, R=R, gaugegroup=gg).unsqueeze(0)
 
     block = GEMHSA(gaugegroup=gg, L=L, D=D, R=R, d_input=C, nhead=H, dtype=dtype).to(
         dtype
@@ -94,9 +86,8 @@ def test_gemhsa_gauge_equivariance_softplus_gate():
     U_g = link_gauge_transformation(U, omega, gg)
     W_g = local_gauge_transformation(W, omega, gg)
 
-    offsets = l1_ball_offsets(D, R)
-    T = _stack_T(U, R, gg, offsets).unsqueeze(0)
-    T_g = _stack_T(U_g, R, gg, offsets).unsqueeze(0)
+    T = build_transport_sums(U, R=R, gaugegroup=gg).unsqueeze(0)
+    T_g = build_transport_sums(U_g, R=R, gaugegroup=gg).unsqueeze(0)
 
     block = GEMHSA(
         gaugegroup=gg, L=L, D=D, R=R, d_input=C, nhead=H, gate="softplus", dtype=dtype
@@ -124,8 +115,8 @@ def test_gemhsa_shape_preserved_and_backward_finite():
     U_batch = torch.stack(
         [random_links(L=L, D=D, gaugegroup=gg) for _ in range(B)], dim=0
     )
-    offsets = l1_ball_offsets(D, R)
-    T = torch.stack([_stack_T(U_batch[b], R, gg, offsets) for b in range(B)], dim=0)
+    # Exercise the batched DP path directly: one pass over the whole (B, D, *Λ, nc, nc).
+    T = build_transport_sums(U_batch, R=R, gaugegroup=gg, batched=True)
 
     W = torch.randn(B, C, *([L] * D), nc, nc, dtype=torch.complex64, requires_grad=True)
     block = GEMHSA(gaugegroup=gg, L=L, D=D, R=R, d_input=C, nhead=H)
@@ -158,9 +149,8 @@ def test_gemhsa_gauge_equivariance_z2():
     U_g = link_gauge_transformation(U, omega, gg)
     W_g = local_gauge_transformation(W, omega, gg)
 
-    offsets = l1_ball_offsets(D, R)
-    T = _stack_T(U, R, gg, offsets).unsqueeze(0)
-    T_g = _stack_T(U_g, R, gg, offsets).unsqueeze(0)
+    T = build_transport_sums(U, R=R, gaugegroup=gg).unsqueeze(0)
+    T_g = build_transport_sums(U_g, R=R, gaugegroup=gg).unsqueeze(0)
 
     block = GEMHSA(gaugegroup=gg, L=L, D=D, R=R, d_input=C, nhead=H, dtype=dtype).to(
         dtype

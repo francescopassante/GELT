@@ -5,7 +5,6 @@ import torch
 from gelt import (
     SU,
     build_transport_sums,
-    l1_ball_offsets,
     link_gauge_transformation,
     plaquette_tensor,
     random_links,
@@ -25,9 +24,8 @@ U_g = link_gauge_transformation(U, omega, gg)
 P = plaquette_tensor(U, gg).unsqueeze(0)
 P_g = plaquette_tensor(U_g, gg).unsqueeze(0)
 
-offsets = l1_ball_offsets(D, R)
-T = torch.stack([build_transport_sums(U, R=R, gaugegroup=gg)[o] for o in offsets], dim=0).unsqueeze(0)
-T_g = torch.stack([build_transport_sums(U_g, R=R, gaugegroup=gg)[o] for o in offsets], dim=0).unsqueeze(0)
+T = build_transport_sums(U, R=R, gaugegroup=gg).unsqueeze(0)
+T_g = build_transport_sums(U_g, R=R, gaugegroup=gg).unsqueeze(0)
 
 model = GELT(gaugegroup=gg, L=L, D=D, R=R, nhead=H, gemhsa_layers=layers, d_qkv=2)
 
