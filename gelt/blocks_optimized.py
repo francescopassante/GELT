@@ -165,66 +165,78 @@ class GEMHSA(nn.Module):
         return torch.cat([identity, W, self.gaugegroup.dagger(W)], dim=1)
 
     def _attend(self, Q, K, V, T):
-        """Fully batched gauge-equivariant attention over the L1-ball.
-
-        Single fused pass — no Python loop over offsets. Pipeline:
-          1. Gather K(x+Δx_i), V(x+Δx_i)
-          2. Adjoint transport: K̃ = T(x) · K(x+Δx) · T†(x), one fused matmul
-             chain that broadcasts T over H and d_qkv.
-          3. Scalar score Re Σ_c Tr[Q_c† · K̃_c] / √(d_qkv·nc) computed as a
-             Frobenius product, plus the §3.4 orbit-tied bias.
-          4. Softmax over the offset axis.
-          5. Value path Q† · Ṽ as one batched matmul, weighted by α and
-             reduced over the offset axis.
+        """Gauge-equivariant attention over the L1-ball.
+        
+        Optimized version: processes offsets in a loop to save memory, 
+        and uses .contiguous() to satisfy torch.compile requirements.
         """
         nc = Q.shape[-1]
+        B, H, d_qkv = Q.shape[:3]
+        spatial = Q.shape[3:-2]
+        ndim_s = len(spatial)
 
-        # 1. Neighbour gather.
-        idx = tuple(
-            self._nbr_idx[d] for d in range(self.D)
-        )  # (n_off, *Λ) D dimensional vectors
-        # nb_indexer = (:, :, :, ?, :, :) -> ? across dimension *Λ selects neighbors for each lattice site
-        nb_indexer = (slice(None),) * 3 + idx + (slice(None), slice(None))
-        K_nb = K[
-            nb_indexer
-        ]  # (B, H, d_qkv, n_off, *Λ, nc, nc) -> for each lattice site and neighbor, a (B, H, d, nc, nc) K tensor
-        V_nb = V[nb_indexer]  # same
+        # Pre-ensure contiguity for torch.compile
+        Q = Q.contiguous()
+        T = T.contiguous()
+        K = K.contiguous()
+        V = V.contiguous()
 
-        # 2. Adjoint transport: T · X · T†. T broadcasts over H and d_qkv.
-        T_b = T.unsqueeze(1).unsqueeze(1)  # (B, 1, 1, n_off, *Λ, nc, nc)
-        T_b_dag = self.gaugegroup.dagger(T_b)  # same shape (.conj().transpose)
-        K_tilde = T_b @ K_nb @ T_b_dag  # (B, H, d_qkv, n_off, *Λ, nc, nc)
-        V_tilde = T_b @ V_nb @ T_b_dag
-
-        # 3. Score = Tr[Q_c† K̃_c]/sqrt(Nc d_qkv); Implementable via Frobenius product instead of expensive matmul
-        Q_e = Q.unsqueeze(3)  # (B, H, d_qkv, 1, *Λ, nc, nc)
-        score = (Q_e.conj() * K_tilde).sum(dim=(2, -2, -1)).real
-        score = score / math.sqrt(self.d_qkv * nc)
-        # score: (B, H, n_off, *Λ)
-
-        # 4. Orbit-tied bias: b_h[(Δx_i)], broadcast over (B, *Λ).
-        # ``.real`` is defensive: ``b_h`` is semantically real, but a user
-        # calling ``block.to(torch.complex128)`` would cast it to complex —
-        # we don't want the imaginary part (always 0 with zero init) to
-        # contaminate the score and break softmax (no complex softmax kernel).
-
-        # with this slicing we copy the same bias for symmetry-tied offsets.
-        # we go from (H, n_unique_sigs) -> (H, n_off)
-        bias = self.b_h[:, self._orbit_idx]  # (H, n_off)
-        if torch.is_complex(bias):
-            bias = bias.real
-        score = score + bias.view(1, self.H, self.n_offsets, *([1] * self.D))
-
-        # 5. Softmax over offsets.
-        alpha = torch.softmax(score, dim=2)
-
-        # 6. Value path, fully batched over offsets.
-        Q_dag = self.gaugegroup.dagger(Q).unsqueeze(3)  # (B, H, d_qkv, 1, *Λ, nc, nc)
-        QdagV = torch.matmul(Q_dag, V_tilde)  # (B, H, d_qkv, n_off, *Λ, nc, nc)
-        # α: (B, H, n_off, *Λ) → (B, H, 1, n_off, *Λ, 1, 1) to broadcast over
-        # the d_qkv and the two color axes.
-        alpha_b = alpha.unsqueeze(2).unsqueeze(-1).unsqueeze(-1)
-        return (alpha_b * QdagV).sum(dim=3)  # (B, H, d_qkv, *Λ, nc, nc)
+        # Score and value accumulators
+        # scores: (B, H, n_off, *Λ)
+        scores = []
+        # QdagV_sum: (B, H, d_qkv, *Λ, nc, nc)
+        # We'll compute softmax first, so we need all scores.
+        
+        # 1. Compute scores for all offsets
+        for i, offset in enumerate(self.offsets):
+            # Neighbour gather for this offset only
+            idx = tuple(self._nbr_idx[d, i] for d in range(self.D))
+            nb_indexer = (slice(None), slice(None), slice(None)) + idx + (slice(None), slice(None))
+            
+            K_nb = K[nb_indexer].contiguous()
+            T_off = T[:, i].unsqueeze(1).unsqueeze(1).contiguous()
+            T_off_dag = self.gaugegroup.dagger(T_off).contiguous()
+            
+            # K_tilde = T @ K_nb @ T_dag
+            K_tilde = T_off @ K_nb @ T_off_dag
+            
+            # score = Re Tr[Q† K_tilde] / sqrt(d*nc)
+            # Frobenius product: Tr[A† B] = (A.conj() * B).sum()
+            s = (Q.conj() * K_tilde).sum(dim=(2, -2, -1)).real
+            s = s / math.sqrt(self.d_qkv * nc)
+            
+            # Add orbit-tied bias
+            bias = self.b_h[:, self._orbit_idx[i]]
+            if torch.is_complex(bias):
+                bias = bias.real
+            s = s + bias.view(1, self.H, *([1] * ndim_s))
+            scores.append(s)
+            
+        # 2. Softmax over offsets
+        score_tensor = torch.stack(scores, dim=2) # (B, H, n_off, *Λ)
+        alpha = torch.softmax(score_tensor, dim=2)
+        
+        # 3. Value path: sum_i alpha_i * Q† * V_tilde_i
+        Q_dag = self.gaugegroup.dagger(Q).contiguous()
+        out = torch.zeros_like(Q)
+        
+        for i, offset in enumerate(self.offsets):
+            idx = tuple(self._nbr_idx[d, i] for d in range(self.D))
+            nb_indexer = (slice(None), slice(None), slice(None)) + idx + (slice(None), slice(None))
+            
+            V_nb = V[nb_indexer].contiguous()
+            T_off = T[:, i].unsqueeze(1).unsqueeze(1).contiguous()
+            T_off_dag = self.gaugegroup.dagger(T_off).contiguous()
+            
+            V_tilde = T_off @ V_nb @ T_off_dag
+            
+            # alpha_b: (B, H, *Λ)
+            alpha_b = alpha[:, :, i].unsqueeze(2).unsqueeze(-1).unsqueeze(-1)
+            
+            # out += alpha * Q† @ V_tilde
+            out = out + alpha_b * (Q_dag @ V_tilde)
+            
+        return out
 
     def forward(self, W, T):
         """Run the block.
