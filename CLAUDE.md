@@ -31,13 +31,14 @@ All in `notes/`. Read in order before touching the equivariant model:
   vanilla transformer — preserves L-CNN's loop-doubling expressivity),
   residual + L-Act, `Re Tr` head. Includes a full §10 build-order
   checklist.
-- `notes/roadmap.md` — staged plan from sanity checks (Phase 0, 2D Z₂)
-  through 3D Z₂ critical exponents, 4D U(1), SU(2) replication of L-CNN
-  benchmarks, SLHMC with fermions, SU(3) pure gauge, and Phase-6 novel
-  directions (cross-β transfer, attention-as-correlation-length,
-  trivializing flows, topological-sector sampling, sign-problem contour
-  deformation, …). Each phase has setup / tasks / pass criteria / time
-  estimates / pitfalls.
+- `notes/roadmap.md` — staged plan: Phase 0 (2D Z₂ sanity), Phase 1
+  (3D Z₂ critical exponents), Phase 1.5 (β-conditioning +
+  non-equivariant transformer baseline), Phase 2 (4D U(1)), **Phase 3
+  (SU(2): L-CNN replication + matched-parameter shootout + attention-as-
+  correlation-length + cross-β generalization — the thesis's central
+  novelty)**, Phase 4 (SU(3) χ_t continuum scaling), Phase 5 (outlook:
+  SLHMC, imaginary-θ, and PhD-tier directions). Each phase has setup /
+  tasks / pass criteria / time estimates / pitfalls.
 - `notes/sampling.md` — strategy notes for the MC sampler (single-site
   Metropolis for Z₂; extension plan to heat-bath + overrelaxation for
   U(1)/SU(2)/SU(3)).

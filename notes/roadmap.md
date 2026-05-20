@@ -22,8 +22,20 @@ are a few hundred lines; pure SU(N_c) is a standard heat-bath / overrelaxation
 pseudocode) or use existing tools: **JuliaQCD** (`Gaugefields.jl`,
 `LatticeDiracOperators.jl`) for SLHMC, **lge-cnn** (gitlab.com/openpixi)
 for L-CNN-compatible data, **Hipparchus / openQCD / Chroma** for serious
-SU(3) production. For a master's thesis, JuliaQCD + a small custom Python
-MC for Z₂/U(1) is the lightest combination.
+SU(3) production. For a master's thesis, a small custom Python MC for
+Z₂/U(1) plus borrowed public SU(2)/SU(3) ensembles is the lightest
+combination.
+
+The thesis narrative is built around three claims:
+1. The architecture works (Phases 0–2).
+2. At matched parameter count it competes with or beats L-CNN, and the
+   benefit scales with the physical correlation length (Phase 3, central
+   novelty).
+3. The architecture generalizes across β and across N_c (Phase 3 cross-β,
+   Phase 4).
+
+Phase 5 is outlook only — it lists post-thesis directions and PhD-tier
+extensions.
 
 ---
 
@@ -48,6 +60,11 @@ MC for Z₂/U(1) is the lightest combination.
    then the configuration mean.
 3. **Gauge-invariance unit tests**: random + adversarial Ω attacks (§7 of
    `architecture.md`).
+4. **Identity-at-init / training-stability check**: with all attention
+   blocks initialised so that they implement the identity on `W`, verify
+   the loss on the trivial plaquette task is at noise floor and that
+   small-LR fine-tuning does not destabilise. This catches transformer-init
+   pathologies before they masquerade as physics bugs in later phases.
 
 ### 0.3 Pass criteria
 - Plaquette MSE ≤ 10⁻¹⁰ (single precision).
@@ -104,16 +121,8 @@ to test against, on a problem small enough to fit on a workstation.
 4. **Critical exponent extraction**: from the network's response on
    different volumes, do finite-size scaling on the order parameter to
    extract `ν` (correlation length exponent). 3D Ising universality class
-   predicts `ν = 0.6299...` — a tight target.
-5. **(Stretch) Operator scaling dimensions vs. conformal bootstrap.** In
-   the FSS regime, fit the scaling dimensions of several primary operators
-   simultaneously (energy, magnetization, stress tensor) from the
-   network's per-operator response across volumes. 3D Ising bootstrap
-   (Kos–Poland–Simmons-Duffin) gives Δ_σ = 0.5181489(10),
-   Δ_ε = 1.412625(10), Δ_T = 3 exactly. Matching multiple Δ's in one fit
-   is much more discriminating than ν alone, and is a clean way to argue
-   the network has learned the *operator content* of the critical theory,
-   not just one scale.
+   predicts `ν = 0.6299...` — a tight target. *Single exponent only* —
+   multi-Δ bootstrap matching is left as PhD-tier outlook (Phase 5).
 
 ### 1.3 Observables to plot
 - `<U_p>(β)` predicted vs. MC, all volumes overlaid.
@@ -137,6 +146,56 @@ to test against, on a problem small enough to fit on a workstation.
 - Do **not** train data straddling the transition for regression tasks
   (very different physics on the two sides). Train per-phase; treat the
   phase boundary as the test.
+
+---
+
+## Phase 1.5 — Tooling: β-conditioning and a non-equivariant baseline
+**Time: 2 weeks**
+
+This is a short bridge phase. It does no new physics, but it produces two
+artefacts that every subsequent phase needs:
+
+1. A **β-conditioned GELT** so that one model can fit configurations across
+   β (required for Phase 3's cross-β work and the attention-vs-ξ
+   diagnostic).
+2. A **non-equivariant transformer baseline** at matched parameter count.
+   Without this, the comparison story in Phase 3 cannot distinguish
+   "transformer wins" from "equivariance wins" — and that is the first
+   question any ML referee will ask.
+
+### 1.5.1 β-conditioning
+- Extend the dataset format so each configuration carries its β as a scalar
+  field (add to the `(X, T, y)` tuple → `(X, T, β, y)`).
+- Inject β into the model. Cheapest option: **FiLM-style scale-and-shift**
+  on each block's channel features, with β passed through a tiny MLP. This
+  is gauge-invariant by construction (acts on scalar channels, not on
+  matrix-valued features).
+- Validate on the Phase 1 data: a single β-conditioned model should fit
+  `<U_p>(β)` across all 21 β values as well as 21 per-β models do, within
+  10 %.
+
+### 1.5.2 Non-equivariant transformer baseline
+- Build a standard vision-transformer-style baseline with the same depth /
+  width / heads / attention range as the GELT, but **with no gauge
+  equivariance**: replace adjoint transports with raw shifts, replace the
+  matrix-bilinear value path with a standard linear projection. Same
+  parameter budget.
+- This is *not* `LatticeCNN`, which is convolutional. The point is to
+  ablate the equivariance, not the architecture class.
+- Validate on Phase 0 (Z₂ 2D): does it learn the plaquette regression at
+  all? Expected: yes, slowly. Document the gap.
+
+### 1.5.3 Pass criteria
+- β-conditioned GELT matches 21 per-β GELTs within 10 % on Phase 1 plaquette
+  regression.
+- Non-equivariant baseline trains stably on Phase 0; gauge-invariance
+  drift on random Ω is **large** (as expected — this is the point).
+
+### 1.5.4 Why this matters
+Every novel comparison in Phase 3 (matched-parameter shootout, attention
+range vs ξ, cross-β generalization) is either weaker or impossible without
+these two artefacts. Doing them now, on cheap Z₂ data, is much faster than
+retrofitting them into Phase 3 under SU(2) compute pressure.
 
 ---
 
@@ -191,12 +250,14 @@ later refined). It's the natural step before SU(N).
 
 ---
 
-## Phase 3 — 4D SU(2): replicate L-CNN, then beat it
-**Time: 4–6 weeks**
+## Phase 3 — 4D SU(2): replicate L-CNN, beat it, and learn ξ from attention
+**Time: 6–8 weeks (this is the thesis's central phase)**
 
-This is where you reproduce the published L-CNN benchmarks. Reproducing
-them confirms your implementation; **beating them at matched parameter
-count** is the first publishable result.
+This is where you reproduce the published L-CNN benchmarks, beat them at
+matched parameter count, and produce the two GELT-specific diagnostics
+that no convolutional baseline can match: **the optimal attention range
+tracks the physical correlation length**, and **one model fits multiple β
+through cross-β conditioning**.
 
 ### 3.1 Setup
 - Pure SU(2), 4D, Wilson action.
@@ -206,7 +267,7 @@ count** is the first publishable result.
 - Heat-bath + overrelaxation (Kennedy-Pendleton). 10³ thermalized
   configurations per (V, β); train/val/test = 80/10/10.
 
-### 3.2 Tasks (replication of L-CNN paper)
+### 3.2 Tasks — replication of L-CNN paper
 1. Wilson-loop regression: `W^{(1×2)}, W^{(2×2)}, W^{(4×4)}` (1+1D from
    the paper, but extend here to 4D).
 2. **Topological-charge density** (plaquette discretization, Eq. 13 of
@@ -221,10 +282,13 @@ count** is the first publishable result.
 - Topological-charge MSE ≤ 1.1 × L-CNN-Small reported (≈ 3 × 10⁻⁹).
 - Volume generalization: MSE flat ±20 % across volumes.
 
-### 3.4 Tasks (novel — GELT vs L-CNN)
+### 3.4 Tasks — central novelty: GELT vs L-CNN
 1. **Matched-parameter shootout**. For each Wilson loop task, train an
-   L-CNN and a GELT with the **same number of trainable parameters** (use
-   the L-CNN sizes: 35 / 1305 / 13521 / 39905). Plot MSE vs. parameters.
+   L-CNN, a GELT, and the **non-equivariant transformer baseline from
+   Phase 1.5** with the **same number of trainable parameters** (use the
+   L-CNN sizes: 35 / 1305 / 13521 / 39905). Plot MSE vs. parameters. The
+   triple comparison cleanly separates "transformer wins" from
+   "equivariance wins."
 2. **Long-range correlation regime**. Push β closer to the bulk-transition
    crossover (β ≈ 2.3) where the spatial correlation length grows.
    Hypothesis: at fixed parameter count, GELT pulls ahead of L-CNN as
@@ -243,13 +307,66 @@ count** is the first publishable result.
    the unconstrained network was burning on memorizing the point-group
    action. A clean, small, defensible result.
 
-### 3.5 Pass criteria — novel
+### 3.5 Tasks — attention range as a learned correlation length
+*(promoted from the original Phase 6.2; this is the single result that
+most cleanly says "this is what attention buys you over convolution.")*
+
+**Question.** When trained on configurations at varying β, do the learned
+attention scores `α_{x→y}` peak at offsets matching the physical
+correlation length ξ(β)?
+
+**Plan.**
+- Use the β-conditioned GELT from Phase 1.5.1, trained jointly on the
+  full β ∈ {1.5, 2.0, 2.3, 2.5, 2.7} ensemble for Wilson-loop regression.
+- Diagnostic: for each β, average `|α_{x→y}|` over (x, head) at fixed
+  offset `(μ, k)`. Plot vs. `k` to extract the attention-decay length
+  `ℓ_att(β)`.
+- Compare `ℓ_att(β)` against the MC-measured spatial correlation length
+  `ξ(β)` from a two-point function on the same configurations.
+
+**Pass criteria.**
+- `ℓ_att(β)` and `ξ(β)` are monotonically related on β ∈ [1.5, 2.7].
+- The ratio `ℓ_att / ξ` is constant within 30 % across β — i.e. the
+  network is tracking, not memorising.
+- Visualised as a single plot: this is the thesis-defence headline figure.
+
+**Risk.** Low. The decay of α is interpretable by construction; the only
+failure mode is that α is too sharply peaked at k = 1 (no useful
+information). Mitigation: use larger R and a softer attention temperature
+at init.
+
+### 3.6 Tasks — cross-β generalization
+*(promoted from the original Phase 6.1.)*
+
+**Question.** Train the β-conditioned GELT on β values away from a
+crossover region; test on held-out β within it. Does the model interpolate
+physics, or memorise the training distribution?
+
+**Plan.**
+- Train on β ∈ {1.5, 2.0, 2.5, 2.7}; evaluate on β = 2.3 (held out).
+- Compare per-β plaquette and Wilson-loop predictions against MC.
+- Repeat the holdout pattern across the β grid; the worst-case held-out
+  β tells you how much the model is interpolating vs extrapolating.
+
+**Pass criteria.** Held-out-β MSE within 2× of trained-β MSE on the same
+observables. Larger gaps are still publishable as a *measurement* of where
+the network's prior fails.
+
+**Why interesting.** Standard ML transferability tests use volume; very
+few have cleanly tested across β at fixed N_c, and none for an equivariant
+transformer. A positive result argues the network has learned the *gauge
+action structure* rather than the configuration distribution. A partial
+result still maps out the failure mode.
+
+### 3.7 Pass criteria — overall
 - At ≤ 10⁴ parameters and ξ/a ≥ 3, GELT beats L-CNN by ≥ 2× on Wilson-loop
   MSE. (If it doesn't, that itself is an interesting null result and you
   should publish it.)
 - Optimal R tracks ξ/a within a factor of 2 across β ∈ [2.0, 2.5].
+- `ℓ_att / ξ` constant within 30 % across β (§3.5).
+- Held-out-β MSE within 2× of trained-β MSE (§3.6).
 
-### 3.6 Pitfalls
+### 3.8 Pitfalls
 - Topological charge labels are tiny (~10⁻⁴). Apply the L-CNN scale trick
   (multiply labels by 100; divide back at inference). Forgetting this is
   the most common L-CNN reproduction failure.
@@ -257,343 +374,122 @@ count** is the first publishable result.
   global Q. Do not collapse to a single output before the per-site Trace.
 - For the matched-parameter comparison, *count complex parameters as 2
   reals*. Otherwise you'll silently double the GELT capacity.
+- The §3.5 diagnostic requires the β-conditioned model from Phase 1.5;
+  do not skip Phase 1.5.
 
 ---
 
-## Phase 4 — Dynamical fermions and SLHMC for SU(2)
-**Time: 6–8 weeks**
+## Phase 4 — SU(3) χ_t: continuum-limit check on borrowed ensembles
+**Time: 3–4 weeks**
 
-This is the CASK / Nagai-Tomiya territory: train the network as a
-**surrogate effective fermion action** so that HMC with a heavy-mass
-proposal accepts as if it were running at light mass.
+The same architecture with N_c = 3, on public pure-gauge configurations.
+Scope is deliberately narrow: **only topological susceptibility** `χ_t`,
+extending the Phase 3 topological-charge head to N_c = 3 and to multiple
+lattice spacings. The point is to demonstrate **N_c-agnostic transferability
+and continuum scaling**, not to do a full QCD spectroscopy program.
 
 ### 4.1 Setup
-- 2-color QCD, 4D, `4³ × 4` (matching CASK).
-- Staggered fermions, β = 2.7, true mass `m_l = 0.3`, surrogate mass
-  `m_h ∈ {0.4, 0.5, 0.75, 1.0}`.
-- Build on JuliaQCD (`LatticeDiracOperators.jl`) — porting the architecture
-  to Julia's `Zygote.jl` is the tax for getting fermion infrastructure for
-  free; budget 1–2 weeks.
-
-### 4.2 Tasks
-1. **Surrogate-action regression**. Train `S_θ(U) = S_g(U) + S_f(ϕ, U^{NN}_θ(U); m_h)`
-   to match the true action `S_g + S_f(ϕ, U; m_l)` via MSE on a fixed
-   ensemble. CASK Eq. 18.
-2. **SLHMC run**. Use `S_θ` as the molecular-dynamics Hamiltonian, accept
-   with the true action. Measure acceptance rate, autocorrelation of
-   plaquette and chiral condensate.
-3. **GELT vs CASK vs CovNet**. At matched parameter count and matched
-   training cost, compare:
-   - Final loss (lower is better).
-   - HMC acceptance.
-   - Autocorrelation time of `<U_p>`, Polyakov loop, `<ψ̄ψ>`.
-   - Sensitivity to m_h: a *good* surrogate should still work at m_h = 1.0
-     (large mass mismatch).
-
-### 4.3 Pass criteria
-- Reproduce CASK figure 2: loss decrease across training, plaquette
-  histogram match between SLHMC and ground-truth HMC (KS test p > 0.05).
-- GELT matches CASK loss within 20 % at matched parameter count, and
-  beats CovNet by ≥ 30 %.
-- HMC acceptance ≥ 60 % at m_l = 0.3, m_h = 0.5 (CASK reports ≈ similar).
-
-### 4.4 Why this matters
-This is the **first place attention beats convolution in a real
-physics-impact metric**: SLHMC acceptance is a clean, dimensionless number
-that lattice physicists care about. A 5–10 % improvement in autocorrelation
-time over CASK on the same setup is publishable on its own.
-
-### 4.5 Pitfalls
-- Pseudofermion noise in the gradient is the main training bottleneck. Use
-  several stochastic estimators per training step.
-- Smearing layer count > 4 starts to over-smear and destroy short-range
-  fermion physics. Stick to L = 2–3 GELT blocks for the smearing tower.
-- CASK uses sparse attention (s ≤ 3); resist the temptation to crank it up
-  before validating that the loss benefit isn't a regularization artifact.
-
----
-
-## Phase 5 — SU(3) pure gauge: real QCD without quarks
-**Time: 4–6 weeks**
-
-The same architecture with N_c = 3, on physical pure-gauge configurations.
-This is also where you can **call your numbers QCD** in talks.
-
-### 5.1 Setup
 - SU(3), 4D, Wilson action, β ∈ {5.7, 6.0, 6.3} (lattice spacings
   a ≈ 0.17, 0.094, 0.06 fm).
-- Lattices `8⁴, 12⁴, 16⁴, 16³ × 32`.
-- Configurations: borrow from a public ensemble (e.g. ILDG / Gauge Connection
-  / community releases) instead of generating from scratch — saves weeks.
+- Lattices `8⁴, 12⁴, 16⁴`.
+- Configurations: borrow from a public ensemble (ILDG / Gauge Connection /
+  community releases) instead of generating from scratch — saves weeks.
+- Apply gradient flow at inference time to suppress UV noise on `Q`
+  (reuses Phase 3 Wilson-flow inference code).
 
-### 5.2 Tasks
-1. **String tension**. Predict `−log W(R, T)` for static-quark potential;
-   fit `V(R) = σ R − π/(12 R) + const`. Compare with published `√σ` ≈
-   420 MeV on each ensemble.
-2. **Glueball mass**. Predict variational `0⁺⁺` glueball operators
-   (smeared plaquettes and rectangles); diagonalize a small correlator
-   matrix to extract `m_{0++}`. Reference: ≈ 1.7 GeV in pure SU(3).
-3. **Topological susceptibility** `χ_t = <Q²>/V`. Compare with ≈ (180 MeV)⁴
+### 4.2 Tasks
+1. **Topological-charge density at N_c = 3**: extend the Phase 3 head;
+   verify the gauge-invariance unit tests still pass with the worst-case-Ω
+   adversarial search at machine ε in float64.
+2. **Topological susceptibility** `χ_t = <Q²>/V`. Compare with ≈ (180 MeV)⁴
    in pure SU(3) (Del Debbio et al.).
-4. **Continuum-limit scaling**. Plot extracted observables vs. `a²`;
-   verify standard `O(a²)` scaling and quote a continuum-extrapolated
-   number with statistical and systematic errors.
+3. **Continuum-limit scaling**. Plot `χ_t^{1/4}` vs. `a²`; verify standard
+   `O(a²)` scaling and quote a continuum-extrapolated number with
+   statistical and systematic errors.
 
-### 5.3 Pass criteria
-- `√σ` agrees with published value on the same ensemble within 5 %.
-- `m_{0++}` within 10 %.
-- `χ_t^{1/4}` within 10 %.
+### 4.3 Pass criteria
+- Worst-case-Ω drift at machine ε in float64 on N_c = 3.
+- `χ_t^{1/4}` within 10 % of published value on each ensemble.
 - Continuum extrapolation linear in a² (no a-dependence in residuals
   beyond statistics).
 
-### 5.4 Pitfalls
+### 4.4 Pitfalls
 - N_c = 3 enlarges every per-site matrix from 2² = 4 to 3² = 9 complex
   numbers; memory and time go up by ≥ 5×. Plan ahead for batch sizes.
-- Topological charge in SU(3) needs **gradient flow** before measurement
-  to suppress UV noise. Apply Wilson flow at inference (you already
-  prototyped this in Phase 3.2.3).
-- Glueballs are noisy. Use the variational method on a basis of ≥ 5
-  smeared operators; the network's role is to predict the *smeared
-  operators*, not the mass directly.
+- Borrowed ensembles come with their own conventions (β scheme, action,
+  flow definition). Document which you use before publishing any number.
+- String tension, glueball spectroscopy, and full QCD scale-setting are
+  **explicitly out of scope** for the master's. Each is a 4–6 week
+  specialist project on its own and would dilute the thesis.
 
 ---
 
-## Phase 6 — Novel directions
-**Time: open-ended; pick one or two**
+## Phase 5 — Outlook (post-thesis directions)
+**Time: open-ended; not part of the master's arc**
 
-These are research-grade questions where positive results would be
-publishable as a stand-alone paper, and where negative results are still
-interesting. Listed roughly in order of risk.
+The master's thesis stops at Phase 4. The directions below are PhD-tier
+extensions; each is listed at the level of a paragraph, with timelines
+deliberately omitted to avoid the implication that they're scoped for the
+master's. They are organised roughly by risk.
 
-### 6.1 Cross-β generalization through a phase transition
+### 5.1 Dynamical fermions and SLHMC
 
-**Question.** Train the network at β values away from `β_c` in *both*
-phases. Test on β = β_c. Does the network correctly interpolate physics
-through the transition?
+Train the network as a **surrogate effective fermion action** so that HMC
+with a heavy-mass proposal accepts as if it were running at light mass
+(Nagai-Tomiya 2103.11965, Nagai-Ohno-Tomiya 2501.16955 / CASK). This is
+*the* direct head-to-head against CASK on their home turf.
 
-**Why interesting.** Standard ML transferability tests use volume; nobody
-has cleanly tested across phase boundaries. A positive result argues the
-network has learned the *gauge action structure* rather than the
-configuration distribution.
+The infrastructure cost is the load-bearing question: porting the
+architecture to Julia (`Zygote.jl` + `LatticeDiracOperators.jl`) takes 3–6
+weeks for a first port, not 1–2. A lighter version that stays inside the
+PyTorch codebase is **Schwinger model (2D U(1) + staggered fermions)**:
+same physics narrative (surrogate-action regression, SLHMC acceptance,
+autocorrelation comparison) with no Julia port and no SU(2) overhead.
 
-**Concrete plan.**
-- Use Phase 1 (3D Z₂) or Phase 2 (4D U(1)) as the testbed.
-- Train on β ∈ {0.5, 0.6, 0.9, 1.0} with class label "phase".
-- Evaluate on β ∈ {0.7, 0.75, 0.8} (straddling β_c).
-- Plot prediction confidence vs. β; compare against finite-size scaling.
+The result that would make this PhD-paper-worthy: GELT autocorrelation
+≤ 0.7× CASK on a matched setup at matched parameter count.
 
-**Risk.** Likely partially positive: the abelian groups will work; SU(2)
-near the bulk crossover is harder.
+### 5.2 Imaginary-θ topological susceptibility
 
-**Time.** 3–4 weeks.
+Generate SU(N) ensembles at θ_I ∈ {0, 2, 4, 6} via reweighting or direct
+simulation (`S → S + θ_I Q`); train the Phase 4 χ_t head per θ_I; fit
+`<Q²>(θ_I) / V = χ_t (1 − b_2 θ_I² + …)` and analytically continue to real
+θ. Builds directly on Phase 4 infrastructure; sign-problem-free.
 
----
+The result that would make this PhD-paper-worthy: a measurement of `b_2`
+at competitive statistics vs. plaquette discretization + Wilson flow,
+ideally at finer a than the published ensembles cover.
 
-### 6.2 Attention range as a learned correlation length
+### 5.3 PhD-tier directions (kept here as outlook only)
 
-**Question.** When trained on configurations at varying β, do the learned
-attention scores `α_{x→y}` peak at offsets matching the physical
-correlation length ξ(β)?
+- **Trivializing / normalizing flows with GELT.** Stack of GELT + L-Exp
+  as a flow `U → V_θ(U)` trained to target the Wilson action; diagnostic
+  is topological tunneling rate at fine β. Compare with Albergo, Kanwar,
+  Boyda et al. (2003.06413, 2008.05456, 2305.02402); Abbott et al.
+  (2401.10874). SU(N) flows are notoriously hard past `2⁴`; a *partial*
+  result (works at coarse β, fails at fine β) is still publishable.
+- **Topological-sector sampling.** Train a GELT to predict the gradient
+  of `|Q − Q_target|` w.r.t. U; use as a Langevin bias inside Metropolis
+  with proper accept/reject. Detailed balance under a learned proposal is
+  fragile (Bayer et al. 2306.04388).
+- **Sign-problem alleviation via contour deformation.** Lefschetz-thimble
+  parametrization by GELT for 1+1D U(1) with θ-term. Very high risk —
+  most ML attempts haven't outperformed analytic constructions.
+- **Continuous-time limit / learned Wilson flow.** Identify the GELT
+  stack with a learned gauge-equivariant ODE on configuration space;
+  benchmark against Wilson flow at scale-setting (`t_0`).
+- **Variational ground-state wavefunctional.** `Ψ_θ(U) = exp(network(U))`
+  with a Trace-MLP head; lattice analogue of neural quantum states
+  (Carleo-Troyer 2017) for 2+1D Z₂ Hamiltonian.
+- **Non-hypercubic lattices.** Extend the geometry to honeycomb / Kagome
+  for condensed-matter applications (Z₂ spin liquids, Kitaev-like models).
+  Implementation-heavy; scientifically clean.
 
-**Why interesting.** This is interpretability with physical content. If
-true, the network has *measured the correlation length without being told
-the action*, and you can read ξ off `α` directly without ever computing a
-two-point function.
-
-**Concrete plan.**
-- 3D Z₂ or 4D U(1) configurations across β.
-- Train the standard regression task (plaquette, Wilson loop).
-- Diagnostic: average `|α_{x→y}|` over (x, h) at fixed offset `(μ, k)`.
-  Plot vs. `k`; extract decay length. Compare with MC-measured correlation
-  length on the same configurations.
-
-**Risk.** Low. The decay of α is interpretable by construction; the only
-risk is that `α` is too sharply peaked at k = 1 (no useful information).
-Mitigation: use larger R and a softer init.
-
-**Time.** 2–3 weeks; doubles as a thesis-defense visualization.
-
----
-
-### 6.3 Trivializing flow / normalizing flow with GELT
-
-**Question.** Use stacked GELT blocks with L-Exp heads as a normalizing
-flow `U → U_eff` such that `U_eff` is distributed according to a target
-action. Sample directly without HMC.
-
-**Why interesting.** The big open problem is **topological freezing**: at
-small a, HMC can't tunnel between topological sectors. A trivializing
-flow that respects gauge invariance and reaches across topology would be a
-landmark result. Compare with Albergo, Kanwar, Boyda et al.
-(arXiv:2003.06413, 2008.05456, 2305.02402).
-
-**Concrete plan.**
-- Phase 3 setup: 4D SU(2) at β = 2.5, `8⁴`.
-- Train a flow `U → V_θ(U)` with `V_θ` = stack of GELT + L-Exp.
-- Loss: reverse KL `D(p_target || p_θ)` via importance sampling (standard
-  in the flow literature).
-- Diagnostic: effective sample size, autocorrelation of Q across draws,
-  tunneling rate between Q = ±1 sectors at fine β.
-
-**Risk.** High. SU(N) flows are notoriously hard to train past `2⁴`.
-A *partial* result (flow works at coarse β, fails at fine β) is still
-publishable as a benchmark.
-
-**Time.** 8–12 weeks. This is borderline thesis-scale.
-
-**Comparison targets.**
-- Boyda et al. (2008.05456): SU(N) flows on small lattices.
-- Albergo et al. (2305.02402): trivializing flows for full QCD.
-- Abbott et al. (2401.10874): residual flows — your GELT *is* a residual
-  flow with attention.
-
----
-
-### 6.4 Continuous-time limit: neural ODE = Wilson flow
-
-**Question.** Take L → ∞, weight scale → 0, and identify your GELT stack
-with a learned **continuous gradient flow** on configuration space. Train
-the flow's vector field directly.
-
-**Why interesting.** Lüscher's Wilson flow is *the* canonical smoothing
-operation; replacing it with a learnable gauge-equivariant flow gives a
-**task-adapted Wilson flow** that should outperform the fixed one.
-
-**Concrete plan.**
-- Take the gauge-covariant ResNet (paper 3 / your GELT without softmax),
-  treat layer index as time, integrate with `torchdiffeq`.
-- Task: scale-setting (`t_0`-flow). Standard Wilson flow defines `t_0` via
-  `t² <E>(t) = 0.3`. Train your flow to *also* satisfy this, but with
-  fewer steps for the same precision.
-- Diagnostic: number of integration steps to reach `t_0` at fixed tolerance;
-  compare against vanilla Wilson flow.
-
-**Risk.** Moderate. Adjoint backprop through a long flow is memory-heavy.
-
-**Time.** 6–8 weeks.
-
----
-
-### 6.5 Topological-sector sampling
-
-**Question.** Augment HMC with a GELT-driven proposal that explicitly
-biases toward topology change. Reduce topological autocorrelation by ≥ 10×
-at fine β.
-
-**Why interesting.** This is one of the most-cited bottlenecks in lattice
-QCD and there is a literature of proposals (instanton update, Lüscher's
-master-field) without a clear winner. An ML proposal with proper
-detailed-balance treatment would make a real impact.
-
-**Concrete plan.**
-- Phase 5 setup: SU(3) at β = 6.4 (already in topological-freezing regime
-  on `16⁴`).
-- Train a GELT to predict **the gradient of |Q − Q_target|** with respect
-  to U; use this as a Langevin-step bias inside Metropolis.
-- Diagnostic: Q autocorrelation time τ_Q; compare against vanilla HMC on
-  the same ensemble. Target: τ_Q ↓ by 10× without observable bias on
-  unrelated quantities.
-
-**Risk.** High. Detailed balance under a learned proposal is fragile;
-proper accept/reject is non-negotiable. Bayer et al. (2306.04388) is the
-current state of the art for ML-assisted HMC.
-
-**Time.** 10–12 weeks. PhD-tier.
-
----
-
-### 6.6 Sign-problem alleviation via contour deformation
-
-**Question.** For QCD with a θ-term or finite chemical potential, the
-action becomes complex and standard MC fails. The **Lefschetz-thimble**
-program deforms the integration contour to suppress the sign oscillation.
-Can a GELT parametrize the deformation field?
-
-**Concrete plan.**
-- Toy: 1+1D U(1) with θ-term. Known sign problem; known thimble structure.
-- GELT outputs a covariant link-shift `δU` defining a deformed manifold.
-  Train to maximize the average sign.
-- Diagnostic: average phase `<e^{iS_imag}>`; compare against thimble
-  literature.
-
-**Risk.** Very high. Thimble deformation is a delicate area where most ML
-attempts haven't outperformed analytic constructions.
-
-**Time.** 12+ weeks. Probably PhD/postdoc.
-
----
-
-### 6.7 Variational ground-state / TRG-style ansatz
-
-**Question.** Use the GELT as a *variational wavefunctional* on the
-gauge field — i.e. parametrize `Ψ_θ(U)` as a gauge-invariant scalar
-output of the network and minimize `<H>` directly. This is the lattice
-analogue of neural quantum states (Carleo-Troyer 2017).
-
-**Concrete plan.**
-- Hamiltonian formulation of 2+1D Z₂ (the simplest non-trivial example).
-- `Ψ_θ(U) = exp(network(U))`, network outputs an invariant scalar via
-  Trace + MLP head.
-- Variational MC: sample `U` ~ |Ψ_θ|², estimate `<H>`, gradient-descend.
-- Compare against exact diagonalization on `4 × 4`, then extrapolate to
-  larger volumes.
-
-**Risk.** Moderate. The framework is well-established for spin systems; the
-gauge-equivariant analogue is open.
-
-**Time.** 8–10 weeks.
-
----
-
-### 6.8 Beyond hypercubic: gauge theories on emergent lattices
-
-**Question.** Extend to triangular / honeycomb / Kagome lattices for
-condensed-matter applications: Z₂ spin liquids, Kitaev-honeycomb-like
-models. The GELT framework needs only that "neighbors" and "links" be
-defined; the gauge structure is identical.
-
-**Concrete plan.**
-- Honeycomb lattice with Z₂ gauge field.
-- Detect topological order via the Wilson-loop expectation on
-  contractible vs. non-contractible loops (the *only* distinguishing
-  observable).
-- Compare with bond-dimensional DMRG / iPEPS on the same Hamiltonian.
-
-**Risk.** Implementation-heavy (lattice geometry rewiring) but
-scientifically clean.
-
-**Time.** 6–8 weeks.
-
----
-
-### 6.9 θ-vacuum and topological susceptibility at imaginary θ
-
-**Question.** Compute `χ_t(θ)` and the curvature coefficient `b_2` of the
-free energy in θ for pure SU(2) or SU(3) using configurations generated
-at *imaginary* θ (no sign problem) and the network to reconstruct the
-topology-dependent observables.
-
-**Why interesting.** The θ-dependence of QCD-like theories controls the
-mass of the η′, the strong-CP problem, and axion-quality bounds. Lattice
-calculations at imaginary θ are an active program (Bonati et al.,
-Panagopoulos–Vicari). An ML accelerator for the noisiest piece —
-topological charge measurement on coarse, low-flow configurations — is
-directly useful, and the data side is sign-problem-free.
-
-**Concrete plan.**
-- Generate SU(N) ensembles at θ_I ∈ {0, 2, 4, 6} via reweighting or
-  direct simulation (`S → S + θ_I Q`, where `Q` is the lattice topological
-  charge).
-- Train the network to predict `Q(x)` at each θ_I.
-- Fit `<Q²>(θ_I) / V = χ_t (1 − b_2 θ_I² + …)` and analytically continue
-  to real θ.
-
-**Risk.** Low to moderate. Imaginary θ is sign-problem-free; the only
-question is whether the network reduces the variance of Q measurement
-relative to plaquette discretization + Wilson flow at the same statistics.
-
-**Time.** 6–8 weeks. Builds directly on Phase 3 / Phase 5 infrastructure;
-much lower risk than Phase 6.6.
+These were each given a full sub-section with timelines and risk
+discussions in the previous version of this roadmap; the consensus after
+review was that listing them at that depth in a master's roadmap is
+misleading. They live here for the thesis's outlook section and as a
+research-question menu for a PhD application.
 
 ---
 
@@ -603,40 +499,47 @@ A defensible master's-thesis arc with strong-but-realistic novelty:
 
 ```
 months 1–2:  Phase 0 + Phase 1   (Z₂ implementation, 3D Z₂ critical point)
-months 3–4:  Phase 2              (4D U(1), first continuous group)
-months 5–7:  Phase 3              (SU(2) replication + matched-param shootout)
-months 8–10: Phase 4 OR Phase 6.1+6.2  (SLHMC OR cross-β/interpretability)
-months 11–12: writing + defense
+month  3:    Phase 1.5            (β-conditioning, non-equivariant baseline)
+months 4–5:  Phase 2               (4D U(1), first continuous group)
+months 6–8:  Phase 3               (SU(2): replication + §3.4 shootout
+                                    + §3.5 attention-as-ξ + §3.6 cross-β)
+month  9:    Phase 4               (SU(3) χ_t + continuum scaling)
+months 10–12: writing + defense; Phase 5.1 / 5.2 as outlook section
 ```
 
 This produces:
-- Independent reimplementation of L-CNN and CASK results (defensive).
-- One genuinely new comparison (GELT vs L-CNN under controlled scaling).
-- One novel small result (3D Z₂ critical exponents from ML, or
-  attention-as-correlation-length).
-
-If the student is fast and well-supported, swapping Phase 4 → Phase 6.3
-(normalizing flow) is the high-risk / high-reward upgrade that moves the
-thesis from "solid" to "potentially first-author paper".
+- Independent reimplementation of L-CNN results (defensive).
+- A controlled three-way comparison: equivariant transformer (GELT) vs
+  equivariant CNN (L-CNN) vs non-equivariant transformer (Phase 1.5),
+  at matched parameter count. This is the comparison the field has been
+  missing.
+- Two GELT-specific results that no convolutional architecture can produce:
+  attention range tracks correlation length (§3.5), and one β-conditioned
+  model fits multiple β within statistical error (§3.6).
+- An N_c-agnostic continuum-scaling check (Phase 4) demonstrating the
+  architecture transfers from SU(2) to SU(3).
+- A secondary critical-exponent result on 3D Z₂ (Phase 1).
 
 ---
 
 ## What to publish from the thesis
 
-Based on the above, a single paper from the thesis would most naturally
-contain:
+A single paper from the thesis would most naturally contain:
 
 - **GELT architecture description** (1 figure, 2 pages of equations).
 - **L-CNN replication on 1+1D Wilson loops + 3+1D topological charge**
   (1 table, 1 figure).
-- **Matched-parameter comparison GELT vs L-CNN, with the attention-range
-  vs. correlation-length plot** (this is the novelty).
-- **Phase 1 result (3D Z₂ critical exponents from ML) as a secondary check**
-  on a different gauge group.
+- **Matched-parameter three-way comparison (GELT vs L-CNN vs
+  non-equivariant transformer)** at the L-CNN parameter ladder
+  (1 figure — this is the central scaling claim).
+- **Attention range vs correlation length** (1 figure — this is the
+  thesis's defining interpretability result).
+- **Cross-β generalization** (1 figure or short table).
+- **Secondary check on a different gauge group**: either Phase 1 (3D Z₂
+  critical exponents from ML) or Phase 4 (SU(3) χ_t continuum scaling).
 
 That's a complete, defensible arXiv submission and a clean MSc thesis
-structure. The Phase 6 directions are then "outlook" sections pointing at
-the PhD.
+structure. Phase 5 directions are then "outlook" pointing at the PhD.
 
 ---
 
@@ -646,15 +549,10 @@ the PhD.
 |-------|----------------------------------------------------------------------|
 | 0     | Wegner 1971; Creutz *Quarks, Gluons, and Lattices* ch. 1–3           |
 | 1     | Wegner 1971; Pelissetto-Vicari *Phys. Rep.* 368, 549 (Ising critical exponents) |
+| 1.5   | Perez et al. 1709.07871 (FiLM); Vaswani et al. 1706.03762 (vanilla transformer) |
 | 2     | Lautrup-Nauenberg 1980; DeGrand-Toussaint 1980 (monopoles)           |
 | 3     | Favoni et al. 2012.12901; Müller et al. 2112.11239                   |
-| 4     | Nagai-Tomiya 2103.11965; Nagai-Ohno-Tomiya 2501.16955                |
-| 5     | Necco-Sommer hep-lat/0108008; Del Debbio et al. hep-lat/0407028      |
-| 6.1   | Cossu et al. 2301.05216 (ML phase classification reviews)            |
-| 6.2   | (mostly your own — no clear precedent)                               |
-| 6.3   | Albergo et al. 2003.06413, 2305.02402; Abbott et al. 2401.10874      |
-| 6.4   | Lüscher 1006.4518 (Wilson flow); Chen et al. 1806.07366 (neural ODE) |
-| 6.5   | Bayer et al. 2306.04388; Foreman et al. 2112.01586                   |
-| 6.6   | Cristoforetti et al. 1205.3996 (Lefschetz thimbles)                  |
-| 6.7   | Carleo-Troyer 2017; Luo-Clark 2102.09231                             |
-| 6.8   | Kitaev cond-mat/0506438 (honeycomb model)                            |
+| 4     | Necco-Sommer hep-lat/0108008; Del Debbio et al. hep-lat/0407028; Lüscher 1006.4518 (Wilson flow) |
+| 5.1   | Nagai-Tomiya 2103.11965; Nagai-Ohno-Tomiya 2501.16955                |
+| 5.2   | Bonati et al. 1512.06746 (imaginary-θ); Panagopoulos–Vicari 1109.6815 |
+| 5.3   | Albergo et al. 2003.06413, 2305.02402; Abbott et al. 2401.10874; Bayer et al. 2306.04388; Cristoforetti et al. 1205.3996; Carleo-Troyer 2017; Kitaev cond-mat/0506438 |
