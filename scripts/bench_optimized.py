@@ -20,7 +20,15 @@ def run_bench(model_class, model_parameters, train_loader, val_loader, device, n
 
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=1e-2)
-    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+    
+    # GradScaler does not support ComplexFloat gradients.
+    # We use autocast but skip the scaler if model has complex params.
+    has_complex = any(p.is_complex() for p in model.parameters())
+    scaler_enabled = use_amp and not has_complex
+    scaler = torch.cuda.amp.GradScaler(enabled=scaler_enabled)
+    
+    if use_amp and has_complex:
+        print(f"[{name}] Note: GradScaler disabled (ComplexFloat not supported). Autocast remains active.")
 
     X, T, y = next(iter(train_loader))
     Xd, Td, yd = X.to(device, non_blocking=True), T.to(device, non_blocking=True), y.to(device, non_blocking=True)
@@ -79,7 +87,7 @@ def main():
     gaugegroup = SU(2)
 
     dataset_parameters = {
-        "N": 500,
+        "N": 1000, # Increased for better V100 throughput
         "D": D,
         "L": L,
         "gaugegroup": gaugegroup,
@@ -114,7 +122,8 @@ def main():
     )
     print(f"[data] build: {time.perf_counter() - t0:.2f}s")
 
-    batch_size = 16
+    # Bump batch size for V100
+    batch_size = 64
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=batch_size, shuffle=True
     )
