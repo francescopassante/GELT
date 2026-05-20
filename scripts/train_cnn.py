@@ -106,7 +106,7 @@ if __name__ == "__main__":
         "N": 1000,
         "D": D,
         "L": L,
-        "gaugegroup": SU(2),
+        "gaugegroup": Z2(),
         "R": None,
         "splits": [0.7, 0.15, 0.15],
         "save": True,
@@ -141,9 +141,9 @@ if __name__ == "__main__":
         L,
         D,
         in_channels=in_channels,
-        hidden_channels=[1],
+        hidden_channels=[16, 32],
         kernel_size=3,
-        fc_hidden=2,
+        fc_hidden=32,
     )
 
     train_loader = torch.utils.data.DataLoader(

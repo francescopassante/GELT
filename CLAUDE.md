@@ -140,7 +140,15 @@ Library lives in `gelt/`; entry-point scripts in `scripts/`; pytest in
 
 ### `scripts/`
 
-- **`main.py`** — single-(L, β) run of the CNN baseline.
+- **`train_cnn.py`** — single-(L, β) run of the CNN baseline (`LatticeCNN`);
+  uses `haar_ensemble`, target standardization, and matched-capacity
+  hyperparameters for a fair comparison against `train_gelt.py`. Has its
+  own inline `train_model` / `evaluate` (independent of `gelt/train.py`).
+- **`train_gelt.py`** — single-(L, β, R) run of the GELT model; mirrors
+  `train_cnn.py` but unpacks `(X, T, y)` triples, passes transport `T`
+  to `model(X, T)`, and uses a `StepLR` scheduler. Uses `structured=True`
+  and the `GELT` block directly. Matched capacity to `train_cnn.py` (≈ 1.02×
+  in real DOFs).
 - **`L_scan.py`** — replays the saved pre-refactor L-scan numbers and
   produces an absolute-MSE panel and an R² panel (the meaningful one).
   Includes the analytic Haar-random label variance `Var(action) = L²`
@@ -205,7 +213,8 @@ Library lives in `gelt/`; entry-point scripts in `scripts/`; pytest in
 The package is installed editable; scripts are run from the repo root.
 
 ```bash
-python scripts/main.py                # single-(L, β) CNN run
+python scripts/train_cnn.py           # single-(L, β) CNN baseline run
+python scripts/train_gelt.py          # single-(L, β, R) GELT run
 python scripts/L_scan.py              # replay saved L-scan, regenerate R² plots
 python scripts/lr_scan.py             # CNN LR sweep
 python scripts/validate_sampler.py    # Z₂ Metropolis four-panel sanity check
