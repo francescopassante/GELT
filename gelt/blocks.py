@@ -1,3 +1,11 @@
+"""GEMHSA / GELT — gauge-equivariant attention block and the full model.
+
+The transport step ``T·X·T†`` and the value path ``Σ_n α_n (Q†·Ṽ_n)`` are
+written so they issue O(B·n_off·|Λ|) batched matmuls rather than the naive
+O(B·H·d·n_off·|Λ|) — see notes/architecture.html §13.1 for the derivation
+and the V100 measurements (~10× over the broadcast-matmul form).
+"""
+
 import math
 
 import torch
@@ -164,24 +172,75 @@ class GEMHSA(nn.Module):
         )
         return torch.cat([identity, W, self.gaugegroup.dagger(W)], dim=1)
 
+    def _transport_folded(self, X_nb, T, T_dag):
+        """Compute T(x) · X_nb(x, n) · T†(x) for every (h, d, n, x) with
+        (H, d_qkv) folded into the column dim of the right-multiplicand.
+
+        This replaces the naive broadcast matmul
+        ``T_b @ X_nb @ T_b_dag`` (with T_b broadcast over H, d_qkv) that
+        dominates the V100 hot path: it would launch B·H·d·n_off·|Λ| tiny
+        (nc, nc)@(nc, nc) cgemm's and force cuBLAS to materialise the
+        H·d-replicated T tensor. Here we issue B·n_off·|Λ| matmuls of
+        shape (nc, nc) @ (nc, H·d_qkv·nc) — 16× fewer launches at the
+        benchmark shape, with T un-broadcast. See architecture.html §13.1.
+
+        Inputs:
+            X_nb : (B, H, d_qkv, n_off, *Λ, nc, nc)
+            T    : (B, n_off, *Λ, nc, nc)
+            T_dag: (B, n_off, *Λ, nc, nc)  -- precomputed once per layer
+        Returns:
+            (B, H, d_qkv, n_off, *Λ, nc, nc), bit-equivalent to the naive
+            two-matmul broadcast version up to floating-point reassociation.
+        """
+        B = X_nb.shape[0]
+        H = self.H
+        d = self.d_qkv
+        n = self.n_offsets
+        nc = X_nb.shape[-1]
+        spatial = X_nb.shape[4:-2]
+        Dsp = len(spatial)
+
+        # Move (H, d) to sit just after the row index 'i'. Source axes:
+        #   0=B, 1=H, 2=d, 3=n, 4..3+Dsp=spatial, 4+Dsp=i, 5+Dsp=j
+        # Target:
+        #   0=B, 1=n, 2..1+Dsp=spatial, 2+Dsp=i, 3+Dsp=H, 4+Dsp=d, 5+Dsp=j
+        perm = (0, 3) + tuple(range(4, 4 + Dsp)) + (4 + Dsp, 1, 2, 5 + Dsp)
+        Xp = X_nb.permute(*perm)
+        # Flatten (H, d, j) -> wide column. reshape forces a contiguous copy.
+        X_flat = Xp.reshape(B, n, *spatial, nc, H * d * nc)
+        # Left-multiply: one big matmul per (B, n_off, x).
+        L = T @ X_flat  # (B, n, *Λ, nc, H*d*nc)
+
+        # Now right-multiply by T†. Unflatten then re-flatten so (i, H, d)
+        # become rows and j stays the contraction axis:
+        L = L.reshape(B, n, *spatial, nc, H, d, nc)
+        L_flat = L.reshape(B, n, *spatial, nc * H * d, nc)
+        R = L_flat @ T_dag  # (B, n, *Λ, nc*H*d, nc)
+
+        # Reshape and permute back to (B, H, d, n, *Λ, nc, nc).
+        out = R.reshape(B, n, *spatial, nc, H, d, nc)
+        inv_perm = (0, 3 + Dsp, 4 + Dsp, 1) + tuple(range(2, 2 + Dsp)) + (2 + Dsp, 5 + Dsp)
+        return out.permute(*inv_perm).contiguous()
+
     def _attend(self, Q, K, V, T):
         """Fully batched gauge-equivariant attention over the L1-ball.
 
         Single fused pass — no Python loop over offsets. Pipeline:
           1. Gather K(x+Δx_i), V(x+Δx_i)
-          2. Adjoint transport: K̃ = T(x) · K(x+Δx) · T†(x), one fused matmul
-             chain that broadcasts T over H and d_qkv.
+          2. Adjoint transport: K̃ = T(x) · K(x+Δx) · T†(x), with (H, d_qkv)
+             folded into the matmul column dim (see ``_transport_folded``).
           3. Scalar score Re Σ_c Tr[Q_c† · K̃_c] / √(d_qkv·nc) computed as a
              Frobenius product, plus the §3.4 orbit-tied bias.
           4. Softmax over the offset axis.
-          5. Value path Q† · Ṽ as one batched matmul, weighted by α and
-             reduced over the offset axis.
+          5. Value path Q† · Ṽ — but α-weighted *before* the matmul
+             (Σ_n α_n (Q† Ṽ_n) = Q† (Σ_n α_n Ṽ_n) by linearity), so we issue
+             a single matmul instead of one per offset.
         """
         nc = Q.shape[-1]
 
         # 1. Neighbour gather.
         idx = tuple(
-            self._nbr_idx[d] for d in range(self.D)
+            self._nbr_idx[k] for k in range(self.D)
         )  # (n_off, *Λ) D dimensional vectors
         # nb_indexer = (:, :, :, ?, :, :) -> ? across dimension *Λ selects neighbors for each lattice site
         nb_indexer = (slice(None),) * 3 + idx + (slice(None), slice(None))
@@ -190,11 +249,13 @@ class GEMHSA(nn.Module):
         ]  # (B, H, d_qkv, n_off, *Λ, nc, nc) -> for each lattice site and neighbor, a (B, H, d, nc, nc) K tensor
         V_nb = V[nb_indexer]  # same
 
-        # 2. Adjoint transport: T · X · T†. T broadcasts over H and d_qkv.
-        T_b = T.unsqueeze(1).unsqueeze(1)  # (B, 1, 1, n_off, *Λ, nc, nc)
-        T_b_dag = self.gaugegroup.dagger(T_b)  # same shape (.conj().transpose)
-        K_tilde = T_b @ K_nb @ T_b_dag  # (B, H, d_qkv, n_off, *Λ, nc, nc)
-        V_tilde = T_b @ V_nb @ T_b_dag
+        # 2. Adjoint transport: T · X · T† with (H, d_qkv) folded into the
+        # column dim of the right-multiplicand to avoid the tiny-matmul
+        # broadcast over (H, d_qkv). T is computed once per layer (shared
+        # between K and V) — its dagger too. See _transport_folded.
+        T_dag = self.gaugegroup.dagger(T)
+        K_tilde = self._transport_folded(K_nb, T, T_dag)
+        V_tilde = self._transport_folded(V_nb, T, T_dag)
 
         # 3. Score = Tr[Q_c† K̃_c]/sqrt(Nc d_qkv); Implementable via Frobenius product instead of expensive matmul
         Q_e = Q.unsqueeze(3)  # (B, H, d_qkv, 1, *Λ, nc, nc)
@@ -218,13 +279,16 @@ class GEMHSA(nn.Module):
         # 5. Softmax over offsets.
         alpha = torch.softmax(score, dim=2)
 
-        # 6. Value path, fully batched over offsets.
-        Q_dag = self.gaugegroup.dagger(Q).unsqueeze(3)  # (B, H, d_qkv, 1, *Λ, nc, nc)
-        QdagV = torch.matmul(Q_dag, V_tilde)  # (B, H, d_qkv, n_off, *Λ, nc, nc)
-        # α: (B, H, n_off, *Λ) → (B, H, 1, n_off, *Λ, 1, 1) to broadcast over
-        # the d_qkv and the two color axes.
+        # 6. Value path. Sum V_tilde over n_off with α weights BEFORE the
+        # Q† matmul — matmul is linear in its right operand, so this is
+        # mathematically identical to "matmul-per-offset then weight then
+        # sum" but issues 24× fewer matmul calls at R=2 in D=3.
+        # alpha: (B, H, n_off, *Λ) → (B, H, 1, n_off, *Λ, 1, 1) to broadcast
+        # over the d_qkv and the two color axes.
         alpha_b = alpha.unsqueeze(2).unsqueeze(-1).unsqueeze(-1)
-        return (alpha_b * QdagV).sum(dim=3)  # (B, H, d_qkv, *Λ, nc, nc)
+        V_weighted = (alpha_b * V_tilde).sum(dim=3)  # (B, H, d_qkv, *Λ, nc, nc)
+        Q_dag = self.gaugegroup.dagger(Q)  # (B, H, d_qkv, *Λ, nc, nc)
+        return torch.matmul(Q_dag, V_weighted)  # (B, H, d_qkv, *Λ, nc, nc)
 
     def forward(self, W, T):
         """Run the block.

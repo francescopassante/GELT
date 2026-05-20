@@ -12,7 +12,7 @@ from gelt import LatticeCNN, haar_ensemble
 """
 
 
-def evaluate(model, test_loader, criterion, device, save_outputs=False):
+def evaluate(model, test_loader, criterion, device, save_outputs=False, progress=True):
     model.eval()
 
     test_loss = 0.0
@@ -20,8 +20,9 @@ def evaluate(model, test_loader, criterion, device, save_outputs=False):
     if save_outputs:
         all_targets = []
         all_outputs = []
+    iterator = tqdm(test_loader) if progress else test_loader
     with torch.no_grad():
-        for inputs, targets in tqdm(test_loader):
+        for inputs, targets in iterator:
             inputs, targets = inputs.to(device), targets.to(device)
             outputs = model(inputs)
             loss = criterion(outputs, targets)
@@ -56,11 +57,12 @@ def train_model(
     val_losses = []
     epochs_no_improve = 0
 
-    for epoch in range(epochs):
+    epoch_bar = tqdm(range(epochs))
+    for epoch in epoch_bar:
         model.train()
         train_loss = 0.0
         train_count = 0
-        for inputs, targets in tqdm(train_loader):
+        for inputs, targets in train_loader:
             inputs, targets = inputs.to(device), targets.to(device)
             optimizer.zero_grad()
             outputs = model(inputs)
@@ -74,7 +76,7 @@ def train_model(
         train_loss /= train_count
         train_losses.append(train_loss)
 
-        val_loss = evaluate(model, val_loader, criterion, device)
+        val_loss = evaluate(model, val_loader, criterion, device, progress=False)
         val_losses.append(val_loss)
 
         if val_loss < best_val_loss:
@@ -84,12 +86,10 @@ def train_model(
         else:
             epochs_no_improve += 1
 
-        print(
-            f"Epoch {epoch + 1}/{epochs} | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}"
-        )
+        epoch_bar.set_postfix(train=f"{train_loss:.4f}", val=f"{val_loss:.4f}")
 
         if epochs_no_improve >= patience:
-            print(f"Early stopping triggered after {epoch + 1} epochs.")
+            epoch_bar.write(f"Early stopping triggered after {epoch + 1} epochs.")
             break
 
     return train_losses, val_losses, epoch + 1
