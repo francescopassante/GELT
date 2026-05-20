@@ -69,12 +69,12 @@ class GEMHSA(nn.Module):
         return nn.Parameter(torch.randn(*shape, dtype=dtype) * sigma)
 
     def _resolve_dagger(self, U):
-        # Force materialization of the lazy conjugation to satisfy torch.compile
         return U.transpose(-1, -2).conj().resolve_conj().contiguous()
 
     def _attend(self, Q, K, V, T):
         nc = Q.shape[-1]
         B, H, d_qkv = Q.shape[:3]
+        spatial = Q.shape[3:-2]
         
         idx = tuple(self._nbr_idx[d] for d in range(self.D))
         nb_indexer = (slice(None), slice(None), slice(None)) + idx + (slice(None), slice(None))
@@ -88,9 +88,9 @@ class GEMHSA(nn.Module):
         K_tilde = (T_b @ K_nb @ T_b_dag).contiguous()
         V_tilde = (T_b @ V_nb @ T_b_dag).contiguous()
 
-        # Score Tr[Q† K_tilde]: use resolve_conj to materialise the dagger
-        Q_dag = self._resolve_dagger(Q).unsqueeze(3).contiguous()
-        score = (Q_dag @ K_tilde).diagonal(dim1=-2, dim2=-1).sum(-1).real
+        # Score Tr[Q† K_tilde]: (B, H, d, *Λ, nc, nc) x (B, H, d, n, *Λ, nc, nc) -> (B, H, n, *Λ)
+        Q_conj = Q.conj().resolve_conj().contiguous()
+        score = torch.einsum('bhd...ij,bhdn...ij->bhn...', Q_conj, K_tilde).real
         score = score / math.sqrt(self.d_qkv * nc)
 
         bias = self.b_h[:, self._orbit_idx].contiguous()
@@ -101,8 +101,12 @@ class GEMHSA(nn.Module):
         alpha = torch.softmax(score, dim=2).to(Q.dtype)
 
         # Value path: sum_n alpha_n * (Q† @ V_tilde_n)
-        QdagV = (Q_dag @ V_tilde).contiguous()
-        return (alpha.unsqueeze(2).unsqueeze(-1).unsqueeze(-1) * QdagV).sum(dim=3).contiguous()
+        # alpha: (B, H, n, *Λ)
+        # Q_conj: (B, H, d, *Λ, nc, nc)
+        # V_tilde: (B, H, d, n, *Λ, nc, nc)
+        # Output: (B, H, d, *Λ, nc, nc)
+        # sum over n (offsets) and internal matrix index k
+        return torch.einsum('bhn...,bhdi...jk,bhdn...kl->bhdi...jl', alpha, Q_conj, V_tilde).contiguous()
 
     def forward(self, W, T):
         nc = W.shape[-1]
@@ -122,21 +126,26 @@ class GEMHSA(nn.Module):
         w_W = torch.stack([self.w_Q[:,:,1:self.C+1], self.w_K[:,:,1:self.C+1], self.w_V[:,:,1:self.C+1]]) # (3, H, d, C)
         w_W_dag = torch.stack([self.w_Q[:,:,self.C+1:], self.w_K[:,:,self.C+1:], self.w_V[:,:,self.C+1:]]) # (3, H, d, C)
         
+        # Projections
         QKV_W = torch.einsum('qhdc,bc...ij->qbhd...ij', w_W, W) + \
                 torch.einsum('qhdc,bc...ij->qbhd...ij', w_W_dag, W_dag)
         
+        # Final Q, K, V
         QKV = QKV_id + QKV_W.contiguous()
         Q, K, V = QKV[0].contiguous(), QKV[1].contiguous(), QKV[2].contiguous()
 
+        # Attention
         out = self._attend(Q, K, V, T)
 
+        # Output mixing
         W_mix = torch.einsum('iha,bha...jk->bi...jk', self.w_mix, out).contiguous()
 
+        # Residual + Gate + ReZero
         W_res = (W + W_mix).contiguous()
         trace_per_chan = W_res.diagonal(dim1=-2, dim2=-1).sum(-1).real / nc
         g = F.softplus(trace_per_chan) if self.gate == "softplus" else F.relu(trace_per_chan)
-        W_act = (g.to(W.dtype).unsqueeze(-1).unsqueeze(-1) * W_res).contiguous()
         
+        W_act = (g.to(W.dtype).unsqueeze(-1).unsqueeze(-1) * W_res).contiguous()
         return (W + self.alpha.to(W.dtype) * (W_act - W)).contiguous()
 
 class Trace(nn.Module):

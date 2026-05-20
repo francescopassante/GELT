@@ -87,7 +87,7 @@ def main():
     gaugegroup = SU(2)
 
     dataset_parameters = {
-        "N": 100,
+        "N": 200, 
         "D": D,
         "L": L,
         "gaugegroup": gaugegroup,
