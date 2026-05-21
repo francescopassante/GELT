@@ -85,9 +85,24 @@ def build_plaquette_datasets(
     )
 
     prefix = dataset_prefix(
-        gaugegroup.name.lower(), "plaquette", L, D, N, beta, dtype, structured, R
+        gaugegroup.name.lower(), "plaquette", L, D, N, beta, dtype, structured, target, R
     )
     return split(X, y, splits, save, prefix=prefix, T=T)
+
+
+def _target_tag(target: Callable) -> str:
+    """Short filesystem-safe label derived from a target callable.
+
+    Plain function  → ``func.__name__``.
+    ``functools.partial`` → ``func.__name__`` + ``_k1v1_k2v2…`` for each
+    pre-bound keyword, sorted by key name for determinism.
+    """
+    func = getattr(target, "func", target)
+    name = func.__name__
+    kw = getattr(target, "keywords", {})
+    if kw:
+        return name + "_" + "_".join(f"{k}{v}" for k, v in sorted(kw.items()))
+    return name
 
 
 def dataset_prefix(
@@ -99,11 +114,12 @@ def dataset_prefix(
     beta: float,
     dtype: torch.dtype,
     structured: bool,
+    target: Callable,
     R: Optional[int] = None,
 ) -> str:
     dtype_tag = str(dtype).replace("torch.", "")
     layout = "structured" if structured else "flat"
-    base = f"{group_name}_{kind}_L{L}_D{D}_N{N}_beta{beta}_dtype{dtype_tag}_{layout}"
+    base = f"{group_name}_{kind}_L{L}_D{D}_N{N}_beta{beta}_dtype{dtype_tag}_{layout}_{_target_tag(target)}"
     return base if R is None else f"{base}_R{R}"
 
 
@@ -150,9 +166,9 @@ def split(X, y, splits, save, prefix, T: Optional[torch.Tensor] = None):
 
 
 if __name__ == "__main__":
-    from gelt import SU, haar_ensemble
-
     from functools import partial
+
+    from gelt import SU, haar_ensemble
 
     beta = 1.0
     train, val, test = build_plaquette_datasets(
