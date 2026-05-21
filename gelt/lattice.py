@@ -189,50 +189,62 @@ def local_gauge_transformation(W, omega, gaugegroup):
     return omega_b @ W @ gaugegroup.dagger(omega_b)
 
 
-def rectangular_wilson_loop(config, gaugegroup, R, mu, nu):
-    """Compute the rectangular Wilson loop of size R×R in the (μ, ν) plane.
+def rectangular_wilson_loop(
+    config: torch.Tensor,
+    gaugegroup: GaugeGroup,
+    R: int,
+    mu: int,
+    nu: int,
+) -> torch.Tensor:
+    """Spatial mean of Re Tr W_μν(x; R) / nc for the R×R rectangular Wilson loop.
 
-    W(R) = Tr [ U_μ(x) · U_μ(x + μ̂) · ... · U_μ(x + (R-1)μ̂)
-                 · U_ν(x + Rμ̂) · U_ν(x + Rμ̂ + ν̂) · ... · U_ν(x + Rμ̂ + (R-1)ν̂)
-                 · U_μ†(x + Rν̂) · U_μ†(x + (R-1)ν̂) · ... · U_μ†(x + ν̂)
-                 · U_ν†(x) ].
+    The loop at site x traverses:
+      Segment 1: R forward steps in μ:  U_μ(x + i·μ̂),            i = 0 … R-1
+      Segment 2: R forward steps in ν:  U_ν(x + R·μ̂ + i·ν̂),      i = 0 … R-1
+      Segment 3: R backward steps in μ: U†_μ(x + k·μ̂ + R·ν̂),     k = R-1 … 0
+      Segment 4: R backward steps in ν: U†_ν(x + k·ν̂),            k = R-1 … 0
+
+    At R=1 this reduces to the standard plaquette P_μν(x).
+
+    Parameters
+    ----------
+    config : ``(D, *Λ, nc, nc)`` link tensor.
+    R : side length in lattice units.
+    mu, nu : plane directions, distinct, in ``[0, D)``.
+
+    Returns
+    -------
+    Real scalar: spatial mean of Re Tr W(x; R) / nc.
     """
     D = config.shape[0]
     if not (0 <= mu < D and 0 <= nu < D and mu != nu):
         raise ValueError(f"Invalid directions mu={mu}, nu={nu} for D={D}.")
 
-    # Build the path by concatenating the segments in order.
-    path = []
-    # Segment 1: R steps in μ direction.
-    for i in range(R):
-        path.append((mu, i))
-    # Segment 2: R steps in ν direction.
-    for i in range(R):
-        path.append((nu, R + i))
-    # Segment 3: R steps backward in μ direction.
-    for i in range(R):
-        path.append((mu, R - 1 - i))
-    # Segment 4: R steps backward in ν direction.
-    for i in range(R):
-        path.append((nu, R - 1 - i))
+    # torch.eye broadcasts to (*Λ, nc, nc) on the first matmul.
+    loop = torch.eye(gaugegroup.nc, dtype=config.dtype, device=config.device)
 
-    # Compute the ordered product of links along the path.
-    loop_product = torch.eye(gaugegroup.nc, dtype=config.dtype, device=config.device)
-    for direction, step in path:
-        if step < R:  # Forward step
-            link = config[direction]
-            shift = [0] * D
-            shift[direction] = step
-            link_shifted = torch.roll(link, shifts=shift, dims=list(range(1, 1 + D)))
-            loop_product = loop_product @ link_shifted
-        else:  # Backward step
-            link = config[direction]
-            shift = [0] * D
-            shift[direction] = step - R + 1
-            link_shifted = torch.roll(link, shifts=shift, dims=list(range(1, 1 + D)))
-            loop_product = loop_product @ gaugegroup.dagger(link_shifted)
+    # Segment 1: U_μ(x + i·μ̂), i = 0 … R-1.
+    for i in range(R):
+        loop = loop @ torch.roll(config[mu], shifts=-i, dims=mu)
 
-    return torch.trace(loop_product)
+    # Segment 2: U_ν(x + R·μ̂ + i·ν̂), i = 0 … R-1.
+    for i in range(R):
+        loop = loop @ torch.roll(
+            torch.roll(config[nu], shifts=-R, dims=mu), shifts=-i, dims=nu
+        )
+
+    # Segment 3: U†_μ(x + k·μ̂ + R·ν̂), k = R-1 … 0.
+    for k in range(R - 1, -1, -1):
+        loop = loop @ gaugegroup.dagger(
+            torch.roll(torch.roll(config[mu], shifts=-k, dims=mu), shifts=-R, dims=nu)
+        )
+
+    # Segment 4: U†_ν(x + k·ν̂), k = R-1 … 0.
+    for k in range(R - 1, -1, -1):
+        loop = loop @ gaugegroup.dagger(torch.roll(config[nu], shifts=-k, dims=nu))
+
+    re_tr = loop.diagonal(dim1=-2, dim2=-1).sum(dim=-1).real
+    return re_tr.mean() / gaugegroup.nc
 
 
 def l1_ball_offsets(D: int, R: int) -> List[Tuple[int, ...]]:
