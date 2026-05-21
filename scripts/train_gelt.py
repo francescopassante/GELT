@@ -94,6 +94,19 @@ def train_model(
 
         epoch_bar.set_postfix(train=f"{train_loss:.4f}", val=f"{val_loss:.4f}")
 
+        # Unfreeze-cascade diagnostic. With ReZero α=0 and zero-init mlp.fc2,
+        # only the MLP receives gradient on step 0; α and the GEMHSA params
+        # follow once fc2 grows. If both α and ‖fc2‖ stay near 0 while the loss
+        # is flat, training is stuck at the identity branch — bump LR, warm-
+        # start α, or drop the mlp.fc2 zero-init. See notes/architecture.html §3.8.
+        if (epoch + 1) % 10 == 0 and hasattr(model, "gemhsa_models"):
+            alphas = [f"{layer.alpha.item():+.3f}" for layer in model.gemhsa_models]
+            fc2_std = model.mlp.fc2.weight.detach().abs().mean().item()
+            epoch_bar.write(
+                f"  ep {epoch + 1:>3d}  α=[{', '.join(alphas)}]  "
+                f"|fc2|̄={fc2_std:.4f}"
+            )
+
         if epochs_no_improve >= patience:
             epoch_bar.write(f"Early stopping triggered after {epoch + 1} epochs.")
             break
@@ -108,7 +121,7 @@ if __name__ == "__main__":
     D = 3
     L = 8
     gaugegroup = Z2()
-    R = 1
+    R = 2
 
     beta = 1
     # Per-site Wilson loop target: y has shape (B, *Λ). Paired with
@@ -135,29 +148,33 @@ if __name__ == "__main__":
     }
 
     train_parameters = {
-        "lr": 1e-3,
+        # ReZero α and zero-init mlp.fc2 mean the gradient-flow unfreezing
+        # cascade (fc2 → fc1 → α → Q/K/V/mix) is slow at lr=1e-3 — pushing the
+        # LR up gets training past the identity-branch stall in a few epochs.
+        "lr": 1e-2,
         "batch_size": 64,
         "epochs": 300,
         "patience": 30,
         "checkpoint_path": "best_model.pth",
     }
 
-    # Matched-capacity hyperparameters with scripts/train_cnn.py. With
-    # (nhead=2, d_qkv=8, mlp_hidden=16, gemhsa_layers=2) GELT has 911 numel
-    # ≈ 1707 real DOFs (complex Q/K/V/mix weights count for 2 real DOFs each),
-    # comparable to the CNN baseline at hidden_channels=[1], fc_hidden=2
-    # (1678 numel, all real). Ratio in real DOFs ≈ 1.02×.
+    # Debug-capacity GELT for the per-site Wilson loop target. The 2×2 loop is
+    # quartic in plaquettes (W = P·P·P·P in Z₂), so the model needs depth and
+    # head count to compose multi-site products. The earlier matched-capacity
+    # config (nhead=2, d_qkv=8, gemhsa_layers=2, mlp_hidden=16) was sized for
+    # the linear-in-P action target and is too small for Wilson loops — leave
+    # the matched shootout for after the per-site path is validated.
     model_parameters = {
         "gaugegroup": gaugegroup,
         "L": L,
         "D": D,
         "R": R,
-        "nhead": 2,
-        "gemhsa_layers": 2,
-        "d_qkv": 8,
+        "nhead": 4,
+        "gemhsa_layers": 3,
+        "d_qkv": 16,
         "gate": "softplus",
         "dtype": torch.complex64,
-        "mlp_hidden": 16,
+        "mlp_hidden": 32,
         "mlp_out": 1,
         # Per-site target → no spatial reduction. Use "sum" for the Wilson
         # action, "mean" for the average ⟨W⟩.
