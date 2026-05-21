@@ -114,6 +114,7 @@ if __name__ == "__main__":
         "R": None,
         "splits": [0.7, 0.15, 0.15],
         "save": True,
+        "prefix": f"z2_plaquette_L{L}_D{D}_N1000_beta{beta}",
         "structured": False,
         "sampler": haar_ensemble,
         "beta": beta,

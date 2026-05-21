@@ -52,6 +52,7 @@ def build_plaquette_datasets(
     dtype: torch.dtype = torch.float32,
     structured: bool = True,
     R: Optional[int] = None,
+    prefix: Optional[str] = None,
 ):
     """Dataset of (plaquette config, target), optionally with precomputed transports.
 
@@ -72,6 +73,8 @@ def build_plaquette_datasets(
     once per link config (from which the plaquettes were derived) and stored
     alongside ``X`` and ``y``.
     """
+    if save and prefix is None:
+        raise ValueError("prefix must be provided when save=True.")
     configs, _ = sampler(
         L, D, gaugegroup, beta, N, n_therm=n_therm, n_skip=n_skip, dtype=dtype
     )
@@ -83,44 +86,8 @@ def build_plaquette_datasets(
         if R is not None
         else None
     )
-
-    prefix = dataset_prefix(
-        gaugegroup.name.lower(), "plaquette", L, D, N, beta, dtype, structured, target, R
-    )
     return split(X, y, splits, save, prefix=prefix, T=T)
 
-
-def _target_tag(target: Callable) -> str:
-    """Short filesystem-safe label derived from a target callable.
-
-    Plain function  → ``func.__name__``.
-    ``functools.partial`` → ``func.__name__`` + ``_k1v1_k2v2…`` for each
-    pre-bound keyword, sorted by key name for determinism.
-    """
-    func = getattr(target, "func", target)
-    name = func.__name__
-    kw = getattr(target, "keywords", {})
-    if kw:
-        return name + "_" + "_".join(f"{k}{v}" for k, v in sorted(kw.items()))
-    return name
-
-
-def dataset_prefix(
-    group_name: str,
-    kind: str,
-    L: int,
-    D: int,
-    N: int,
-    beta: float,
-    dtype: torch.dtype,
-    structured: bool,
-    target: Callable,
-    R: Optional[int] = None,
-) -> str:
-    dtype_tag = str(dtype).replace("torch.", "")
-    layout = "structured" if structured else "flat"
-    base = f"{group_name}_{kind}_L{L}_D{D}_N{N}_beta{beta}_dtype{dtype_tag}_{layout}_{_target_tag(target)}"
-    return base if R is None else f"{base}_R{R}"
 
 
 def split(X, y, splits, save, prefix, T: Optional[torch.Tensor] = None):

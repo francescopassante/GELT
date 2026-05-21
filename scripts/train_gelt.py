@@ -119,6 +119,7 @@ if __name__ == "__main__":
         "R": R,
         "splits": [0.7, 0.15, 0.15],
         "save": True,
+        "prefix": f"su2_plaquette_L{L}_D{D}_N1000_beta{beta}_R{R}",
         "structured": True,
         "sampler": haar_ensemble,
         "beta": beta,
