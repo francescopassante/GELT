@@ -64,6 +64,7 @@ class GEMHSA(nn.Module):
         dtype=torch.complex64,
         alpha_init: float = 0.0,
         init_scale: float = 1.0,
+        final_block: bool = False,
     ):
         super(GEMHSA, self).__init__()
         self.gaugegroup = gaugegroup
@@ -71,6 +72,14 @@ class GEMHSA(nn.Module):
         self.R = R
         self.H = nhead
         self.C = d_input
+        # ``final_block`` strips the outer residual W +α(W_act−W) → α·W_act so the
+        # readout does not pass-through the site-local W=P(x) channel. See
+        # notes/audit.md §7.A: on per-site targets orthogonal to P(x) (e.g. the
+        # 2×2 Wilson loop in Z₂), the linear-in-P(x) residual collapses every
+        # downstream knob (fc2, w_mix, α) toward zero before the multi-site
+        # path can grow. Identity-at-init is therefore *not* preserved on the
+        # final block — by design; ReZero is still in force on layers 1..K-1.
+        self.final_block = final_block
         self.d_qkv = d_input // nhead if d_qkv is None else d_qkv
         if self.d_qkv < 1:
             raise ValueError(
@@ -358,6 +367,11 @@ class GEMHSA(nn.Module):
         # ReZero: blend toward the L-Act output with a per-block scalar α
         # (zero-init). At α=0 the block is bit-exactly the identity W → W;
         # during training α grows and the gate/mix path takes over.
+        # The final block drops the outer residual so the trace head sees
+        # only the gated/mixed path — see __init__ docstring on ``final_block``
+        # and notes/audit.md §7.A.
+        if self.final_block:
+            return self.alpha * W_act
         return W + self.alpha * (W_act - W)
 
 
@@ -432,12 +446,17 @@ class GELT(nn.Module):
             )
         self.reduction = reduction
         # ModuleList so the GEMHSA parameters are registered with PyTorch
-        # and picked up by .parameters() / .to() / .state_dict().
+        # and picked up by .parameters() / .to() / .state_dict(). The last
+        # block has ``final_block=True``: its outer residual is stripped so
+        # the readout does not inherit a site-local W=P(x) pass-through that
+        # collapses every downstream knob to zero on targets orthogonal to
+        # P(x) (notes/audit.md §7.A).
         self.gemhsa_models = nn.ModuleList(
             [
                 GEMHSA(
                     gaugegroup, L, D, R, d_input, nhead, d_qkv, gate, dtype,
                     alpha_init=alpha_init, init_scale=init_scale,
+                    final_block=(i == gemhsa_layers - 1),
                 )
                 for i in range(gemhsa_layers)
             ]

@@ -71,6 +71,38 @@ def test_gemhsa_gauge_equivariance_sun():
     )
 
 
+def test_gemhsa_gauge_equivariance_final_block():
+    """Equivariance still holds when the outer residual is stripped (notes/audit.md §7.A)."""
+    torch.manual_seed(13)
+    L, D, R, C, H, nc = 4, 2, 2, 3, 2, 2
+    gg = SU(nc)
+    dtype = torch.complex128
+
+    U = random_links(L=L, D=D, gaugegroup=gg, dtype=dtype)
+    W = torch.randn(1, C, *([L] * D), nc, nc, dtype=torch.float64) + 1j * torch.randn(
+        1, C, *([L] * D), nc, nc, dtype=torch.float64
+    )
+    omega = _unitary_omega(L, D, nc, seed=13)
+    U_g = link_gauge_transformation(U, omega, gg)
+    W_g = local_gauge_transformation(W, omega, gg)
+
+    T = build_transport_average(U.unsqueeze(0), R=R, gaugegroup=gg)
+    T_g = build_transport_average(U_g.unsqueeze(0), R=R, gaugegroup=gg)
+
+    block = GEMHSA(
+        gaugegroup=gg, L=L, D=D, R=R, d_input=C, nhead=H, dtype=dtype,
+        alpha_init=0.5, final_block=True,
+    ).to(dtype)
+
+    out = block(W, T)
+    out_g = block(W_g, T_g)
+    expected = local_gauge_transformation(out, omega, gg)
+
+    assert torch.allclose(out_g, expected, atol=1e-9), (
+        f"max diff = {(out_g - expected).abs().max().item():.3e}"
+    )
+
+
 def test_gemhsa_gauge_equivariance_softplus_gate():
     """Same guarantee with the softplus gate branch."""
     torch.manual_seed(11)
