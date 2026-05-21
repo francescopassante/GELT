@@ -1,5 +1,6 @@
+from functools import partial
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Callable, Optional, Sequence
 
 import torch
 from torch.utils.data import TensorDataset, random_split
@@ -42,8 +43,8 @@ def build_plaquette_datasets(
     D: int,
     L: int,
     gaugegroup: GaugeGroup,
-    target: str = "action",
     beta: float = 1.0,
+    target: Optional[Callable] = None,
     n_therm: int = 200,
     n_skip: int = 5,
     sampler=None,
@@ -55,29 +56,33 @@ def build_plaquette_datasets(
 ):
     """Dataset of (plaquette config, target), optionally with precomputed transports.
 
-    ``target`` : action (default) or other gauge-invariant observable.
+    ``target`` : callable with signature ``target(configs, gaugegroup) -> Tensor``.
+        Defaults to ``functools.partial(action, beta=beta)`` (Wilson action at
+        the sampler's coupling).  Use ``functools.partial`` to pre-bind any
+        extra arguments for other observables, e.g.::
 
-    ``sampler`` : ensemble-generator
+            from functools import partial
+            from gelt.lattice import rectangular_wilson_loop
+            target = partial(rectangular_wilson_loop, R=2, T=3, mu=0, nu=1)
 
-    ``structured=False`` (default): X shape ``(N, n_pairs · nc², *Λ)`` — flattened color axes, for CNN.
-    ``structured=True``            : X shape ``(N, n_pairs, *Λ, nc, nc)`` — full matrix layout, for GELT.
+    ``sampler`` : ensemble-generator callable.
+
+    ``structured=False``: X shape ``(N, n_pairs · nc², *Λ)`` — flattened color axes, for CNN.
+    ``structured=True`` : X shape ``(N, n_pairs, *Λ, nc, nc)`` — full matrix layout, for GELT.
 
     ``R`` : if given, the shortest-path-averaged transport tensor is computed
     once per link config (from which the plaquettes were derived) and stored
-    alongside ``X`` and ``y``.  See :func:`build_link_datasets` for details.
+    alongside ``X`` and ``y``.
     """
-    if target != "action":
-        raise NotImplementedError(
-            f"Unsupported target {target}; only 'action' is implemented."
-        )
-    target = action
+    if target is None:
+        target = partial(action, beta=beta)
 
     configs, _ = sampler(
         L, D, gaugegroup, beta, N, n_therm=n_therm, n_skip=n_skip, dtype=dtype
     )
     Ps = plaquette_tensor(configs, gaugegroup)
     X = Ps if structured else flatten_color(Ps)
-    y = target(configs, gaugegroup, beta=beta, plaquettes=Ps)
+    y = target(configs, gaugegroup)
     T = (
         build_transport_average(configs, R=R, gaugegroup=gaugegroup)
         if R is not None
