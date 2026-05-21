@@ -21,8 +21,8 @@ omega, _ = torch.linalg.qr(raw)
 omega = omega.reshape(*([L] * D), nc, nc).to(torch.complex64)
 
 U_g = link_gauge_transformation(U, omega, gg)
-P = plaquette_tensor(U, gg).unsqueeze(0)
-P_g = plaquette_tensor(U_g, gg).unsqueeze(0)
+P = plaquette_tensor(U.unsqueeze(0), gg)
+P_g = plaquette_tensor(U_g.unsqueeze(0), gg)
 
 T = build_transport_average(U.unsqueeze(0), R=R, gaugegroup=gg)
 T_g = build_transport_average(U_g.unsqueeze(0), R=R, gaugegroup=gg)

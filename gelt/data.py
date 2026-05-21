@@ -74,7 +74,7 @@ def build_plaquette_datasets(
     configs, _ = sampler(
         L, D, gaugegroup, beta, N, n_therm=n_therm, n_skip=n_skip, dtype=dtype
     )
-    Ps = torch.stack([plaquette_tensor(c, gaugegroup) for c in configs])
+    Ps = plaquette_tensor(configs, gaugegroup)
     X = Ps if structured else torch.stack([flatten_color(p) for p in Ps])
     y = target(configs, gaugegroup, beta=beta, plaquettes=Ps)
     T = (

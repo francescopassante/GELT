@@ -107,25 +107,24 @@ def plaquette_tensor(U: torch.Tensor, gaugegroup: GaugeGroup) -> torch.Tensor:
     Parameters
     ----------
     U
-        Links of shape ``(D, *Λ, nc, nc)`` where ``*Λ`` is the spatial shape.
+        Batched links of shape ``(B, D, *Λ, nc, nc)``.
     gaugegroup
         Gauge group (used for the dagger operation).
 
     Returns
     -------
-    Tensor of shape ``(n_pairs, *Λ, nc, nc)`` with ``n_pairs = D(D-1)/2``.
+    Tensor of shape ``(B, n_pairs, *Λ, nc, nc)`` with ``n_pairs = D(D-1)/2``.
     """
-    D = U.shape[0]
+    D = U.shape[1]
     pairs = [(mu, nu) for mu in range(D) for nu in range(mu + 1, D)]
     plaqs = []
     for mu, nu in pairs:
-        # After indexing U[mu] / U[nu], the spatial axis ``mu`` sits at index ``mu``
-        # (axes 0..D-1 are spatial, then nc, nc). torch.roll(t, -1, dims=mu) brings
-        # the value at lattice position ``x + μ̂`` to index ``x``.
-        Umu = U[mu]
-        Unu = U[nu]
-        Unu_shift_mu = torch.roll(Unu, shifts=-1, dims=mu)  # U_ν(x + μ̂)
-        Umu_shift_nu = torch.roll(Umu, shifts=-1, dims=nu)  # U_μ(x + ν̂)
+        # U[:, mu] has shape (B, *Λ, nc, nc); spatial axis mu sits at index mu+1.
+        # torch.roll(t, -1, dims=mu+1) brings the value at x+μ̂ to index x.
+        Umu = U[:, mu]
+        Unu = U[:, nu]
+        Unu_shift_mu = torch.roll(Unu, shifts=-1, dims=mu + 1)  # U_ν(x + μ̂)
+        Umu_shift_nu = torch.roll(Umu, shifts=-1, dims=nu + 1)  # U_μ(x + ν̂)
         P = (
             Umu
             @ Unu_shift_mu
@@ -133,7 +132,7 @@ def plaquette_tensor(U: torch.Tensor, gaugegroup: GaugeGroup) -> torch.Tensor:
             @ gaugegroup.dagger(Unu)
         )
         plaqs.append(P)
-    return torch.stack(plaqs, dim=0)
+    return torch.stack(plaqs, dim=1)
 
 
 def action(
@@ -161,10 +160,7 @@ def action(
     -------
     Tensor of shape ``(B,)`` — one scalar action value per configuration.
     """
-    if plaquettes is not None:
-        P = plaquettes
-    else:
-        P = torch.stack([plaquette_tensor(U[b], gaugegroup) for b in range(U.shape[0])])
+    P = plaquettes if plaquettes is not None else plaquette_tensor(U, gaugegroup)
     re_tr_over_nc = P.diagonal(dim1=-2, dim2=-1).sum(dim=-1).real / gaugegroup.nc
     # re_tr_over_nc: (B, n_pairs, *Λ) — sum over all plaquettes per config.
     n_plaq_per_config = re_tr_over_nc[0].numel()

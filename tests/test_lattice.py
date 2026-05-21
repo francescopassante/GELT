@@ -39,9 +39,9 @@ def test_plaquette_bitexact_z2(z2, L, D):
     U = random_links(L, D, z2, dtype=torch.float64)
     omega = _random_omega(L, D, z2, torch.float64, seed=1)
 
-    P_before = plaquette_tensor(U, z2)
+    P_before = plaquette_tensor(U.unsqueeze(0), z2)[0]
     U_prime = link_gauge_transformation(U, omega, z2)
-    P_after = plaquette_tensor(U_prime, z2)
+    P_after = plaquette_tensor(U_prime.unsqueeze(0), z2)[0]
 
     assert torch.equal(P_before, P_after), (
         f"Plaquettes not bit-exact after Z₂ gauge transform (L={L}, D={D}); "
@@ -85,9 +85,9 @@ def test_plaquette_covariance_z2(z2, L, D):
     U = random_links(L, D, z2, dtype=torch.float64)
     omega = _random_omega(L, D, z2, torch.float64, seed=3)
 
-    P = plaquette_tensor(U, z2)
+    P = plaquette_tensor(U.unsqueeze(0), z2)[0]
     U_prime = link_gauge_transformation(U, omega, z2)
-    P_prime = plaquette_tensor(U_prime, z2)
+    P_prime = plaquette_tensor(U_prime.unsqueeze(0), z2)[0]
 
     # Expected: omega[None] @ P @ dagger(omega)[None]
     # P has shape (n_pairs, *Λ, nc, nc); omega has shape (*Λ, nc, nc)

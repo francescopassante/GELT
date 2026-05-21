@@ -32,12 +32,9 @@ BETAS_3D = np.linspace(0.0, 1.5, 21)
 
 def _plaq_stats(configs):
     """(mean, std-err) of the mean plaquette across a batch of configs."""
-    vals = np.array(
-        [
-            (_re_tr(plaquette_tensor(c, gaugegroup)).mean() / gaugegroup.nc).item()
-            for c in configs
-        ]
-    )
+    P = plaquette_tensor(configs, gaugegroup)  # (N, n_pairs, *Λ, nc, nc)
+    # Per-config mean Re Tr / nc: flatten all non-batch dims then average.
+    vals = (_re_tr(P).flatten(1).mean(1) / gaugegroup.nc).numpy()
     return vals.mean(), vals.std(ddof=1) / math.sqrt(len(vals))
 
 
@@ -54,12 +51,8 @@ for beta in [0.2, 0.5, 0.8, 1.2]:
         n_therm=0,
         n_skip=1,
     )
-    therm[beta] = np.array(
-        [
-            (_re_tr(plaquette_tensor(c, gaugegroup)).mean() / gaugegroup.nc).item()
-            for c in configs
-        ]
-    )
+    P = plaquette_tensor(configs, gaugegroup)
+    therm[beta] = (_re_tr(P).flatten(1).mean(1) / gaugegroup.nc).numpy()
 
 # ── 2/4  2D β-scan ────────────────────────────────────────────────────────────
 print("2/4  2D β-scan …")
@@ -116,12 +109,8 @@ configs_ac, _ = mcmc_ensemble(
     n_therm=200,
     n_skip=1,
 )
-plaq_ts = np.array(
-    [
-        (_re_tr(plaquette_tensor(c, gaugegroup)).mean() / gaugegroup.nc).item()
-        for c in configs_ac
-    ]
-)
+P_ac = plaquette_tensor(configs_ac, gaugegroup)
+plaq_ts = (_re_tr(P_ac).flatten(1).mean(1) / gaugegroup.nc).numpy()
 delta = plaq_ts - plaq_ts.mean()
 var = np.mean(delta**2)
 C_ac = np.array(
