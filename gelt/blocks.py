@@ -72,16 +72,25 @@ class GEMHSA(nn.Module):
         self.R = R
         self.H = nhead
         self.C = d_input
-        # ``final_block`` strips BOTH residuals at this block:
-        #   • inner: W_res = W + W_mix  →  W_res = W_mix
-        #   • outer: W + α(W_act − W)   →  α · W_act
-        # so the trace head reads a purely multi-site signal. With only the
-        # outer strip (audit §7.A fix A), training broke out of the constant-
-        # mean trap but plateaued at R² ≈ 0.2 because the inner residual still
-        # leaks (1−α)^(K−1)·P(x) ≈ 0.25·P(x) into W_res, swamping the bilinear
-        # contribution by ~25× (notes/audit.md follow-up B1). Identity-at-init
-        # is intentionally not preserved on the final block; ReZero remains in
-        # force on layers 1..K-1.
+        # ``final_block`` strips the outer residual W + α(W_act − W) → α·W_act
+        # so the readout does not pass-through the site-local W=P(x) channel.
+        # See notes/audit.md §7.A: on per-site targets orthogonal to P(x)
+        # (e.g. the 2×2 Wilson loop in Z₂), the linear-in-P(x) residual
+        # collapses every downstream knob (fc2, w_mix, α) toward zero before
+        # the multi-site path can grow.  Identity-at-init is therefore *not*
+        # preserved on the final block; ReZero remains in force on layers
+        # 1..K-1.
+        #
+        # The *inner* residual W_res = W + W_mix is kept here even on the
+        # final block. We tried stripping it too (notes/audit.md follow-up B1)
+        # and 1×2 train/val rose 0.80 → 0.83 while 2×2 collapsed to var(y)=1
+        # with α drifting *down* from 0.5 → 0.25-0.36. Diagnosis: with no
+        # inner residual the final block's W_act magnitude at init is
+        # O(σ²·n_off) ≈ 0.03, so the readout sees noise and the optimizer
+        # attenuates the GEMHSA path. The inner residual provides a non-zero
+        # readout magnitude at init for the MLP to latch onto; the outer
+        # strip is what removes the *site-local* pass-through that drives
+        # the constant-mean trap.
         self.final_block = final_block
         self.d_qkv = d_input // nhead if d_qkv is None else d_qkv
         if self.d_qkv < 1:
@@ -360,15 +369,7 @@ class GEMHSA(nn.Module):
         W_mix = torch.einsum("iha,bha...->bi...", self.w_mix, out)  # (B, C, *Λ, nc, nc)
 
         # Residual + L-Act gate. The gate is a real scalar per (B, C, x).
-        # On the final block both residuals (inner W_res = W + W_mix and outer
-        # W + α(...)) are dropped — the trace head then sees a *purely*
-        # multi-site signal. With only the outer residual stripped, the inner
-        # one still leaks (1-α)^(K-1)·P(x) into W_res and the linear-in-P(x)
-        # term dominates the bilinear by ~25× at the current init (audit §7.A,
-        # follow-up B1). The gauge-invariance of the gate scalar
-        # ``Re Tr(W_res)/nc`` does not depend on which residual feeds W_res,
-        # so equivariance is preserved.
-        W_res = W_mix if self.final_block else W + W_mix
+        W_res = W + W_mix
         trace_per_chan = W_res.diagonal(dim1=-2, dim2=-1).sum(-1).real / nc
         if self.gate == "relu":
             g = F.relu(trace_per_chan)
@@ -378,6 +379,10 @@ class GEMHSA(nn.Module):
         # ReZero: blend toward the L-Act output with a per-block scalar α
         # (zero-init). At α=0 the block is bit-exactly the identity W → W;
         # during training α grows and the gate/mix path takes over.
+        # The final block drops the *outer* residual so the trace head sees
+        # only the gated/mixed path — see __init__ docstring on ``final_block``
+        # and notes/audit.md §7.A. The inner residual inside W_res is kept
+        # on the final block (see ``final_block`` docstring for why).
         if self.final_block:
             return self.alpha * W_act
         return W + self.alpha * (W_act - W)
