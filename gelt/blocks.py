@@ -32,8 +32,11 @@ class GEMHSA(nn.Module):
        shortest-path-averaged transport in the adjoint representation:
        ``Kprime = T(x) · K(x+Δx) · T†(x)``.
     3. **score.** ``s = (1/√(nc·d)) · Re Σ_a Tr[Q†_a · K̃_a]`` per offset
-       and per head, plus a learnable real bias tied across the lattice
-       point-group orbit of Δx (sign flips + axis permutations).
+       and per head, plus a learnable real bias ``b_h[h, n]`` per (head,
+       offset) — see notes/audit.md follow-up A on why the previous orbit
+       tying was dropped (the cubic point-group symmetry it enforced is
+       stronger than the symmetry of anisotropic Wilson-loop targets and
+       was preventing the attention from favouring specific axes).
     4. **softmax** over the offset axis (normalizes over neighbours per
        site, per head).
     5. **multiplicative value path.** Output of the attention head is
@@ -123,21 +126,18 @@ class GEMHSA(nn.Module):
         )  # (D, n_offsets, *Λ)
         self.register_buffer("_nbr_idx", nbr_idx)
 
-        # Orbit-tied score bias. Offsets in the same point-group orbit
-        # (sign flips + axis permutations) share a single learnable scalar
-        # per head. Sigs are essentially the offsets in the positive octant,
-        # all the other bias are tied to these by symmetry.
-        sigs = [
-            tuple(sorted((abs(d) for d in dx), reverse=True)) for dx in self.offsets
-        ]
-        unique_sigs = sorted(set(sigs))
-        sig_to_idx = {s: i for i, s in enumerate(unique_sigs)}
-        # n_orbits = number of unique biases
-        self.n_orbits = len(unique_sigs)
-        # orbit_idx = indices of sigs, where two sigs that are symmetry-tied have the same index (n_sigs)
-        orbit_idx = torch.tensor([sig_to_idx[s] for s in sigs], dtype=torch.long)
-        self.register_buffer("_orbit_idx", orbit_idx)  # (n_offsets,)
-        self.b_h = nn.Parameter(torch.zeros(self.H, self.n_orbits))
+        # Per-offset score bias (notes/audit.md follow-up A). Previously this
+        # was tied across the lattice point-group orbit of Δx (sign flips +
+        # axis permutations), which enforced architectural isotropy under the
+        # cubic point group. That tying is a strictly stronger symmetry than
+        # most physical targets have: a 1×R rectangular Wilson loop in the
+        # (μ,ν) plane is anisotropic, so the model had to break the orbit
+        # symmetry purely through the data-dependent bilinear score. With
+        # ``b_h`` untied per (head, offset) the model can directly favour
+        # specific Δx via the bias; gauge equivariance is unaffected because
+        # the bias is a real scalar added to the (already gauge-invariant)
+        # score.
+        self.b_h = nn.Parameter(torch.zeros(self.H, self.n_offsets))
 
         # Channel augmentation expands
         # C -> Ctilde = 2C + 1 by prepending the identity and appending daggers.
@@ -261,7 +261,7 @@ class GEMHSA(nn.Module):
           2. Adjoint transport: K̃ = T(x) · K(x+Δx) · T†(x), with (H, d_qkv)
              folded into the matmul column dim (see ``_transport_folded``).
           3. Scalar score Re Σ_c Tr[Q_c† · K̃_c] / √(d_qkv·nc) computed as a
-             Frobenius product, plus the §3.4 orbit-tied bias.
+             Frobenius product, plus the per-(head, offset) bias.
           4. Softmax over the offset axis.
           5. Value path Q† · Ṽ — but α-weighted *before* the matmul
              (Σ_n α_n (Q† Ṽ_n) = Q† (Σ_n α_n Ṽ_n) by linearity), so we issue
@@ -294,15 +294,12 @@ class GEMHSA(nn.Module):
         score = score / math.sqrt(self.d_qkv * nc)
         # score: (B, H, n_off, *Λ)
 
-        # 4. Orbit-tied bias: b_h[(Δx_i)], broadcast over (B, *Λ).
+        # 4. Per-offset bias: b_h[h, n], broadcast over (B, *Λ).
         # ``.real`` is defensive: ``b_h`` is semantically real, but a user
         # calling ``block.to(torch.complex128)`` would cast it to complex —
         # we don't want the imaginary part (always 0 with zero init) to
         # contaminate the score and break softmax (no complex softmax kernel).
-
-        # with this slicing we copy the same bias for symmetry-tied offsets.
-        # we go from (H, n_unique_sigs) -> (H, n_off)
-        bias = self.b_h[:, self._orbit_idx]  # (H, n_off)
+        bias = self.b_h  # (H, n_off)
         if torch.is_complex(bias):
             bias = bias.real
         score = score + bias.view(1, self.H, self.n_offsets, *([1] * self.D))
