@@ -7,7 +7,10 @@ import torch.nn as nn
 import torch.optim as optim
 from tqdm import tqdm
 
+from functools import partial
+
 from gelt import LatticeCNN, Z2, build_plaquette_datasets, mcmc_ensemble
+from gelt.lattice import action
 from gelt.train import evaluate, train_model
 
 if __name__ == "__main__":
@@ -17,6 +20,7 @@ if __name__ == "__main__":
     hidden_channels = [16, 32]
     lrs = np.logspace(-2, -5, 7)  # 1e-2 … 1e-5, seven points
 
+    beta = 1.0
     dataset_parameters = {
         "N": 1000,
         "D": D,
@@ -27,7 +31,8 @@ if __name__ == "__main__":
         "save": False,
         "structured": False,
         "sampler": mcmc_ensemble,
-        "beta": 1.0,
+        "beta": beta,
+        "target": partial(action, beta=beta),
         "n_therm": 200,
         "n_skip": 5,
         "dtype": torch.float32,

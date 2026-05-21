@@ -3,8 +3,11 @@ import torch.nn as nn
 import torch.optim as optim
 from tqdm import tqdm
 
+from functools import partial
+
 from gelt import haar_ensemble
 from gelt.blocks import GELT
+from gelt.lattice import action
 
 """
 ========================================================================================
@@ -107,6 +110,7 @@ if __name__ == "__main__":
     gaugegroup = SU(2)
     R = 1
 
+    beta = 1
     dataset_parameters = {
         "N": 1000,
         "D": D,
@@ -117,7 +121,8 @@ if __name__ == "__main__":
         "save": True,
         "structured": True,
         "sampler": haar_ensemble,
-        "beta": 1,
+        "beta": beta,
+        "target": partial(action, beta=beta),
         "n_therm": 200,
         "n_skip": 5,
         "dtype": torch.float32,

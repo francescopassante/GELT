@@ -6,24 +6,29 @@ import statistics
 import time
 
 if __name__ == "__main__":
+    from functools import partial
+
     from gelt import (
         SU,
         build_plaquette_datasets,
         haar_ensemble,
         random_links,
     )
+    from gelt.lattice import action
 
     SU3 = SU(3)
     warmup = 1
     repeats = 3
 
     def func():
+        beta = 1.0
         train, val, test = build_plaquette_datasets(
             N=100,
             D=3,
             L=5,
             gaugegroup=SU(3),
-            beta=1.0,
+            beta=beta,
+            target=partial(action, beta=beta),
             structured=True,
             sampler=haar_ensemble,
             R=3,

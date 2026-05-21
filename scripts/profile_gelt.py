@@ -23,7 +23,10 @@ import time
 import torch
 import torch.nn as nn
 
+from functools import partial
+
 from gelt import SU, build_plaquette_datasets, haar_ensemble
+from gelt.lattice import action
 from gelt.blocks import GELT, GEMHSA
 import gelt.blocks as blocks_mod
 
@@ -47,8 +50,8 @@ def build_one_batch(device):
     ds_train, _, _ = build_plaquette_datasets(
         N=200, D=D, L=L, gaugegroup=GROUP, R=R,
         splits=[0.7, 0.15, 0.15], save=False, structured=True,
-        sampler=haar_ensemble, beta=1, n_therm=200, n_skip=5,
-        dtype=torch.float32,
+        sampler=haar_ensemble, beta=1, target=partial(action, beta=1),
+        n_therm=200, n_skip=5, dtype=torch.float32,
     )
     loader = torch.utils.data.DataLoader(ds_train, batch_size=B, shuffle=False)
     X, T, y = next(iter(loader))

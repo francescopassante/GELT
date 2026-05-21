@@ -1,4 +1,3 @@
-from functools import partial
 from pathlib import Path
 from typing import Callable, Optional, Sequence
 
@@ -43,8 +42,8 @@ def build_plaquette_datasets(
     D: int,
     L: int,
     gaugegroup: GaugeGroup,
+    target: Callable,
     beta: float = 1.0,
-    target: Optional[Callable] = None,
     n_therm: int = 200,
     n_skip: int = 5,
     sampler=None,
@@ -57,12 +56,11 @@ def build_plaquette_datasets(
     """Dataset of (plaquette config, target), optionally with precomputed transports.
 
     ``target`` : callable with signature ``target(configs, gaugegroup) -> Tensor``.
-        Defaults to ``functools.partial(action, beta=beta)`` (Wilson action at
-        the sampler's coupling).  Use ``functools.partial`` to pre-bind any
-        extra arguments for other observables, e.g.::
+        Use ``functools.partial`` to pre-bind any extra arguments, e.g.::
 
             from functools import partial
-            from gelt.lattice import rectangular_wilson_loop
+            from gelt.lattice import action, rectangular_wilson_loop
+            target = partial(action, beta=1.5)
             target = partial(rectangular_wilson_loop, R=2, T=3, mu=0, nu=1)
 
     ``sampler`` : ensemble-generator callable.
@@ -74,9 +72,6 @@ def build_plaquette_datasets(
     once per link config (from which the plaquettes were derived) and stored
     alongside ``X`` and ``y``.
     """
-    if target is None:
-        target = partial(action, beta=beta)
-
     configs, _ = sampler(
         L, D, gaugegroup, beta, N, n_therm=n_therm, n_skip=n_skip, dtype=dtype
     )
@@ -157,12 +152,16 @@ def split(X, y, splits, save, prefix, T: Optional[torch.Tensor] = None):
 if __name__ == "__main__":
     from gelt import SU, haar_ensemble
 
+    from functools import partial
+
+    beta = 1.0
     train, val, test = build_plaquette_datasets(
         N=100,
         D=3,
         L=5,
         gaugegroup=SU(3),
-        beta=1.0,
+        beta=beta,
+        target=partial(action, beta=beta),
         structured=True,
         sampler=haar_ensemble,
         R=3,
