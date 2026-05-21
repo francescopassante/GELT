@@ -63,6 +63,7 @@ class GEMHSA(nn.Module):
         gate="relu",
         dtype=torch.complex64,
         alpha_init: float = 0.0,
+        init_scale: float = 1.0,
     ):
         super(GEMHSA, self).__init__()
         self.gaugegroup = gaugegroup
@@ -121,10 +122,14 @@ class GEMHSA(nn.Module):
         # C -> Ctilde = 2C + 1 by prepending the identity and appending daggers.
         self.C_tilde = 2 * d_input + 1
 
-        # Small Gaussian init with σ ≈ 0.02 / √Ctilde, real and imaginary
-        # parts independent. Together with the residual + small w^V this
-        # makes the block ≈ identity at init.
-        sigma = 0.02 / math.sqrt(self.C_tilde)
+        # Small Gaussian init with σ ≈ 0.02·init_scale / √Ctilde, real and
+        # imaginary parts independent. The default ``init_scale=1`` together
+        # with the residual + small w^V makes the block ≈ identity at init.
+        # Larger ``init_scale`` (e.g. 10) breaks the near-uniform softmax at
+        # init: with σ ≈ 0.02/√C̃, score values are O(σ²·C̃) ≈ O(4e-4) and
+        # softmax over many L1-ball offsets is essentially uniform, so the
+        # attention has no per-offset signal to grow from on hard targets.
+        sigma = 0.02 * init_scale / math.sqrt(self.C_tilde)
         self.w_Q = self._init_projection(
             (self.H, self.d_qkv, self.C_tilde), sigma, dtype
         )
@@ -135,7 +140,7 @@ class GEMHSA(nn.Module):
             (self.H, self.d_qkv, self.C_tilde), sigma, dtype
         )
         # channel mix back to C output channels.
-        sigma_mix = 0.02 / math.sqrt(self.H * self.d_qkv)
+        sigma_mix = 0.02 * init_scale / math.sqrt(self.H * self.d_qkv)
         self.w_mix = self._init_projection(
             (self.C, self.H, self.d_qkv), sigma_mix, dtype
         )
@@ -415,6 +420,7 @@ class GELT(nn.Module):
         mlp_out=1,
         reduction: str = "sum",
         alpha_init: float = 0.0,
+        init_scale: float = 1.0,
         mlp_zero_init: bool = True,
     ):
         # Plaquette input -> D(D-1)/2 plaquettes per site.
@@ -431,7 +437,7 @@ class GELT(nn.Module):
             [
                 GEMHSA(
                     gaugegroup, L, D, R, d_input, nhead, d_qkv, gate, dtype,
-                    alpha_init=alpha_init,
+                    alpha_init=alpha_init, init_scale=init_scale,
                 )
                 for i in range(gemhsa_layers)
             ]

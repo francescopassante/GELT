@@ -181,10 +181,14 @@ if __name__ == "__main__":
         "reduction": "none",
         # Warm-start the ReZero α and drop the MLP fc2 zero-init: the default
         # α=0 + fc2=0 combo traps training at the constant-mean predictor on
-        # the 2×2 Wilson loop target (α observed frozen at +0.01..+0.25 with
-        # loss stuck at var(y)=1). Forcing the multiplicative path on from
-        # epoch 0 gets the model exploring the right loop-product subspace.
-        "alpha_init": 0.05,
+        # the 2×2 Wilson loop target. α=0.5 puts the multiplicative path at
+        # ~half the residual stream (α=0.05 left it at ~4% and the MLP just
+        # kept reading the raw plaquette at site x, never using the multi-
+        # site contribution). init_scale=10 lifts score magnitudes off the
+        # near-uniform softmax floor so attention has per-offset signal to
+        # learn from on epoch 0.
+        "alpha_init": 0.5,
+        "init_scale": 10.0,
         "mlp_zero_init": False,
     }
 
