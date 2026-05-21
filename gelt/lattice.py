@@ -189,6 +189,52 @@ def local_gauge_transformation(W, omega, gaugegroup):
     return omega_b @ W @ gaugegroup.dagger(omega_b)
 
 
+def rectangular_wilson_loop(config, gaugegroup, R, mu, nu):
+    """Compute the rectangular Wilson loop of size R×R in the (μ, ν) plane.
+
+    W(R) = Tr [ U_μ(x) · U_μ(x + μ̂) · ... · U_μ(x + (R-1)μ̂)
+                 · U_ν(x + Rμ̂) · U_ν(x + Rμ̂ + ν̂) · ... · U_ν(x + Rμ̂ + (R-1)ν̂)
+                 · U_μ†(x + Rν̂) · U_μ†(x + (R-1)ν̂) · ... · U_μ†(x + ν̂)
+                 · U_ν†(x) ].
+    """
+    D = config.shape[0]
+    if not (0 <= mu < D and 0 <= nu < D and mu != nu):
+        raise ValueError(f"Invalid directions mu={mu}, nu={nu} for D={D}.")
+
+    # Build the path by concatenating the segments in order.
+    path = []
+    # Segment 1: R steps in μ direction.
+    for i in range(R):
+        path.append((mu, i))
+    # Segment 2: R steps in ν direction.
+    for i in range(R):
+        path.append((nu, R + i))
+    # Segment 3: R steps backward in μ direction.
+    for i in range(R):
+        path.append((mu, R - 1 - i))
+    # Segment 4: R steps backward in ν direction.
+    for i in range(R):
+        path.append((nu, R - 1 - i))
+
+    # Compute the ordered product of links along the path.
+    loop_product = torch.eye(gaugegroup.nc, dtype=config.dtype, device=config.device)
+    for direction, step in path:
+        if step < R:  # Forward step
+            link = config[direction]
+            shift = [0] * D
+            shift[direction] = step
+            link_shifted = torch.roll(link, shifts=shift, dims=list(range(1, 1 + D)))
+            loop_product = loop_product @ link_shifted
+        else:  # Backward step
+            link = config[direction]
+            shift = [0] * D
+            shift[direction] = step - R + 1
+            link_shifted = torch.roll(link, shifts=shift, dims=list(range(1, 1 + D)))
+            loop_product = loop_product @ gaugegroup.dagger(link_shifted)
+
+    return torch.trace(loop_product)
+
+
 def l1_ball_offsets(D: int, R: int) -> List[Tuple[int, ...]]:
     """All non-zero offsets Δx with |Δx|₁ ≤ R, sorted by L1 norm.
 
@@ -216,11 +262,10 @@ def l1_ball_offsets(D: int, R: int) -> List[Tuple[int, ...]]:
     )
 
 
-def build_transport_sums(
+def build_transport_average(
     U: torch.Tensor,
     R: int,
     gaugegroup: GaugeGroup,
-    batched: bool = False,
 ) -> torch.Tensor:
     """Shortest-path-averaged parallel transports for **every** offset 0 < |Δx|₁ ≤ R.
 
@@ -257,32 +302,24 @@ def build_transport_sums(
     Parameters
     ----------
     U
-        Link tensor of shape ``(D, *Λ, nc, nc)``. When ``batched=True``,
-        the input has shape ``(N, D, *Λ, nc, nc)`` with a leading
+        Batched link tensor of shape ``(N, D, *Λ, nc, nc)`` with a leading
         configuration batch axis.
     R
         Manhattan radius.
     gaugegroup
         Gauge group (used for the backward-link daggers).
-    batched
-        If ``True``, the leading axis is a configuration batch ``N``: a
-        single DP pass runs once over the whole batch, replacing the
-        ``N`` independent Python-level builds dataset construction would
-        otherwise need.
-
     Returns
     -------
     Stacked transport tensor in canonical offset order — shape
-    ``(n_offsets, *Λ, nc, nc)`` (or ``(N, n_offsets, *Λ, nc, nc)`` when
-    ``batched=True``). The offset axis is ordered by
+    ``(N, n_offsets, *Λ, nc, nc)``. The offset axis is ordered by
     :func:`l1_ball_offsets` ``(D, R)``: sorted by ``|Δx|₁`` then
     lexicographically. Use that helper to look up the index for a given Δx.
     """
-    # Unbatched path is handled by adding a singleton batch axis and squeezing
-    # at the end; the DP itself is a single code path.
-    squeeze_at_end = not batched
-    if squeeze_at_end:
-        U = U.unsqueeze(0)
+    if U.ndim < 6:
+        raise ValueError(
+            "U must be batched with shape (N, D, *Λ, nc, nc). "
+            "For a single config, pass U.unsqueeze(0)."
+        )
 
     N = U.shape[0]
     D = U.shape[1]
@@ -336,7 +373,9 @@ def build_transport_sums(
 
     # Stack offsets at axis 1 so the result is (N, n_off, *Λ, nc, nc).
     stacked = torch.stack([table[dx] for dx in offsets], dim=1)
-    del table  # release the per-offset references; the stacked tensor owns the data now.
+    del (
+        table
+    )  # release the per-offset references; the stacked tensor owns the data now.
 
     # Normalise each offset slice by the number of shortest paths N_Δx.
     # N_Δx is the multinomial coefficient |Δx|₁! / Π_μ |Δx_μ|!: the |Δx|₁ steps
@@ -350,9 +389,7 @@ def build_transport_sums(
             n //= math.factorial(abs(d))
         n_paths_list.append(n)
     real_dtype = (
-        torch.float64
-        if U.dtype in (torch.float64, torch.complex128)
-        else torch.float32
+        torch.float64 if U.dtype in (torch.float64, torch.complex128) else torch.float32
     )
     norms = torch.tensor(n_paths_list, dtype=real_dtype, device=U.device)
     # Broadcast across (batch, n_off, *Λ, nc, nc): target shape (1, n_off, 1, ..., 1).
@@ -360,6 +397,4 @@ def build_transport_sums(
     bcast_shape[1] = -1
     stacked = stacked / norms.view(bcast_shape)
 
-    if squeeze_at_end:
-        stacked = stacked.squeeze(0)
     return stacked

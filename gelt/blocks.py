@@ -47,7 +47,7 @@ class GEMHSA(nn.Module):
 
     The transport ``T`` is precomputed by the dataset builder (it is a
     function of the link configuration only, see
-    :func:`gelt.lattice.build_transport_sums`). ``forward(W, T)`` takes it as
+    :func:`gelt.lattice.build_transport_average`). ``forward(W, T)`` takes it as
     a tensor of shape ``(B, n_offsets, *Λ, nc, nc)``
     """
 

@@ -1,6 +1,6 @@
-"""Tests for build_transport_sums and l1_ball_offsets.
+"""Tests for build_transport_average and l1_ball_offsets.
 
-build_transport_sums returns the full signed L1-ball: every offset 0 < |Δx|₁ ≤ R,
+build_transport_average returns the full signed L1-ball: every offset 0 < |Δx|₁ ≤ R,
 including mixed-sign offsets.  The DP step uses U_μ for Δx_μ > 0 and U†_μ(x−ê_μ)
 for Δx_μ < 0; sub-offsets always have strictly smaller |Δx|₁ and compatible signs,
 so a single |Δx|₁-ordered pass is enough.
@@ -24,7 +24,7 @@ import torch
 from gelt.lattice import (
     Z2,
     GaugeGroup,
-    build_transport_sums,
+    build_transport_average,
     l1_ball_offsets,
     link_gauge_transformation,
     random_links,
@@ -34,6 +34,11 @@ from gelt.lattice import (
 def _at(T, offsets, dx):
     """Look up T_Δx in the (n_offsets, *Λ, nc, nc) tensor by offset tuple."""
     return T[offsets.index(dx)]
+
+
+def _build(U, R, gaugegroup):
+    """Build transports for a single config while requiring batched input."""
+    return build_transport_average(U.unsqueeze(0), R=R, gaugegroup=gaugegroup)[0]
 
 
 # ---------------------------------------------------------------------------
@@ -98,7 +103,7 @@ def test_l1_ball_offsets_no_zero():
 
 
 # ---------------------------------------------------------------------------
-# build_transport_sums: count + signs covered
+# build_transport_average: count + signs covered
 # ---------------------------------------------------------------------------
 
 
@@ -116,7 +121,7 @@ def test_full_l1_ball_count(D, R, expected):
     gaugegroup = Z2()
     torch.manual_seed(0)
     U = random_links(L=4, D=D, gaugegroup=gaugegroup)
-    T = build_transport_sums(U, R=R, gaugegroup=gaugegroup)
+    T = _build(U, R=R, gaugegroup=gaugegroup)
     assert T.shape[0] == expected
 
 
@@ -125,7 +130,7 @@ def test_offset_axis_matches_l1_ball():
     gaugegroup = Z2()
     torch.manual_seed(0)
     U = random_links(L=4, D=3, gaugegroup=gaugegroup)
-    T = build_transport_sums(U, R=2, gaugegroup=gaugegroup)
+    T = _build(U, R=2, gaugegroup=gaugegroup)
     assert T.shape[0] == len(l1_ball_offsets(D=3, R=2))
 
 
@@ -148,9 +153,12 @@ def test_batched_matches_unbatched_z2(R):
         dim=0,
     )
 
-    T_batched = build_transport_sums(configs, R=R, gaugegroup=gaugegroup, batched=True)
+    T_batched = build_transport_average(configs, R=R, gaugegroup=gaugegroup)
     T_per = torch.stack(
-        [build_transport_sums(configs[n], R=R, gaugegroup=gaugegroup) for n in range(N)],
+        [
+            _build(configs[n], R=R, gaugegroup=gaugegroup)
+            for n in range(N)
+        ],
         dim=0,
     )
 
@@ -167,9 +175,12 @@ def test_batched_matches_unbatched_complex():
         N, D, L, L, nc, nc, dtype=torch.float64
     )
 
-    T_batched = build_transport_sums(configs, R=2, gaugegroup=gaugegroup, batched=True)
+    T_batched = build_transport_average(configs, R=2, gaugegroup=gaugegroup)
     T_per = torch.stack(
-        [build_transport_sums(configs[n], R=2, gaugegroup=gaugegroup) for n in range(N)],
+        [
+            _build(configs[n], R=2, gaugegroup=gaugegroup)
+            for n in range(N)
+        ],
         dim=0,
     )
 
@@ -188,7 +199,7 @@ def test_base_case_positive(mu):
     gaugegroup = Z2()
     torch.manual_seed(0)
     U = random_links(L=4, D=2, gaugegroup=gaugegroup, dtype=torch.float64)
-    T = build_transport_sums(U, R=1, gaugegroup=gaugegroup)
+    T = _build(U, R=1, gaugegroup=gaugegroup)
     offsets = l1_ball_offsets(D=2, R=1)
 
     dx = tuple(1 if i == mu else 0 for i in range(2))
@@ -201,7 +212,7 @@ def test_base_case_negative(mu):
     gaugegroup = Z2()
     torch.manual_seed(0)
     U = random_links(L=4, D=2, gaugegroup=gaugegroup, dtype=torch.float64)
-    T = build_transport_sums(U, R=1, gaugegroup=gaugegroup)
+    T = _build(U, R=1, gaugegroup=gaugegroup)
     offsets = l1_ball_offsets(D=2, R=1)
 
     dx = tuple(-1 if i == mu else 0 for i in range(2))
@@ -222,7 +233,7 @@ def test_brute_force_positive_l1_2():
     gaugegroup = Z2()
     torch.manual_seed(1)
     U = random_links(L=6, D=2, gaugegroup=gaugegroup, dtype=torch.float64)
-    T = build_transport_sums(U, R=2, gaugegroup=gaugegroup)
+    T = _build(U, R=2, gaugegroup=gaugegroup)
     offsets = l1_ball_offsets(D=2, R=2)
 
     expected = (
@@ -240,7 +251,7 @@ def test_brute_force_negative_l1_2():
     gaugegroup = Z2()
     torch.manual_seed(2)
     U = random_links(L=6, D=2, gaugegroup=gaugegroup, dtype=torch.float64)
-    T = build_transport_sums(U, R=2, gaugegroup=gaugegroup)
+    T = _build(U, R=2, gaugegroup=gaugegroup)
     offsets = l1_ball_offsets(D=2, R=2)
 
     path1 = gaugegroup.dagger(torch.roll(U[0], shifts=1, dims=0)) @ gaugegroup.dagger(
@@ -261,7 +272,7 @@ def test_brute_force_mixed_l1_2():
     gaugegroup = Z2()
     torch.manual_seed(3)
     U = random_links(L=6, D=2, gaugegroup=gaugegroup, dtype=torch.float64)
-    T = build_transport_sums(U, R=2, gaugegroup=gaugegroup)
+    T = _build(U, R=2, gaugegroup=gaugegroup)
     offsets = l1_ball_offsets(D=2, R=2)
 
     # U_0(x) @ U†_1(x + ê_0 − ê_1): roll U[1] by (-1, +1) along (0, 1) brings (x + ê_0 − ê_1) → x.
@@ -284,7 +295,7 @@ def test_3d_base_cases():
     gaugegroup = Z2()
     torch.manual_seed(6)
     U = random_links(L=4, D=3, gaugegroup=gaugegroup)
-    T = build_transport_sums(U, R=1, gaugegroup=gaugegroup)
+    T = _build(U, R=1, gaugegroup=gaugegroup)
     offsets = l1_ball_offsets(D=3, R=1)
 
     assert T.shape[0] == 6
@@ -310,7 +321,7 @@ def test_octant_relation_every_offset(R):
     torch.manual_seed(3)
     D = 2
     U = random_links(L=6, D=D, gaugegroup=gaugegroup, dtype=torch.float64)
-    T = build_transport_sums(U, R=R, gaugegroup=gaugegroup)
+    T = _build(U, R=R, gaugegroup=gaugegroup)
     offsets = l1_ball_offsets(D=D, R=R)
 
     for i, dx in enumerate(offsets):
@@ -329,7 +340,7 @@ def test_octant_relation_mixed_complex():
     U = torch.randn(D, L, L, nc, nc, dtype=torch.complex128)
     U += 1j * torch.randn(D, L, L, nc, nc, dtype=torch.complex128).imag
 
-    T = build_transport_sums(U, R=2, gaugegroup=gaugegroup)
+    T = _build(U, R=2, gaugegroup=gaugegroup)
     offsets = l1_ball_offsets(D=D, R=2)
 
     for i, dx in enumerate(offsets):
@@ -354,8 +365,8 @@ def test_gauge_covariance_z2(R):
     U = random_links(L=L, D=D, gaugegroup=gaugegroup, dtype=torch.float64)
     omega = gaugegroup.random((L, L), dtype=torch.float64)
 
-    T = build_transport_sums(U, R=R, gaugegroup=gaugegroup)
-    T_prime = build_transport_sums(
+    T = _build(U, R=R, gaugegroup=gaugegroup)
+    T_prime = _build(
         link_gauge_transformation(U, omega, gaugegroup), R=R, gaugegroup=gaugegroup
     )
     offsets = l1_ball_offsets(D=D, R=R)
@@ -381,8 +392,8 @@ def test_gauge_covariance_complex(R):
     )
     omega = _unitary_omega(L, D, nc, seed=5)
 
-    T = build_transport_sums(U, R=R, gaugegroup=gaugegroup)
-    T_prime = build_transport_sums(
+    T = _build(U, R=R, gaugegroup=gaugegroup)
+    T_prime = _build(
         link_gauge_transformation(U, omega, gaugegroup), R=R, gaugegroup=gaugegroup
     )
     offsets = l1_ball_offsets(D=D, R=R)

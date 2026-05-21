@@ -36,7 +36,7 @@ Input: link configuration U  (D, *Λ, N_c, N_c)
     G-Attn block
     ├── Augment W → [𝟙, W, W†]
     ├── Q, K, V projections  (per-site, per-head, gauge-covariant)
-    ├── build_transport_sums(U, R)  →  T_Δx(x) for |Δx|₁ ≤ R
+    ├── build_transport_average(U, R)  →  T_Δx(x) for |Δx|₁ ≤ R (U batched)
     │        (DP over positive octant; negatives via octant trick)
     ├── K̃, Ṽ = T_Δx · K · T_Δx†    (parallel transport to site x)
     ├── score = Re Tr[Q† · K̃] / √(N_c · d)  +  learned position bias
@@ -149,8 +149,9 @@ python -m gelt.cnn_baseline
 | **6** | Various | Cross-β transfer, attention-as-ξ, trivializing flows, … |
 
 Current position: **Phase 0** (post-refactor, GELT not yet implemented).
-The next concrete step is `build_transport_sums(U, R)` — the DP routine for
-shortest-path-averaged parallel transport (see `notes/architecture.md` §10).
+The next concrete step is `build_transport_average(U, R)` — the DP routine for
+shortest-path-averaged parallel transport (expects batched links; see
+`notes/architecture.md` §10).
 
 ---
 

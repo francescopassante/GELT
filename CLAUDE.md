@@ -103,9 +103,10 @@ Library lives in `gelt/`; entry-point scripts in `scripts/`; pytest in
     equivariance tests.
   - `l1_ball_offsets(D, R)` → list of signed Δx tuples with
     `1 ≤ |Δx|_1 ≤ R`, ordered by `|Δx|_1`.
-  - `build_transport_sums(U, R, group)` — DP routine that materialises
+  - `build_transport_average(U, R, group)` — DP routine that materialises
     shortest-path-averaged transports `T_Δx(x)` over the full signed
-    L1-ball (`notes/architecture.html` §3.3).
+    L1-ball (`notes/architecture.html` §3.3). Expects batched links
+    `(N, D, *Λ, nc, nc)`.
 - **`sampler.py`** — `staple_sum`, `metropolis_sweep` (checkerboard-
   vectorised single-site Metropolis); `mcmc_ensemble` (thermalise +
   decorrelate + collect, dispatches per group via `_SWEEP_FN`);
@@ -119,7 +120,7 @@ Library lives in `gelt/`; entry-point scripts in `scripts/`; pytest in
   this module) to split color axes for the CNN baseline — real groups
   give `(D · nc², *Λ)`, complex groups split real/imag for
   `(2 · D · nc², *Λ)`. With `R` set, the shortest-path-averaged transport
-  is precomputed per config via `build_transport` and the splits yield
+  is precomputed per config via `build_transport_average` and the splits yield
   `(X, T, y)` triples. `save=True` writes to `datasets/`.
 - **`cnn_baseline.py`** — `LatticeCNN(L, D, in_channels, hidden_channels,
   kernel_size=3)`. CNN baseline only; uses `Conv2d`/`Conv3d` for D=2/3
@@ -160,7 +161,7 @@ Library lives in `gelt/`; entry-point scripts in `scripts/`; pytest in
   3D β-scan (first-order transition), plaquette autocorrelation.
 - **`visualize.py`** — 2D lattice visualisation; takes a link tensor
   directly (not a `Lattice` object — the wrapper class no longer exists).
-- **`timer.py`** — micro-benchmark for `build_transport_sums` on a
+- **`timer.py`** — micro-benchmark for `build_transport_average` on a
   16⁴ SU(3) configuration (warm-up + repeats, reports mean/median/min).
 
 ### `tests/`
@@ -170,7 +171,7 @@ Library lives in `gelt/`; entry-point scripts in `scripts/`; pytest in
 - **`test_data_model.py`** — split-validation and CNN-baseline shape
   guards.
 - **`test_transport.py`** — coverage for `l1_ball_offsets` and
-  `build_transport_sums`: offset counts, brute-force per-octant pattern,
+  `build_transport_average`: offset counts, brute-force per-octant pattern,
   octant-relation consistency, and gauge covariance under unitary Ω for
   both Z₂ and `nc = 2` complex.
 - **`test_blocks.py`** — gauge equivariance of `GEMHSA` end-to-end
@@ -195,8 +196,9 @@ Library lives in `gelt/`; entry-point scripts in `scripts/`; pytest in
 - **Wilson action:** `S = β Σ_p (1 − Re Tr P / nc)`. β defaults to 1.0,
   reproducing the legacy unnormalised form `n_plaq − Σ P` for Z₂.
 - **Parallel transport:** sum over **all** shortest lattice paths in the
-  L1-ball — never a single axis-aligned path. `build_transport_sums`
-  materialises the full signed L1-ball in one `|Δx|_1`-ordered DP pass,
+  L1-ball — never a single axis-aligned path. `build_transport_average`
+  expects batched links `(N, D, *Λ, nc, nc)` and materialises the full
+  signed L1-ball in one `|Δx|_1`-ordered DP pass,
   using `U_μ(x)` for `Δx_μ > 0` steps and `U†_μ(x − ê_μ)` for `Δx_μ < 0`
   steps. The octant identity `T_{−Δx}(x) = dagger(T_Δx(x − Δx))` holds
   as a math property and is a test-suite consistency check; it is **not**
@@ -220,7 +222,7 @@ python scripts/L_scan.py              # replay saved L-scan, regenerate R² plot
 python scripts/lr_scan.py             # CNN LR sweep
 python scripts/validate_sampler.py    # Z₂ Metropolis four-panel sanity check
 python scripts/visualize.py           # plot a seeded random 5×5 lattice
-python scripts/timer.py               # micro-benchmark build_transport_sums on 16⁴ SU(3)
+python scripts/timer.py               # micro-benchmark build_transport_average on 16⁴ SU(3)
 python -m gelt.cnn_baseline           # torchsummary for a 5×5 CNN
 pytest tests                          # unit tests
 ```

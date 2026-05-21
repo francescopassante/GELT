@@ -6,7 +6,7 @@ from .lattice import (
     Z2,
     GaugeGroup,
     action,
-    build_transport_sums,
+    build_transport_average,
     l1_ball_offsets,
     link_gauge_transformation,
     local_gauge_transformation,

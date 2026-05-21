@@ -4,7 +4,7 @@ import torch
 
 from gelt import (
     SU,
-    build_transport_sums,
+    build_transport_average,
     link_gauge_transformation,
     plaquette_tensor,
     random_links,
@@ -24,8 +24,8 @@ U_g = link_gauge_transformation(U, omega, gg)
 P = plaquette_tensor(U, gg).unsqueeze(0)
 P_g = plaquette_tensor(U_g, gg).unsqueeze(0)
 
-T = build_transport_sums(U, R=R, gaugegroup=gg).unsqueeze(0)
-T_g = build_transport_sums(U_g, R=R, gaugegroup=gg).unsqueeze(0)
+T = build_transport_average(U.unsqueeze(0), R=R, gaugegroup=gg)
+T_g = build_transport_average(U_g.unsqueeze(0), R=R, gaugegroup=gg)
 
 model = GELT(gaugegroup=gg, L=L, D=D, R=R, nhead=H, gemhsa_layers=layers, d_qkv=2)
 

@@ -9,7 +9,6 @@ if __name__ == "__main__":
     from gelt import (
         SU,
         build_plaquette_datasets,
-        build_transport_sums,
         haar_ensemble,
         random_links,
     )

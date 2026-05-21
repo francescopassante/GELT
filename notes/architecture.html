@@ -364,7 +364,7 @@ g_softplus(W) = softplus( Re Tr[W] / N_c )      # never vanishes</code></pre>
     V = einsum("haj,bjxmn-&gt;bhaxmn", weights.wV, W_aug)
 
     # 3.3 shortest-path-averaged transports for every signed Δx in L1-ball
-    T = build_transport_sums(U, R)            # dict: Δx -&gt; (B, *Λ, Nc, Nc)
+    T = build_transport_average(U, R)        # U is batched: (B, D, *Λ, Nc, Nc)
     scores, Vt = [], []
     for dx in offsets_in_L1_ball(D+1, R):
         T_dx    = T[dx]
@@ -520,7 +520,7 @@ g_softplus(W) = softplus( Re Tr[W] / N_c )      # never vanishes</code></pre>
     <h2 id="s10">10. Build order</h2>
     <p>Build in this order. Verify each step before moving on.</p>
     <ol>
-      <li>Lattice utilities: roll-with-PBC, dagger, <code>build_transport_sums(U, R)</code> — DP for shortest-path-averaged transports over the full signed L1-ball (§3.3), ordered by <code>|Δx|_1</code>. Verify vs. brute force for <code>|Δx|_1 ≤ 2</code> (40 offsets in 4D); test the octant identity under a random Ω.</li>
+      <li>Lattice utilities: roll-with-PBC, dagger, <code>build_transport_average(U, R)</code> — DP for shortest-path-averaged transports over the full signed L1-ball (§3.3), ordered by <code>|Δx|_1</code>. Verify vs. brute force for <code>|Δx|_1 ≤ 2</code> (40 offsets in 4D); test the octant identity under a random Ω.</li>
       <li>Plaq, Poly, augment, Trace (fixed). Apply random Ω; check transformation laws to machine precision.</li>
       <li>On-site Q/K/V. Test <code>Q(T_Ω W̃) = T_Ω Q(W̃)</code>.</li>
       <li>Parallel transport: covariance unit test.</li>
@@ -610,7 +610,7 @@ M̃ =   [ B   A ]</code></pre>
     <p>with <code>(M₁ · M₂)̃ = M̃₁ · M̃₂</code> (algebra homomorphism), <code>M† ↔ M̃ᵀ</code> (Hermitian conjugate becomes plain transpose), and <code>Re Tr M = ½ Tr M̃</code>. Memory footprint is unchanged: one <code>complex64</code> scalar = two <code>float32</code> scalars = one <code>2×2</code> real block-pair of floats — same bytes per group element. FLOPs per matmul roughly double (real (4,4)@(4,4) costs ≈ 2× a complex (2,2)@(2,2) when expanded to real ops), but the kernel becomes tensor-core-eligible <em>and</em> compile-friendly, so the constant factor more than pays for itself.</p>
     <p><strong>Where it has to live.</strong> Three coupled changes, in this order:</p>
     <ol>
-      <li><strong><code>gelt/lattice.py</code></strong> — add primitives <code>to_real_block(M)</code> / <code>from_real_block(M̃)</code> mapping <code>(..., nc, nc) complex</code> ↔ <code>(..., 2nc, 2nc) real</code>, plus <code>real_dagger(M̃) = M̃.transpose(-1, -2)</code>. Keep <code>plaquette_tensor</code> / <code>build_transport_sums</code> in complex (they're not the hot path); convert to real-block only at the boundary entering <code>GEMHSA</code>.</li>
+      <li><strong><code>gelt/lattice.py</code></strong> — add primitives <code>to_real_block(M)</code> / <code>from_real_block(M̃)</code> mapping <code>(..., nc, nc) complex</code> ↔ <code>(..., 2nc, 2nc) real</code>, plus <code>real_dagger(M̃) = M̃.transpose(-1, -2)</code>. Keep <code>plaquette_tensor</code> / <code>build_transport_average</code> in complex (they're not the hot path); convert to real-block only at the boundary entering <code>GEMHSA</code>.</li>
       <li><strong><code>gelt/blocks.py</code></strong> — port <code>GEMHSA</code> to real-block form. Trainable weights <code>w_Q, w_K, w_V, w_mix</code> become real parameters of shape <code>(H, d_qkv, C̃, 2, 2)</code> (one real 2×2 block per complex scalar — initialised with the same σ as the complex version so that the equivalent complex projection has the same variance). The Frobenius score <code>Re Σ_a Tr[Q†_a · K̃_a]</code> becomes <code>½ Σ_a Tr[Q̃ᵀ_a · K̃_a]</code> in block form — no more <code>.real</code> at the hot path. Re-use the (H, d_qkv) fold and α-before-matmul rewrites from §13.1 verbatim; both are dtype-agnostic.</li>
       <li><strong>New equivalence check</strong> — add a real-vs-complex round-trip script: build identical parameters in the complex and real-block models, feed the same input, assert max <code>|y_complex − from_real_block(y_real)| &lt; 1e-6</code> in float32.</li>
     </ol>

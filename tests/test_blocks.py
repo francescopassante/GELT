@@ -13,7 +13,7 @@ import torch
 from gelt import (
     SU,
     Z2,
-    build_transport_sums,
+    build_transport_average,
     link_gauge_transformation,
     local_gauge_transformation,
     random_links,
@@ -52,8 +52,8 @@ def test_gemhsa_gauge_equivariance_sun():
     U_g = link_gauge_transformation(U, omega, gg)
     W_g = local_gauge_transformation(W, omega, gg)
 
-    T = build_transport_sums(U, R=R, gaugegroup=gg).unsqueeze(0)  # (1, n_off, *Λ, nc, nc)
-    T_g = build_transport_sums(U_g, R=R, gaugegroup=gg).unsqueeze(0)
+    T = build_transport_average(U.unsqueeze(0), R=R, gaugegroup=gg)  # (1, n_off, *Λ, nc, nc)
+    T_g = build_transport_average(U_g.unsqueeze(0), R=R, gaugegroup=gg)
 
     block = GEMHSA(gaugegroup=gg, L=L, D=D, R=R, d_input=C, nhead=H, dtype=dtype).to(
         dtype
@@ -86,8 +86,8 @@ def test_gemhsa_gauge_equivariance_softplus_gate():
     U_g = link_gauge_transformation(U, omega, gg)
     W_g = local_gauge_transformation(W, omega, gg)
 
-    T = build_transport_sums(U, R=R, gaugegroup=gg).unsqueeze(0)
-    T_g = build_transport_sums(U_g, R=R, gaugegroup=gg).unsqueeze(0)
+    T = build_transport_average(U.unsqueeze(0), R=R, gaugegroup=gg)
+    T_g = build_transport_average(U_g.unsqueeze(0), R=R, gaugegroup=gg)
 
     block = GEMHSA(
         gaugegroup=gg, L=L, D=D, R=R, d_input=C, nhead=H, gate="softplus", dtype=dtype
@@ -116,7 +116,7 @@ def test_gemhsa_shape_preserved_and_backward_finite():
         [random_links(L=L, D=D, gaugegroup=gg) for _ in range(B)], dim=0
     )
     # Exercise the batched DP path directly: one pass over the whole (B, D, *Λ, nc, nc).
-    T = build_transport_sums(U_batch, R=R, gaugegroup=gg, batched=True)
+    T = build_transport_average(U_batch, R=R, gaugegroup=gg)
 
     W = torch.randn(B, C, *([L] * D), nc, nc, dtype=torch.complex64, requires_grad=True)
     block = GEMHSA(gaugegroup=gg, L=L, D=D, R=R, d_input=C, nhead=H)
@@ -149,8 +149,8 @@ def test_gemhsa_gauge_equivariance_z2():
     U_g = link_gauge_transformation(U, omega, gg)
     W_g = local_gauge_transformation(W, omega, gg)
 
-    T = build_transport_sums(U, R=R, gaugegroup=gg).unsqueeze(0)
-    T_g = build_transport_sums(U_g, R=R, gaugegroup=gg).unsqueeze(0)
+    T = build_transport_average(U.unsqueeze(0), R=R, gaugegroup=gg)
+    T_g = build_transport_average(U_g.unsqueeze(0), R=R, gaugegroup=gg)
 
     block = GEMHSA(gaugegroup=gg, L=L, D=D, R=R, d_input=C, nhead=H, dtype=dtype).to(
         dtype

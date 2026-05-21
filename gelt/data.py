@@ -7,31 +7,9 @@ from torch.utils.data import TensorDataset, random_split
 from gelt.lattice import (
     GaugeGroup,
     action,
-    build_transport_sums,
+    build_transport_average,
     plaquette_tensor,
 )
-
-
-def build_transport(
-    configs: torch.Tensor,
-    R: int,
-    gaugegroup: GaugeGroup,
-) -> torch.Tensor:
-    """Precompute the shortest-path-averaged transport tensor for every config.
-
-    One batched DP pass over the whole ``(N, D, *Λ, nc, nc)`` configs tensor,
-    so the matmuls and rolls run on the leading batch in BLAS instead of N
-    independent Python-level calls.
-
-    Returns a single stacked tensor of shape ``(N, n_offsets, *Λ, nc, nc)``
-    with offset axis ordered by :func:`gelt.lattice.l1_ball_offsets` ``(D, R)``
-    — i.e. by ``|Δx|₁`` then lexicographically. ``D`` is taken from
-    ``configs.shape[1]``.
-
-    The transport depends only on the link configuration ``U``; precomputing it
-    here moves the entire DP out of the model's forward pass.
-    """
-    return build_transport_sums(configs, R=R, gaugegroup=gaugegroup, batched=True)
 
 
 def flatten_color(U: torch.Tensor) -> torch.Tensor:
@@ -63,6 +41,7 @@ def build_plaquette_datasets(
     D: int,
     L: int,
     gaugegroup: GaugeGroup,
+    target: str = "action",
     beta: float = 1.0,
     n_therm: int = 200,
     n_skip: int = 5,
@@ -73,7 +52,9 @@ def build_plaquette_datasets(
     structured: bool = True,
     R: Optional[int] = None,
 ):
-    """Dataset of (plaquette config, action), optionally with precomputed transports.
+    """Dataset of (plaquette config, target), optionally with precomputed transports.
+
+    ``target`` : action (default) or other gauge-invariant observable.
 
     ``sampler`` : ensemble-generator
 
@@ -84,15 +65,25 @@ def build_plaquette_datasets(
     once per link config (from which the plaquettes were derived) and stored
     alongside ``X`` and ``y``.  See :func:`build_link_datasets` for details.
     """
+    if target != "action":
+        raise NotImplementedError(
+            f"Unsupported target {target}; only 'action' is implemented."
+        )
+    target = action
+
     configs, _ = sampler(
         L, D, gaugegroup, beta, N, n_therm=n_therm, n_skip=n_skip, dtype=dtype
     )
     Ps = torch.stack([plaquette_tensor(c, gaugegroup) for c in configs])
     X = Ps if structured else torch.stack([flatten_color(p) for p in Ps])
     y = torch.stack(
-        [action(configs[i], gaugegroup, beta=beta, plaquettes=Ps[i]) for i in range(N)]
+        [target(configs[i], gaugegroup, beta=beta, plaquettes=Ps[i]) for i in range(N)]
     )
-    T = build_transport(configs, R, gaugegroup) if R is not None else None
+    T = (
+        build_transport_average(configs, R=R, gaugegroup=gaugegroup)
+        if R is not None
+        else None
+    )
 
     prefix = dataset_prefix(
         gaugegroup.name.lower(), "plaquette", L, D, N, beta, dtype, structured, R
