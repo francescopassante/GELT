@@ -112,9 +112,7 @@ def test_gemhsa_shape_preserved_and_backward_finite():
     gg = SU(nc)
     B = 2
 
-    U_batch = torch.stack(
-        [random_links(L=L, D=D, gaugegroup=gg) for _ in range(B)], dim=0
-    )
+    U_batch = random_links(L=L, D=D, gaugegroup=gg, N=B)
     # Exercise the batched DP path directly: one pass over the whole (B, D, *Λ, nc, nc).
     T = build_transport_average(U_batch, R=R, gaugegroup=gg)
 

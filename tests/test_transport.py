@@ -145,13 +145,7 @@ def test_batched_matches_unbatched_z2(R):
     gaugegroup = Z2()
     L, D, N = 4, 2, 5
     torch.manual_seed(9)
-    configs = torch.stack(
-        [
-            random_links(L=L, D=D, gaugegroup=gaugegroup, dtype=torch.float64)
-            for _ in range(N)
-        ],
-        dim=0,
-    )
+    configs = random_links(L=L, D=D, gaugegroup=gaugegroup, dtype=torch.float64, N=N)
 
     T_batched = build_transport_average(configs, R=R, gaugegroup=gaugegroup)
     T_per = torch.stack(

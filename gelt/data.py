@@ -13,27 +13,28 @@ from gelt.lattice import (
 
 
 def flatten_color(U: torch.Tensor) -> torch.Tensor:
-    """Flatten color dimensions of a tensor ``(D, *Λ, nc, nc)`` into ML input ``(C, *Λ)``.
+    """Flatten color dimensions of a batched tensor ``(B, D, *Λ, nc, nc)`` into ``(B, C, *Λ)``.
 
-    Used for non-equivariant models only (breaks group structure)
+    Used for non-equivariant models only (breaks group structure).
 
     Real groups: ``C = D · nc²``.
     Complex groups: ``C = 2 · D · nc²`` (real and imaginary parts as separate channels).
     """
-    D = U.shape[0]
-    spatial = U.shape[1:-2]
+    B = U.shape[0]
+    D = U.shape[1]
+    spatial = U.shape[2:-2]
     nc = U.shape[-1]
     ndim_s = len(spatial)
     if torch.is_complex(U):
-        re_im = torch.stack([U.real, U.imag], dim=1)  # (D, 2, *Λ, nc, nc)
-        # Color axes sit after spatial; permute to (D, 2, nc, nc, *Λ) before
+        re_im = torch.stack([U.real, U.imag], dim=2)  # (B, D, 2, *Λ, nc, nc)
+        # Color axes sit after spatial; permute to (B, D, 2, nc, nc, *Λ) before
         # reshaping so each output channel is a pure (pair, re/im, row, col)
         # tuple and the spatial axes remain contiguous and un-mixed.
-        perm = (0, 1) + (ndim_s + 2, ndim_s + 3) + tuple(range(2, 2 + ndim_s))
-        return re_im.permute(*perm).contiguous().reshape(D * 2 * nc * nc, *spatial)
-    # Same fix for real tensors: (D, *Λ, nc, nc) → (D, nc, nc, *Λ) → (D·nc², *Λ).
-    perm = (0,) + (ndim_s + 1, ndim_s + 2) + tuple(range(1, 1 + ndim_s))
-    return U.permute(*perm).contiguous().reshape(D * nc * nc, *spatial)
+        perm = (0, 1, 2) + (ndim_s + 3, ndim_s + 4) + tuple(range(3, 3 + ndim_s))
+        return re_im.permute(*perm).contiguous().reshape(B, D * 2 * nc * nc, *spatial)
+    # Same fix for real tensors: (B, D, *Λ, nc, nc) → (B, D, nc, nc, *Λ) → (B, D·nc², *Λ).
+    perm = (0, 1) + (ndim_s + 2, ndim_s + 3) + tuple(range(2, 2 + ndim_s))
+    return U.permute(*perm).contiguous().reshape(B, D * nc * nc, *spatial)
 
 
 def build_plaquette_datasets(
@@ -75,7 +76,7 @@ def build_plaquette_datasets(
         L, D, gaugegroup, beta, N, n_therm=n_therm, n_skip=n_skip, dtype=dtype
     )
     Ps = plaquette_tensor(configs, gaugegroup)
-    X = Ps if structured else torch.stack([flatten_color(p) for p in Ps])
+    X = Ps if structured else flatten_color(Ps)
     y = target(configs, gaugegroup, beta=beta, plaquettes=Ps)
     T = (
         build_transport_average(configs, R=R, gaugegroup=gaugegroup)

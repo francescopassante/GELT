@@ -143,10 +143,7 @@ def haar_ensemble(
     as ``sampler=haar_ensemble`` anywhere a sampler callable is expected.
     Useful as a baseline or for architecture sanity-checks before MC is set up.
     """
-    configs = torch.stack(
-        [random_links(L, D, gaugegroup, dtype=dtype) for _ in range(n_configs)]
-    )
-    return configs, 1.0
+    return random_links(L, D, gaugegroup, dtype=dtype, N=n_configs), 1.0
 
 
 # Registry: maps GaugeGroup subclass → default sweep function.

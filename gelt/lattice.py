@@ -96,9 +96,17 @@ def random_links(
     D: int,
     gaugegroup: GaugeGroup,
     dtype: torch.dtype = torch.float32,
+    N: Optional[int] = None,
 ) -> torch.Tensor:
-    """Sample a Haar-random link configuration of shape ``(D, L, ..., L, nc, nc)``."""
-    return gaugegroup.random((D,) + (L,) * D, dtype=dtype)
+    """Sample Haar-random link configuration(s).
+
+    Without ``N``: returns shape ``(D, L, ..., L, nc, nc)``.
+    With ``N``:    returns shape ``(N, D, L, ..., L, nc, nc)``.
+    """
+    shape = (D,) + (L,) * D
+    if N is not None:
+        shape = (N,) + shape
+    return gaugegroup.random(shape, dtype=dtype)
 
 
 def plaquette_tensor(U: torch.Tensor, gaugegroup: GaugeGroup) -> torch.Tensor:
@@ -247,7 +255,9 @@ def rectangular_wilson_loop(
     for k in range(R - 1, -1, -1):
         loop = loop @ gaugegroup.dagger(
             torch.roll(
-                torch.roll(config[:, mu], shifts=-k, dims=mu + 1), shifts=-T, dims=nu + 1
+                torch.roll(config[:, mu], shifts=-k, dims=mu + 1),
+                shifts=-T,
+                dims=nu + 1,
             )
         )
 
