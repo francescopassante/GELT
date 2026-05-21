@@ -61,9 +61,9 @@ def test_action_invariant_z2(z2, L, D, beta):
     U = random_links(L, D, z2, dtype=torch.float64)
     omega = _random_omega(L, D, z2, torch.float64, seed=2)
 
-    S_before = action(U, z2, beta=beta)
+    S_before = action(U.unsqueeze(0), z2, beta=beta)[0]
     U_prime = link_gauge_transformation(U, omega, z2)
-    S_after = action(U_prime, z2, beta=beta)
+    S_after = action(U_prime.unsqueeze(0), z2, beta=beta)[0]
 
     assert torch.equal(S_before, S_after), (
         f"Action not invariant under Z₂ gauge transform "

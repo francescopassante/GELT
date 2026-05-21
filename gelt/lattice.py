@@ -142,24 +142,34 @@ def action(
     beta: float = 1.0,
     plaquettes: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
-    """Wilson action ``S = β Σ_p (1 − Re Tr P_p / N_c)``.
+    """Wilson action ``S = β Σ_p (1 − Re Tr P_p / N_c)`` for a batch of configs.
 
     Parameters
     ----------
     U
-        Link tensor (ignored if ``plaquettes`` is provided).
+        Batched link tensor of shape ``(B, D, *Λ, nc, nc)``.
+        Ignored when ``plaquettes`` is provided.
     gaugegroup
         Gauge group (used to compute plaquettes if needed).
     beta
         Coupling.
     plaquettes
-        Pre-computed plaquette tensor; if ``None`` it is computed from ``U``.
+        Pre-computed batched plaquette tensor of shape ``(B, n_pairs, *Λ, nc, nc)``;
+        if ``None`` it is computed from ``U``.
+
+    Returns
+    -------
+    Tensor of shape ``(B,)`` — one scalar action value per configuration.
     """
-    P = plaquettes if plaquettes is not None else plaquette_tensor(U, gaugegroup)
+    if plaquettes is not None:
+        P = plaquettes
+    else:
+        P = torch.stack([plaquette_tensor(U[b], gaugegroup) for b in range(U.shape[0])])
     re_tr_over_nc = P.diagonal(dim1=-2, dim2=-1).sum(dim=-1).real / gaugegroup.nc
-    n_plaq = re_tr_over_nc.numel()
-    # equivalent to beta (sum_p 1 - P_p)
-    return beta * (n_plaq - re_tr_over_nc.sum())
+    # re_tr_over_nc: (B, n_pairs, *Λ) — sum over all plaquettes per config.
+    n_plaq_per_config = re_tr_over_nc[0].numel()
+    # equivalent to beta (sum_p 1 - P_p) per config
+    return beta * (n_plaq_per_config - re_tr_over_nc.flatten(1).sum(1))
 
 
 def link_gauge_transformation(
@@ -209,41 +219,47 @@ def rectangular_wilson_loop(
 
     Parameters
     ----------
-    config : ``(D, *Λ, nc, nc)`` link tensor.
+    config : ``(B, D, *Λ, nc, nc)`` batched link tensor.
     R : side length along μ in lattice units.
     T : side length along ν in lattice units.
     mu, nu : plane directions, distinct, in ``[0, D)``.
 
     Returns
     -------
-    Real tensor of shape ``(*Λ)``: Re Tr W(x; R, T) / nc at every site x.
+    Real tensor of shape ``(B, *Λ)``: Re Tr W(x; R, T) / nc at every site x
+    for each configuration in the batch.
     """
-    D = config.shape[0]
+    D = config.shape[1]
     if not (0 <= mu < D and 0 <= nu < D and mu != nu):
         raise ValueError(f"Invalid directions mu={mu}, nu={nu} for D={D}.")
 
-    # torch.eye broadcasts to (*Λ, nc, nc) on the first matmul.
+    # torch.eye broadcasts to (B, *Λ, nc, nc) on the first matmul.
     loop = torch.eye(gaugegroup.nc, dtype=config.dtype, device=config.device)
 
+    # Spatial axes sit at positions 1..D inside config[:, d] — offset dims by 1.
     # Segment 1: U_μ(x + i·μ̂), i = 0 … R-1.
     for i in range(R):
-        loop = loop @ torch.roll(config[mu], shifts=-i, dims=mu)
+        loop = loop @ torch.roll(config[:, mu], shifts=-i, dims=mu + 1)
 
     # Segment 2: U_ν(x + R·μ̂ + i·ν̂), i = 0 … T-1.
     for i in range(T):
         loop = loop @ torch.roll(
-            torch.roll(config[nu], shifts=-R, dims=mu), shifts=-i, dims=nu
+            torch.roll(config[:, nu], shifts=-R, dims=mu + 1), shifts=-i, dims=nu + 1
         )
 
     # Segment 3: U†_μ(x + k·μ̂ + T·ν̂), k = R-1 … 0.
     for k in range(R - 1, -1, -1):
         loop = loop @ gaugegroup.dagger(
-            torch.roll(torch.roll(config[mu], shifts=-k, dims=mu), shifts=-T, dims=nu)
+            torch.roll(
+                torch.roll(config[:, mu], shifts=-k, dims=mu + 1), shifts=-T, dims=nu + 1
+            )
         )
 
     # Segment 4: U†_ν(x + k·ν̂), k = T-1 … 0.
     for k in range(T - 1, -1, -1):
-        loop = loop @ gaugegroup.dagger(torch.roll(config[nu], shifts=-k, dims=nu))
+        loop = loop @ gaugegroup.dagger(
+            torch.roll(config[:, nu], shifts=-k, dims=nu + 1)
+        )
 
     return loop.diagonal(dim1=-2, dim2=-1).sum(dim=-1).real / gaugegroup.nc
 

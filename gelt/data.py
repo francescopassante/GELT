@@ -76,9 +76,7 @@ def build_plaquette_datasets(
     )
     Ps = torch.stack([plaquette_tensor(c, gaugegroup) for c in configs])
     X = Ps if structured else torch.stack([flatten_color(p) for p in Ps])
-    y = torch.stack(
-        [target(configs[i], gaugegroup, beta=beta, plaquettes=Ps[i]) for i in range(N)]
-    )
+    y = target(configs, gaugegroup, beta=beta, plaquettes=Ps)
     T = (
         build_transport_average(configs, R=R, gaugegroup=gaugegroup)
         if R is not None
