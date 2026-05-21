@@ -184,18 +184,11 @@ if __name__ == "__main__":
         # the 2×2 Wilson loop target. α=0.5 puts the multiplicative path at
         # ~half the residual stream (α=0.05 left it at ~4% and the MLP just
         # kept reading the raw plaquette at site x, never using the multi-
-        # site contribution).
-        #
-        # init_scale=30 puts the bilinear coefficient ``σ²·C̃`` at roughly
-        # unit variance (with C̃ = 2C+1 = 7 for D=3, σ ≈ 0.227 ⇒ σ²·C̃ ≈ 0.36).
-        # At init_scale=10 (σ²·C̃ ≈ 0.04) the score std at init is ≈ 0.024,
-        # so the softmax over 24 L1-ball offsets is uniform to <3% and the
-        # attention has no per-offset signal to learn from — the model stayed
-        # within 10⁻³ of var(y) on the 2×2 target. init_scale=30 lifts score
-        # std to ≈ 0.7 (structure visible, well below the saturation regime
-        # ~2.0 that would collapse the softmax to a single offset).
+        # site contribution). init_scale=10 lifts score magnitudes off the
+        # near-uniform softmax floor so attention has per-offset signal to
+        # learn from on epoch 0.
         "alpha_init": 0.5,
-        "init_scale": 30.0,
+        "init_scale": 10.0,
         "mlp_zero_init": False,
     }
 

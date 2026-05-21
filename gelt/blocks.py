@@ -33,10 +33,11 @@ class GEMHSA(nn.Module):
        ``Kprime = T(x) · K(x+Δx) · T†(x)``.
     3. **score.** ``s = (1/√(nc·d)) · Re Σ_a Tr[Q†_a · K̃_a]`` per offset
        and per head, plus a learnable real bias ``b_h[h, n]`` per (head,
-       offset) — see notes/audit.md follow-up A on why the previous orbit
-       tying was dropped (the cubic point-group symmetry it enforced is
-       stronger than the symmetry of anisotropic Wilson-loop targets and
-       was preventing the attention from favouring specific axes).
+       offset). The bias is untied across point-group-related offsets so
+       that the model can favour specific axes — the cubic symmetry the
+       orbit tying enforced is strictly stronger than the symmetry of
+       anisotropic Wilson-loop targets and was preventing axis selection
+       through the attention.
     4. **softmax** over the offset axis (normalizes over neighbours per
        site, per head).
     5. **multiplicative value path.** Output of the attention head is
@@ -67,7 +68,6 @@ class GEMHSA(nn.Module):
         dtype=torch.complex64,
         alpha_init: float = 0.0,
         init_scale: float = 1.0,
-        final_block: bool = False,
     ):
         super(GEMHSA, self).__init__()
         self.gaugegroup = gaugegroup
@@ -75,26 +75,6 @@ class GEMHSA(nn.Module):
         self.R = R
         self.H = nhead
         self.C = d_input
-        # ``final_block`` strips the outer residual W + α(W_act − W) → α·W_act
-        # so the readout does not pass-through the site-local W=P(x) channel.
-        # See notes/audit.md §7.A: on per-site targets orthogonal to P(x)
-        # (e.g. the 2×2 Wilson loop in Z₂), the linear-in-P(x) residual
-        # collapses every downstream knob (fc2, w_mix, α) toward zero before
-        # the multi-site path can grow.  Identity-at-init is therefore *not*
-        # preserved on the final block; ReZero remains in force on layers
-        # 1..K-1.
-        #
-        # The *inner* residual W_res = W + W_mix is kept here even on the
-        # final block. We tried stripping it too (notes/audit.md follow-up B1)
-        # and 1×2 train/val rose 0.80 → 0.83 while 2×2 collapsed to var(y)=1
-        # with α drifting *down* from 0.5 → 0.25-0.36. Diagnosis: with no
-        # inner residual the final block's W_act magnitude at init is
-        # O(σ²·n_off) ≈ 0.03, so the readout sees noise and the optimizer
-        # attenuates the GEMHSA path. The inner residual provides a non-zero
-        # readout magnitude at init for the MLP to latch onto; the outer
-        # strip is what removes the *site-local* pass-through that drives
-        # the constant-mean trap.
-        self.final_block = final_block
         self.d_qkv = d_input // nhead if d_qkv is None else d_qkv
         if self.d_qkv < 1:
             raise ValueError(
@@ -126,17 +106,17 @@ class GEMHSA(nn.Module):
         )  # (D, n_offsets, *Λ)
         self.register_buffer("_nbr_idx", nbr_idx)
 
-        # Per-offset score bias (notes/audit.md follow-up A). Previously this
-        # was tied across the lattice point-group orbit of Δx (sign flips +
-        # axis permutations), which enforced architectural isotropy under the
-        # cubic point group. That tying is a strictly stronger symmetry than
-        # most physical targets have: a 1×R rectangular Wilson loop in the
-        # (μ,ν) plane is anisotropic, so the model had to break the orbit
-        # symmetry purely through the data-dependent bilinear score. With
-        # ``b_h`` untied per (head, offset) the model can directly favour
-        # specific Δx via the bias; gauge equivariance is unaffected because
-        # the bias is a real scalar added to the (already gauge-invariant)
-        # score.
+        # Per-offset score bias. Previously this was tied across the lattice
+        # point-group orbit of Δx (sign flips + axis permutations), enforcing
+        # architectural isotropy under the cubic point group. That tying is
+        # a strictly stronger symmetry than most physical targets have: a 1×R
+        # rectangular Wilson loop in the (μ,ν) plane is anisotropic, so the
+        # model had to break the orbit symmetry purely through the data-
+        # dependent bilinear score and got stuck near the uniform-attention
+        # baseline. With ``b_h`` untied per (head, offset) the model can
+        # directly favour specific Δx via the bias; gauge equivariance is
+        # unaffected because the bias is a real scalar added to the (already
+        # gauge-invariant) score.
         self.b_h = nn.Parameter(torch.zeros(self.H, self.n_offsets))
 
         # Channel augmentation expands
@@ -376,12 +356,6 @@ class GEMHSA(nn.Module):
         # ReZero: blend toward the L-Act output with a per-block scalar α
         # (zero-init). At α=0 the block is bit-exactly the identity W → W;
         # during training α grows and the gate/mix path takes over.
-        # The final block drops the *outer* residual so the trace head sees
-        # only the gated/mixed path — see __init__ docstring on ``final_block``
-        # and notes/audit.md §7.A. The inner residual inside W_res is kept
-        # on the final block (see ``final_block`` docstring for why).
-        if self.final_block:
-            return self.alpha * W_act
         return W + self.alpha * (W_act - W)
 
 
@@ -456,17 +430,12 @@ class GELT(nn.Module):
             )
         self.reduction = reduction
         # ModuleList so the GEMHSA parameters are registered with PyTorch
-        # and picked up by .parameters() / .to() / .state_dict(). The last
-        # block has ``final_block=True``: its outer residual is stripped so
-        # the readout does not inherit a site-local W=P(x) pass-through that
-        # collapses every downstream knob to zero on targets orthogonal to
-        # P(x) (notes/audit.md §7.A).
+        # and picked up by .parameters() / .to() / .state_dict().
         self.gemhsa_models = nn.ModuleList(
             [
                 GEMHSA(
                     gaugegroup, L, D, R, d_input, nhead, d_qkv, gate, dtype,
                     alpha_init=alpha_init, init_scale=init_scale,
-                    final_block=(i == gemhsa_layers - 1),
                 )
                 for i in range(gemhsa_layers)
             ]
