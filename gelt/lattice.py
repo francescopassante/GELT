@@ -196,7 +196,7 @@ def rectangular_wilson_loop(
     mu: int,
     nu: int,
 ) -> torch.Tensor:
-    """Spatial mean of Re Tr W_μν(x; R) / nc for the R×R rectangular Wilson loop.
+    """Re Tr W_μν(x; R) / nc at every site for the R×R rectangular Wilson loop.
 
     The loop at site x traverses:
       Segment 1: R forward steps in μ:  U_μ(x + i·μ̂),            i = 0 … R-1
@@ -214,7 +214,7 @@ def rectangular_wilson_loop(
 
     Returns
     -------
-    Real scalar: spatial mean of Re Tr W(x; R) / nc.
+    Real tensor of shape ``(*Λ)``: Re Tr W(x; R) / nc at every site x.
     """
     D = config.shape[0]
     if not (0 <= mu < D and 0 <= nu < D and mu != nu):
@@ -243,8 +243,7 @@ def rectangular_wilson_loop(
     for k in range(R - 1, -1, -1):
         loop = loop @ gaugegroup.dagger(torch.roll(config[nu], shifts=-k, dims=nu))
 
-    re_tr = loop.diagonal(dim1=-2, dim2=-1).sum(dim=-1).real
-    return re_tr.mean() / gaugegroup.nc
+    return loop.diagonal(dim1=-2, dim2=-1).sum(dim=-1).real / gaugegroup.nc
 
 
 def l1_ball_offsets(D: int, R: int) -> List[Tuple[int, ...]]:
