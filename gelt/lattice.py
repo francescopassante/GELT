@@ -193,28 +193,30 @@ def rectangular_wilson_loop(
     config: torch.Tensor,
     gaugegroup: GaugeGroup,
     R: int,
+    T: int,
     mu: int,
     nu: int,
 ) -> torch.Tensor:
-    """Re Tr W_μν(x; R) / nc at every site for the R×R rectangular Wilson loop.
+    """Re Tr W_μν(x; R, T) / nc at every site for the R×T rectangular Wilson loop.
 
     The loop at site x traverses:
       Segment 1: R forward steps in μ:  U_μ(x + i·μ̂),            i = 0 … R-1
-      Segment 2: R forward steps in ν:  U_ν(x + R·μ̂ + i·ν̂),      i = 0 … R-1
-      Segment 3: R backward steps in μ: U†_μ(x + k·μ̂ + R·ν̂),     k = R-1 … 0
-      Segment 4: R backward steps in ν: U†_ν(x + k·ν̂),            k = R-1 … 0
+      Segment 2: T forward steps in ν:  U_ν(x + R·μ̂ + i·ν̂),      i = 0 … T-1
+      Segment 3: R backward steps in μ: U†_μ(x + k·μ̂ + T·ν̂),     k = R-1 … 0
+      Segment 4: T backward steps in ν: U†_ν(x + k·ν̂),            k = T-1 … 0
 
-    At R=1 this reduces to the standard plaquette P_μν(x).
+    At R=T=1 this reduces to the standard plaquette P_μν(x).
 
     Parameters
     ----------
     config : ``(D, *Λ, nc, nc)`` link tensor.
-    R : side length in lattice units.
+    R : side length along μ in lattice units.
+    T : side length along ν in lattice units.
     mu, nu : plane directions, distinct, in ``[0, D)``.
 
     Returns
     -------
-    Real tensor of shape ``(*Λ)``: Re Tr W(x; R) / nc at every site x.
+    Real tensor of shape ``(*Λ)``: Re Tr W(x; R, T) / nc at every site x.
     """
     D = config.shape[0]
     if not (0 <= mu < D and 0 <= nu < D and mu != nu):
@@ -227,20 +229,20 @@ def rectangular_wilson_loop(
     for i in range(R):
         loop = loop @ torch.roll(config[mu], shifts=-i, dims=mu)
 
-    # Segment 2: U_ν(x + R·μ̂ + i·ν̂), i = 0 … R-1.
-    for i in range(R):
+    # Segment 2: U_ν(x + R·μ̂ + i·ν̂), i = 0 … T-1.
+    for i in range(T):
         loop = loop @ torch.roll(
             torch.roll(config[nu], shifts=-R, dims=mu), shifts=-i, dims=nu
         )
 
-    # Segment 3: U†_μ(x + k·μ̂ + R·ν̂), k = R-1 … 0.
+    # Segment 3: U†_μ(x + k·μ̂ + T·ν̂), k = R-1 … 0.
     for k in range(R - 1, -1, -1):
         loop = loop @ gaugegroup.dagger(
-            torch.roll(torch.roll(config[mu], shifts=-k, dims=mu), shifts=-R, dims=nu)
+            torch.roll(torch.roll(config[mu], shifts=-k, dims=mu), shifts=-T, dims=nu)
         )
 
-    # Segment 4: U†_ν(x + k·ν̂), k = R-1 … 0.
-    for k in range(R - 1, -1, -1):
+    # Segment 4: U†_ν(x + k·ν̂), k = T-1 … 0.
+    for k in range(T - 1, -1, -1):
         loop = loop @ gaugegroup.dagger(torch.roll(config[nu], shifts=-k, dims=nu))
 
     return loop.diagonal(dim1=-2, dim2=-1).sum(dim=-1).real / gaugegroup.nc
