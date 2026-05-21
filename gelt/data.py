@@ -6,35 +6,9 @@ from torch.utils.data import TensorDataset, random_split
 
 from gelt.lattice import (
     GaugeGroup,
-    action,
     build_transport_average,
     plaquette_tensor,
 )
-
-
-def flatten_color(U: torch.Tensor) -> torch.Tensor:
-    """Flatten color dimensions of a batched tensor ``(B, D, *Λ, nc, nc)`` into ``(B, C, *Λ)``.
-
-    Used for non-equivariant models only (breaks group structure).
-
-    Real groups: ``C = D · nc²``.
-    Complex groups: ``C = 2 · D · nc²`` (real and imaginary parts as separate channels).
-    """
-    B = U.shape[0]
-    D = U.shape[1]
-    spatial = U.shape[2:-2]
-    nc = U.shape[-1]
-    ndim_s = len(spatial)
-    if torch.is_complex(U):
-        re_im = torch.stack([U.real, U.imag], dim=2)  # (B, D, 2, *Λ, nc, nc)
-        # Color axes sit after spatial; permute to (B, D, 2, nc, nc, *Λ) before
-        # reshaping so each output channel is a pure (pair, re/im, row, col)
-        # tuple and the spatial axes remain contiguous and un-mixed.
-        perm = (0, 1, 2) + (ndim_s + 3, ndim_s + 4) + tuple(range(3, 3 + ndim_s))
-        return re_im.permute(*perm).contiguous().reshape(B, D * 2 * nc * nc, *spatial)
-    # Same fix for real tensors: (B, D, *Λ, nc, nc) → (B, D, nc, nc, *Λ) → (B, D·nc², *Λ).
-    perm = (0, 1) + (ndim_s + 2, ndim_s + 3) + tuple(range(2, 2 + ndim_s))
-    return U.permute(*perm).contiguous().reshape(B, D * nc * nc, *spatial)
 
 
 def build_plaquette_datasets(
@@ -89,7 +63,6 @@ def build_plaquette_datasets(
     return split(X, y, splits, save, prefix=prefix, T=T)
 
 
-
 def split(X, y, splits, save, prefix, T: Optional[torch.Tensor] = None):
     if len(splits) != 3 or any(s <= 0 for s in splits):
         raise ValueError(f"Expected three positive split fractions, got {splits}.")
@@ -132,21 +105,26 @@ def split(X, y, splits, save, prefix, T: Optional[torch.Tensor] = None):
     return train, val, test
 
 
-if __name__ == "__main__":
-    from functools import partial
+def flatten_color(U: torch.Tensor) -> torch.Tensor:
+    """Flatten color dimensions of a batched tensor ``(B, D, *Λ, nc, nc)`` into ``(B, C, *Λ)``.
 
-    from gelt import SU, haar_ensemble
+    Used for non-equivariant models only (breaks group structure).
 
-    beta = 1.0
-    train, val, test = build_plaquette_datasets(
-        N=100,
-        D=3,
-        L=5,
-        gaugegroup=SU(3),
-        beta=beta,
-        target=partial(action, beta=beta),
-        structured=True,
-        sampler=haar_ensemble,
-        R=3,
-    )
-    print(train[0])
+    Real groups: ``C = D · nc²``.
+    Complex groups: ``C = 2 · D · nc²`` (real and imaginary parts as separate channels).
+    """
+    B = U.shape[0]
+    D = U.shape[1]
+    spatial = U.shape[2:-2]
+    nc = U.shape[-1]
+    ndim_s = len(spatial)
+    if torch.is_complex(U):
+        re_im = torch.stack([U.real, U.imag], dim=2)  # (B, D, 2, *Λ, nc, nc)
+        # Color axes sit after spatial; permute to (B, D, 2, nc, nc, *Λ) before
+        # reshaping so each output channel is a pure (pair, re/im, row, col)
+        # tuple and the spatial axes remain contiguous and un-mixed.
+        perm = (0, 1, 2) + (ndim_s + 3, ndim_s + 4) + tuple(range(3, 3 + ndim_s))
+        return re_im.permute(*perm).contiguous().reshape(B, D * 2 * nc * nc, *spatial)
+    # Same fix for real tensors: (B, D, *Λ, nc, nc) → (B, D, nc, nc, *Λ) → (B, D·nc², *Λ).
+    perm = (0, 1) + (ndim_s + 2, ndim_s + 3) + tuple(range(2, 2 + ndim_s))
+    return U.permute(*perm).contiguous().reshape(B, D * nc * nc, *spatial)

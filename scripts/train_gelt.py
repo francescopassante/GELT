@@ -1,9 +1,9 @@
+from functools import partial
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from tqdm import tqdm
-
-from functools import partial
 
 from gelt import haar_ensemble
 from gelt.blocks import GELT
@@ -103,23 +103,23 @@ def train_model(
 
 if __name__ == "__main__":
     torch.manual_seed(0)
-    from gelt import SU, build_plaquette_datasets
+    from gelt import SU, Z2, build_plaquette_datasets
 
     D = 3
     L = 8
-    gaugegroup = SU(2)
+    gaugegroup = Z2()
     R = 1
 
     beta = 1
     dataset_parameters = {
-        "N": 1000,
+        "N": 2000,
         "D": D,
         "L": L,
         "gaugegroup": gaugegroup,
         "R": R,
         "splits": [0.7, 0.15, 0.15],
-        "save": True,
-        "prefix": f"su2_plaquette_L{L}_D{D}_N1000_beta{beta}_R{R}",
+        "save": False,
+        "prefix": f"z2_plaquette_L{L}_D{D}_N1000_beta{beta}_R{R}_action",
         "structured": True,
         "sampler": haar_ensemble,
         "beta": beta,
@@ -131,7 +131,7 @@ if __name__ == "__main__":
 
     train_parameters = {
         "lr": 1e-3,
-        "batch_size": 16,
+        "batch_size": 64,
         "epochs": 300,
         "patience": 30,
         "checkpoint_path": "best_model.pth",
@@ -167,12 +167,7 @@ if __name__ == "__main__":
     # (gelt/blocks.py), the untrained model is the constant predictor at the
     # normalized mean (= 0), giving R² = 0 — the trivial mean-baseline.
     # Predictions and saved targets are denormalized at the end for plotting.
-    #
-    # MUST run before the DataLoaders are created: with num_workers > 0, the
-    # workers fork/spawn off the parent's memory snapshot at first iteration
-    # and would carry the *un*standardized y forever (persistent_workers=True
-    # makes that snapshot survive across epochs). Standardizing first means
-    # workers fork the already-normalized tensor.
+
     y_train = train_dataset.dataset.tensors[-1][train_dataset.indices]
     mu_y = y_train.mean()
     sigma_y = y_train.std(unbiased=False).clamp_min(1e-12)

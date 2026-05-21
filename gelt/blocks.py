@@ -304,6 +304,14 @@ class GEMHSA(nn.Module):
             f"Expected T.shape[1] == {self.n_offsets} (number of offsets), got {T.shape[1]}"
         )
 
+        # Cast inputs to the model's weight dtype (e.g. complex64) so that
+        # real-valued data (Z₂ float32 plaquettes) can be fed to a complex model.
+        w_dtype = self.w_Q.dtype
+        if W.dtype != w_dtype:
+            W = W.to(w_dtype)
+        if T.dtype != w_dtype:
+            T = T.to(w_dtype)
+
         nc = W.shape[-1]
 
         # Augment, then mix channels to build Q, K, V of shape

@@ -1,9 +1,9 @@
+from functools import partial
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from tqdm import tqdm
-
-from functools import partial
 
 from gelt import LatticeCNN, haar_ensemble
 from gelt.lattice import action
@@ -104,17 +104,18 @@ if __name__ == "__main__":
 
     D = 3
     L = 8
+    gaugegroup = Z2()
 
     beta = 1
     dataset_parameters = {
-        "N": 1000,
+        "N": 2000,
         "D": D,
         "L": L,
-        "gaugegroup": Z2(),
+        "gaugegroup": gaugegroup,
         "R": None,
         "splits": [0.7, 0.15, 0.15],
-        "save": True,
-        "prefix": f"z2_plaquette_L{L}_D{D}_N1000_beta{beta}",
+        "save": False,
+        "prefix": f"z2_plaquette_L{L}_D{D}_N1000_beta{beta}_action",
         "structured": False,
         "sampler": haar_ensemble,
         "beta": beta,
@@ -126,6 +127,7 @@ if __name__ == "__main__":
 
     train_parameters = {
         "lr": 1e-3,
+        "batch_size": 64,
         "epochs": 300,
         "patience": 30,
         "checkpoint_path": "best_model.pth",
@@ -147,9 +149,9 @@ if __name__ == "__main__":
         L,
         D,
         in_channels=in_channels,
-        hidden_channels=[16, 32],
+        hidden_channels=[1],
         kernel_size=3,
-        fc_hidden=32,
+        fc_hidden=2,
     )
 
     train_loader = torch.utils.data.DataLoader(
