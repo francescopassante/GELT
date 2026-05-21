@@ -6,7 +6,7 @@ import torch.optim as optim
 from tqdm import tqdm
 
 from gelt import LatticeCNN, haar_ensemble
-from gelt.lattice import action
+from gelt.lattice import rectangular_wilson_loop
 
 """
 ========================================================================================
@@ -107,19 +107,22 @@ if __name__ == "__main__":
     gaugegroup = Z2()
 
     beta = 1
+    # Same per-site Wilson loop target as scripts/train_gelt.py, so the CNN
+    # baseline and GELT are trained against the identical regression problem.
+    loop_R, loop_T, mu, nu = 2, 2, 0, 1
     dataset_parameters = {
-        "N": 2000,
+        "N": 1000,
         "D": D,
         "L": L,
         "gaugegroup": gaugegroup,
         "R": None,
         "splits": [0.7, 0.15, 0.15],
         "save": False,
-        "prefix": f"z2_plaquette_L{L}_D{D}_N1000_beta{beta}_action",
+        "prefix": f"z2_plaquette_L{L}_D{D}_N2000_beta{beta}_wloop{loop_R}x{loop_T}",
         "structured": False,
         "sampler": haar_ensemble,
         "beta": beta,
-        "target": partial(action, beta=beta),
+        "target": partial(rectangular_wilson_loop, R=loop_R, T=loop_T, mu=mu, nu=nu),
         "n_therm": 200,
         "n_skip": 5,
         "dtype": torch.float32,
@@ -131,7 +134,6 @@ if __name__ == "__main__":
         "epochs": 300,
         "patience": 30,
         "checkpoint_path": "best_model.pth",
-        "batch_size": 16,
     }
 
     train_dataset, val_dataset, test_dataset = build_plaquette_datasets(
@@ -141,17 +143,19 @@ if __name__ == "__main__":
     # Derive in_channels from the data so it stays in sync with structured/dtype/group:
     # for SU(N) with structured=False, flatten_color yields 2 · n_pairs · nc² channels.
     in_channels = train_dataset[0][0].shape[0]
-    # Matched-capacity hyperparameters with scripts/train_gelt.py. With
-    # hidden_channels=[1] and fc_hidden=2 the CNN has 1678 numel (all real DOFs).
-    # GELT's matched config is 911 numel ≈ 1707 real DOFs (complex weights
-    # count for 2 real DOFs each). Ratio in real DOFs ≈ 1.02×.
+    # NOTE: matched-capacity numbers below were calibrated for the global FC
+    # head (per-config target). With reduction="none" the head becomes two 1×1
+    # convs whose parameter count is independent of L^D, so the CNN's total
+    # numel is far smaller than the original 1678. Re-tune hidden_channels /
+    # fc_hidden once the per-site comparison is the canonical benchmark.
     model = LatticeCNN(
         L,
         D,
         in_channels=in_channels,
-        hidden_channels=[1],
+        hidden_channels=[16, 32],
         kernel_size=3,
         fc_hidden=2,
+        reduction="none",
     )
 
     train_loader = torch.utils.data.DataLoader(
@@ -253,8 +257,17 @@ if __name__ == "__main__":
     plt.savefig("cnn_loss.png", dpi=150, bbox_inches="tight")
     plt.close()
 
+    # Flatten per-site targets/predictions for the scatter; subsample if dense
+    # so matplotlib stays responsive (per-site targets give |Λ| points per
+    # config, e.g. 8³·N_test ≈ 150 k points at L=8, D=3).
+    t_flat = all_targets.reshape(-1).numpy()
+    o_flat = all_outputs.reshape(-1).numpy()
+    if t_flat.size > 20000:
+        rng = torch.Generator().manual_seed(0)
+        idx = torch.randperm(t_flat.size, generator=rng)[:20000].numpy()
+        t_flat, o_flat = t_flat[idx], o_flat[idx]
     plt.figure(figsize=(8, 8))
-    plt.scatter(all_targets.numpy(), all_outputs.numpy(), alpha=0.5)
+    plt.scatter(t_flat, o_flat, alpha=0.5, s=4)
     plt.xlabel("True Values")
     plt.ylabel("Predictions")
     plt.title("True vs Predicted Values (Test Set)")

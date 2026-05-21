@@ -219,7 +219,9 @@ class GEMHSA(nn.Module):
 
         # Reshape and permute back to (B, H, d, n, *Λ, nc, nc).
         out = R.reshape(B, n, *spatial, nc, H, d, nc)
-        inv_perm = (0, 3 + Dsp, 4 + Dsp, 1) + tuple(range(2, 2 + Dsp)) + (2 + Dsp, 5 + Dsp)
+        inv_perm = (
+            (0, 3 + Dsp, 4 + Dsp, 1) + tuple(range(2, 2 + Dsp)) + (2 + Dsp, 5 + Dsp)
+        )
         return out.permute(*inv_perm).contiguous()
 
     def _attend(self, Q, K, V, T):
@@ -389,6 +391,10 @@ class GELT(nn.Module):
       2. GEMHSA blocks with H heads and d_qkv channels per head.
       3. Trace block to get Re, Im parts of the trace as scalar per site.
       4. MLP with one hidden layer to mix the trace features and output a scalar per site for regression or classification.
+      5. Spatial reduction (``reduction`` arg): ``"sum"`` for extensive
+         per-config targets like the Wilson action, ``"mean"`` for the
+         average Wilson loop ⟨W⟩, ``"none"`` to keep the per-site readout
+         ``(B, *Λ)`` for per-site supervision (e.g. ``Re Tr W(R,T,x)/nc``).
     """
 
     def __init__(
@@ -404,10 +410,16 @@ class GELT(nn.Module):
         dtype=torch.complex64,
         mlp_hidden=32,
         mlp_out=1,
+        reduction: str = "sum",
     ):
         # Plaquette input -> D(D-1)/2 plaquettes per site.
         d_input = D * (D - 1) // 2
         super(GELT, self).__init__()
+        if reduction not in ("sum", "mean", "none"):
+            raise ValueError(
+                f"reduction must be 'sum', 'mean', or 'none', got {reduction!r}"
+            )
+        self.reduction = reduction
         # ModuleList so the GEMHSA parameters are registered with PyTorch
         # and picked up by .parameters() / .to() / .state_dict().
         self.gemhsa_models = nn.ModuleList(
@@ -442,7 +454,15 @@ class GELT(nn.Module):
         W_attn = self.attn(W, T)
         trace = self.trace(W_attn)
         site_out = self.mlp(trace)  # (B, *Λ, mlp_out)
-        # Sum the site-local readout to an extensive scalar per config
-        # (matches the Wilson action target). squeeze(-1) handles mlp_out=1.
-        spatial_dims = tuple(range(1, site_out.ndim - 1))
-        return site_out.sum(dim=spatial_dims).squeeze(-1)
+        # squeeze(-1) handles mlp_out=1 → (B, *Λ).
+        site_out = site_out.squeeze(-1)
+        if self.reduction == "none":
+            # Per-site supervision (e.g. Re Tr W(R,T,x)/nc): keep the spatial axes.
+            return site_out
+        # Reduce the site-local readout over the spatial axes.
+        # "sum" matches an extensive per-config target (Wilson action);
+        # "mean" matches the average Wilson loop ⟨W⟩.
+        spatial_dims = tuple(range(1, site_out.ndim))
+        if self.reduction == "sum":
+            return site_out.sum(dim=spatial_dims)
+        return site_out.mean(dim=spatial_dims)

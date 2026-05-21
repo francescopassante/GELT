@@ -68,31 +68,49 @@ class LatticeCNN(nn.Module):
         hidden_channels: Sequence[int],
         kernel_size: int = 3,
         fc_hidden: int = 32,
+        reduction: str = "sum",
     ):
         super().__init__()
         if kernel_size <= 0 or kernel_size % 2 == 0:
             raise ValueError("kernel_size must be a positive odd integer.")
+        if reduction not in ("sum", "mean", "none"):
+            raise ValueError(
+                f"reduction must be 'sum', 'mean', or 'none', got {reduction!r}"
+            )
         self.L = L
         self.D = D
         self.in_channels = in_channels
+        self.reduction = reduction
 
         channels = [in_channels, *hidden_channels]
         layers = []
         for chan_in, chan_out in zip(channels, channels[1:]):
             layers.append(_make_conv(chan_in, chan_out, D, kernel_size))
             layers.append(nn.ReLU())
-        layers.append(nn.Flatten())
         self.conv = nn.Sequential(*layers)
 
-        # The FC head's hidden width is exposed so the CNN can be tuned to a
-        # comparable parameter budget with GELT — on an L^D lattice the FC
-        # layer at L^D · channels[-1] features dominates the total count,
-        # so this is the natural knob.
-        self.fc = nn.Sequential(
-            nn.Linear(self.L**self.D * channels[-1], fc_hidden),
-            nn.ReLU(),
-            nn.Linear(fc_hidden, 1),
-        )
+        if reduction == "none":
+            # Per-site head: two 1×1 convolutions act as a per-site MLP, so
+            # the CNN stays translation-equivariant all the way to the
+            # readout — the natural counterpart of GELT's per-site Trace+MLP
+            # head when supervising per-site targets like ``Re Tr W(R,T,x)/nc``.
+            self.fc = nn.Sequential(
+                _make_conv(channels[-1], fc_hidden, D, kernel_size=1),
+                nn.ReLU(),
+                _make_conv(fc_hidden, 1, D, kernel_size=1),
+            )
+        else:
+            # Global FC head: collapses the lattice to a single scalar per
+            # config. The FC head's hidden width is exposed so the CNN can be
+            # tuned to a comparable parameter budget with GELT — on an L^D
+            # lattice the FC layer at L^D · channels[-1] features dominates
+            # the total count, so this is the natural knob.
+            self.fc = nn.Sequential(
+                nn.Flatten(),
+                nn.Linear(self.L**self.D * channels[-1], fc_hidden),
+                nn.ReLU(),
+                nn.Linear(fc_hidden, 1),
+            )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if x.shape[1] != self.in_channels:
@@ -102,6 +120,11 @@ class LatticeCNN(nn.Module):
             )
         x = self.conv(x)
         x = self.fc(x)
+        if self.reduction == "none":
+            # (B, 1, *Λ) → (B, *Λ): drop the singleton channel from the 1×1 head.
+            return x.squeeze(1)
+        # (B, 1) → (B,) for the global FC head. "sum" and "mean" coincide
+        # here since the head already produces a single scalar per config.
         return x.squeeze(-1)
 
 

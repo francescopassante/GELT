@@ -7,7 +7,7 @@ from tqdm import tqdm
 
 from gelt import haar_ensemble
 from gelt.blocks import GELT
-from gelt.lattice import action
+from gelt.lattice import rectangular_wilson_loop
 
 """
 ========================================================================================
@@ -111,6 +111,11 @@ if __name__ == "__main__":
     R = 1
 
     beta = 1
+    # Per-site Wilson loop target: y has shape (B, *Λ). Paired with
+    # ``reduction="none"`` on GELT, the model's per-site readout is supervised
+    # directly — every site contributes a sample, and the equivariant trace
+    # head outputs the locally gauge-invariant quantity at x.
+    loop_R, loop_T, mu, nu = 2, 2, 0, 1
     dataset_parameters = {
         "N": 2000,
         "D": D,
@@ -119,11 +124,11 @@ if __name__ == "__main__":
         "R": R,
         "splits": [0.7, 0.15, 0.15],
         "save": False,
-        "prefix": f"z2_plaquette_L{L}_D{D}_N1000_beta{beta}_R{R}_action",
+        "prefix": f"z2_plaquette_L{L}_D{D}_N2000_beta{beta}_R{R}_wloop{loop_R}x{loop_T}",
         "structured": True,
         "sampler": haar_ensemble,
         "beta": beta,
-        "target": partial(action, beta=beta),
+        "target": partial(rectangular_wilson_loop, R=loop_R, T=loop_T, mu=mu, nu=nu),
         "n_therm": 200,
         "n_skip": 5,
         "dtype": torch.float32,
@@ -154,6 +159,9 @@ if __name__ == "__main__":
         "dtype": torch.complex64,
         "mlp_hidden": 16,
         "mlp_out": 1,
+        # Per-site target → no spatial reduction. Use "sum" for the Wilson
+        # action, "mean" for the average ⟨W⟩.
+        "reduction": "none",
     }
 
     train_dataset, val_dataset, test_dataset = build_plaquette_datasets(
@@ -269,8 +277,17 @@ if __name__ == "__main__":
     plt.savefig("gelt_loss.png", dpi=150, bbox_inches="tight")
     plt.close()
 
+    # Flatten per-site targets/predictions for the scatter; subsample if dense
+    # so matplotlib stays responsive (per-site targets give |Λ| points per
+    # config, e.g. 8³·N_test ≈ 150 k points at L=8, D=3).
+    t_flat = all_targets.reshape(-1).numpy()
+    o_flat = all_outputs.reshape(-1).numpy()
+    if t_flat.size > 20000:
+        rng = torch.Generator().manual_seed(0)
+        idx = torch.randperm(t_flat.size, generator=rng)[:20000].numpy()
+        t_flat, o_flat = t_flat[idx], o_flat[idx]
     plt.figure(figsize=(8, 8))
-    plt.scatter(all_targets.numpy(), all_outputs.numpy(), alpha=0.5)
+    plt.scatter(t_flat, o_flat, alpha=0.5, s=4)
     plt.xlabel("True Values")
     plt.ylabel("Predictions")
     plt.title("True vs Predicted Values (Test Set)")
