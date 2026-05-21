@@ -62,6 +62,7 @@ class GEMHSA(nn.Module):
         d_qkv=None,
         gate="relu",
         dtype=torch.complex64,
+        alpha_init: float = 0.0,
     ):
         super(GEMHSA, self).__init__()
         self.gaugegroup = gaugegroup
@@ -139,13 +140,15 @@ class GEMHSA(nn.Module):
             (self.C, self.H, self.d_qkv), sigma_mix, dtype
         )
 
-        # ReZero / LayerScale: per-block learnable scalar α, init to 0 so the
-        # block is *exactly* identity at init regardless of gate choice (the
-        # gate g_softplus(0) = ln 2 ≠ 1 would otherwise rescale W on the first
-        # forward, breaking the §5 "identity-at-init" property). α is real and
-        # gauge-invariant; the convex combination of two equivariant terms
-        # remains equivariant. See notes/architecture.html §3.8.
-        self.alpha = nn.Parameter(torch.zeros(1))
+        # ReZero / LayerScale: per-block learnable scalar α. ``alpha_init=0``
+        # gives the §3.8 identity-at-init property (block is bit-exactly
+        # W → W), but pairs badly with the MLP zero-init on hard targets —
+        # the model commits to the constant-mean predictor before the GEMHSA
+        # path ever sees gradient. Warm-starting α to a small positive value
+        # (e.g. 0.05) forces the multiplicative path to contribute from epoch
+        # 0; the convex combination of two equivariant terms remains
+        # equivariant. See notes/architecture.html §3.8.
+        self.alpha = nn.Parameter(torch.full((1,), float(alpha_init)))
 
     @staticmethod
     def _init_projection(shape, sigma, dtype):
@@ -411,6 +414,8 @@ class GELT(nn.Module):
         mlp_hidden=32,
         mlp_out=1,
         reduction: str = "sum",
+        alpha_init: float = 0.0,
+        mlp_zero_init: bool = True,
     ):
         # Plaquette input -> D(D-1)/2 plaquettes per site.
         d_input = D * (D - 1) // 2
@@ -424,7 +429,10 @@ class GELT(nn.Module):
         # and picked up by .parameters() / .to() / .state_dict().
         self.gemhsa_models = nn.ModuleList(
             [
-                GEMHSA(gaugegroup, L, D, R, d_input, nhead, d_qkv, gate, dtype)
+                GEMHSA(
+                    gaugegroup, L, D, R, d_input, nhead, d_qkv, gate, dtype,
+                    alpha_init=alpha_init,
+                )
                 for i in range(gemhsa_layers)
             ]
         )
@@ -441,9 +449,13 @@ class GELT(nn.Module):
         # architecture.html §6.1), this makes the untrained model the
         # constant predictor at the (normalized) target mean, i.e. R² = 0
         # — the trivial mean-baseline. Gradients still flow on the first
-        # step via fc1 → fc2.
-        nn.init.zeros_(self.mlp.fc2.weight)
-        nn.init.zeros_(self.mlp.fc2.bias)
+        # step via fc1 → fc2. Disable (``mlp_zero_init=False``) when the
+        # zero-init combines with α=0 to trap training at the constant
+        # predictor — most often on highly nonlinear per-site targets like
+        # Wilson loops at R>1.
+        if mlp_zero_init:
+            nn.init.zeros_(self.mlp.fc2.weight)
+            nn.init.zeros_(self.mlp.fc2.bias)
 
     def attn(self, W, T):
         for layer in self.gemhsa_models:

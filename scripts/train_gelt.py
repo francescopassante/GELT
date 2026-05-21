@@ -179,6 +179,13 @@ if __name__ == "__main__":
         # Per-site target → no spatial reduction. Use "sum" for the Wilson
         # action, "mean" for the average ⟨W⟩.
         "reduction": "none",
+        # Warm-start the ReZero α and drop the MLP fc2 zero-init: the default
+        # α=0 + fc2=0 combo traps training at the constant-mean predictor on
+        # the 2×2 Wilson loop target (α observed frozen at +0.01..+0.25 with
+        # loss stuck at var(y)=1). Forcing the multiplicative path on from
+        # epoch 0 gets the model exploring the right loop-product subspace.
+        "alpha_init": 0.05,
+        "mlp_zero_init": False,
     }
 
     train_dataset, val_dataset, test_dataset = build_plaquette_datasets(
