@@ -111,6 +111,12 @@ def train_model(
             epoch_bar.write(f"Early stopping triggered after {epoch + 1} epochs.")
             break
 
+    if best_val_loss == float("inf"):
+        raise RuntimeError(
+            f"No checkpoint written to {checkpoint_path}: val_loss never improved "
+            f"over inf. Likely NaN/Inf losses — check the training output."
+        )
+
     return train_losses, val_losses, epoch + 1
 
 
@@ -155,7 +161,7 @@ if __name__ == "__main__":
         "batch_size": 64,
         "epochs": 300,
         "patience": 30,
-        "checkpoint_path": "best_model.pth",
+        "checkpoint_path": "best_gelt.pth",
     }
 
     # Debug-capacity GELT for the per-site Wilson loop target. The 2×2 loop is

@@ -1,9 +1,7 @@
-"""GEMHSA / GELT — gauge-equivariant attention block and the full model.
-
-The transport step ``T·X·T†`` and the value path ``Σ_n α_n (Q†·Ṽ_n)`` are
-written so they issue O(B·n_off·|Λ|) batched matmuls rather than the naive
-O(B·H·d·n_off·|Λ|) — see notes/architecture.html §13.1 for the derivation
-and the V100 measurements (~10× over the broadcast-matmul form).
+"""
+=========================================================================
+GEMHSA / GELT — gauge-equivariant attention block and the full model.
+=========================================================================
 """
 
 import math
@@ -16,43 +14,42 @@ from gelt.lattice import l1_ball_offsets
 
 
 class GEMHSA(nn.Module):
-    """Gauge-equivariant multi-head self-attention block (G-Attn).
+    """Gauge-equivariant multi-head self-attention block.
 
-    The input is a batched covariant W-field of shape ``(B, C, *Λ, nc, nc)`` and the output has the
-    same shape, so blocks chain. Every channel of W transforms in the
-    adjoint representation, ``W → Ω W Ω†``.
+    The input is a batched covariant local field of shape ``(B, C, *Λ, nc, nc)``
+    Every channel of W transforms in the adjoint representation, ``W → Ω W Ω†``.
 
-    Pipeline (one G-Attn block):
+    Pipeline:
 
     1. **augment + project.** Append the on-site identity and daggers
-    (``C → C̃ = 2C + 1``), then project to per-head Q, K, V of
-       shape ``(B, H, d_qkv, *Λ, nc, nc)``.
-    2. **adjoint transport.** For every Δx in the L1-ball, gather
-       the neighbour fields ``K(x+Δx)`` / ``V(x+Δx)`` and apply the
-       shortest-path-averaged transport in the adjoint representation:
-       ``Kprime = T(x) · K(x+Δx) · T†(x)``.
-    3. **score.** ``s = (1/√(nc·d)) · Re Σ_a Tr[Q†_a · K̃_a]`` per offset
+    (C → 2C + 1), then project to per-head Q, K, V of
+       shape (B, H, d_qkv, *Λ, nc, nc).
+    2. **adjoint transport.** For every Δx in the L1-ball of radius R, gather
+       the neighbour fields K(x+Δx), V(x+Δx) and apply the
+       shortest-path-averaged transport: K'(x+Δx->x) = T(x) · K(x+Δx) · T†(x)
+    3. **gauge invariant score.** s = (1/√(nc·d)) · Re Σ_a Tr[Q†_a · K̃_a] per offset
        and per head, plus a learnable real bias ``b_h[h, n]`` per (head,
-       offset). The bias is untied across point-group-related offsets so
-       that the model can favour specific axes — the cubic symmetry the
-       orbit tying enforced is strictly stronger than the symmetry of
-       anisotropic Wilson-loop targets and was preventing axis selection
-       through the attention.
+       offset).
+       NOTE: The bias is intentionally untied across point-group-related offsets so
+       that the model can favour specific axes — orbit tying was preventing axis selection
+       through the attention in the Wilson loop targets
     4. **softmax** over the offset axis (normalizes over neighbours per
        site, per head).
     5. **multiplicative value path.** Output of the attention head is
-       ``Σ_i α_i · Q†(x) · Ṽ_i(x)`` — both factors are covariant at x, so the
+       Σ_i α_i · Q†(x) · V'_i(x) — both factors are covariant at x, so the
        product is covariant; this is the L-Bilin-baked-in step that gives the
        loop-doubling expressivity argument.
-    6. **channel mix back to C** via a complex linear ``(H, d_qkv) → C``.
-    7. **residual + L-Act gate.** ``W_act = g(W_res) · W_res`` with
-       ``W_res = W_in + W_mix`` and ``g(W) = ReLU(Re Tr[W]/nc)`` (default)
-       or ``softplus(Re Tr[W]/nc)``.
+       NOTE: could use another projection for Q, more general
+    6. **channel mix back to C** via a complex linear (H, d_qkv) → C.
+        NOTE: C is typically small (1/3/6), we might want to expand channels instead of
+        collapsing back to C at each layer
+    7. **residual + L-Act gate.** W_act = g(W_res) · W_res with
+       W_res = W_in + W_mix and g(W) = ReLU(Re Tr[W]/nc)
+       or softplus(Re Tr[W]/nc).
 
-    The transport ``T`` is precomputed by the dataset builder (it is a
-    function of the link configuration only, see
-    :func:`gelt.lattice.build_transport_average`). ``forward(W, T)`` takes it as
-    a tensor of shape ``(B, n_offsets, *Λ, nc, nc)``
+    The transport T is precomputed by the dataset builder (it is a
+    function of the link configuration only
+    it's a tensor of shape (B, n_offsets, *Λ, nc, nc)
     """
 
     def __init__(
@@ -64,7 +61,7 @@ class GEMHSA(nn.Module):
         d_input,
         nhead,
         d_qkv=None,
-        gate="relu",
+        gate="softplus",
         dtype=torch.complex64,
         alpha_init: float = 0.0,
         init_scale: float = 1.0,
@@ -84,11 +81,12 @@ class GEMHSA(nn.Module):
                 f"e.g. with GELT in D=2, where d_input = D(D-1)/2 = 1."
             )
         if gate not in ("relu", "softplus"):
-            raise ValueError(f"gate must be 'relu' or 'softplus', got {gate!r}")
+            raise ValueError(f"gate must be 'relu' or 'softplus', got {gate}")
         self.gate = gate
 
         # offsets is a list of the Δx_i in the L1 ball of radius R
         self.offsets = l1_ball_offsets(D, R)
+        # n_offsets for R=1 D=2 is 4; for R=1 D=3 is 6; for R=2 D=3 is 24...
         self.n_offsets = len(self.offsets)
 
         # _nbr_idx[d, i, x] are the coords of the neighbor of x at offset Δx_i
@@ -107,60 +105,46 @@ class GEMHSA(nn.Module):
         self.register_buffer("_nbr_idx", nbr_idx)
 
         # Per-offset score bias. Previously this was tied across the lattice
-        # point-group orbit of Δx (sign flips + axis permutations), enforcing
-        # architectural isotropy under the cubic point group. That tying is
-        # a strictly stronger symmetry than most physical targets have: a 1×R
-        # rectangular Wilson loop in the (μ,ν) plane is anisotropic, so the
-        # model had to break the orbit symmetry purely through the data-
-        # dependent bilinear score and got stuck near the uniform-attention
-        # baseline. With ``b_h`` untied per (head, offset) the model can
-        # directly favour specific Δx via the bias; gauge equivariance is
-        # unaffected because the bias is a real scalar added to the (already
-        # gauge-invariant) score.
+        # rotation/reflection symmetries, enforcing
+        # architectural isotropy. That tying is
+        # a strictly stronger symmetry than most physical targets have: e.g. a 1×R
+        # rectangular Wilson loop in the (μ,ν) can't be learned this way.
         self.b_h = nn.Parameter(torch.zeros(self.H, self.n_offsets))
 
         # Channel augmentation expands
-        # C -> Ctilde = 2C + 1 by prepending the identity and appending daggers.
-        self.C_tilde = 2 * d_input + 1
+        # C -> C' = 2C + 1 by appending the identity and daggers.
+        self.C_prime = 2 * d_input + 1
 
-        # Small Gaussian init with σ ≈ 0.02·init_scale / √Ctilde, real and
-        # imaginary parts independent. The default ``init_scale=1`` together
-        # with the residual + small w^V makes the block ≈ identity at init.
-        # Larger ``init_scale`` (e.g. 10) breaks the near-uniform softmax at
-        # init: with σ ≈ 0.02/√C̃, score values are O(σ²·C̃) ≈ O(4e-4) and
-        # softmax over many L1-ball offsets is essentially uniform, so the
-        # attention has no per-offset signal to grow from on hard targets.
-        sigma = 0.02 * init_scale / math.sqrt(self.C_tilde)
-        self.w_Q = self._init_projection(
-            (self.H, self.d_qkv, self.C_tilde), sigma, dtype
+        # Initialize q/k/v/w matrices wiht σ ≈ 0.02·init_scale / √C', real and
+        # imaginary parts independently. init_scale=1 and small w^V, together with residula connection,
+        # makes the block roughly identity at init (-> stackable layers)
+        sigma = 0.02 * init_scale / math.sqrt(self.C_prime)
+        self.w_Q = self.init_projection(
+            (self.H, self.d_qkv, self.C_prime), sigma, dtype
         )
-        self.w_K = self._init_projection(
-            (self.H, self.d_qkv, self.C_tilde), sigma, dtype
+        self.w_K = self.init_projection(
+            (self.H, self.d_qkv, self.C_prime), sigma, dtype
         )
-        self.w_V = self._init_projection(
-            (self.H, self.d_qkv, self.C_tilde), sigma, dtype
+        self.w_V = self.init_projection(
+            (self.H, self.d_qkv, self.C_prime), sigma, dtype
         )
         # channel mix back to C output channels.
         sigma_mix = 0.02 * init_scale / math.sqrt(self.H * self.d_qkv)
-        self.w_mix = self._init_projection(
+        self.w_mix = self.init_projection(
             (self.C, self.H, self.d_qkv), sigma_mix, dtype
         )
 
-        # ReZero / LayerScale: per-block learnable scalar α. ``alpha_init=0``
-        # gives the §3.8 identity-at-init property (block is bit-exactly
-        # W → W), but pairs badly with the MLP zero-init on hard targets —
-        # the model commits to the constant-mean predictor before the GEMHSA
-        # path ever sees gradient. Warm-starting α to a small positive value
-        # (e.g. 0.05) forces the multiplicative path to contribute from epoch
-        # 0; the convex combination of two equivariant terms remains
-        # equivariant. See notes/architecture.html §3.8.
+        # ReZero / LayerScale: per-block learnable scalar α. alpha_init=0
+        # gives identity-at-init property, but pairs badly with the MLP zero-init
+        # on hard targets. Init α to a small positive value
+        # (e.g. 0.05) forces the multiplicative path to contribute from the start
         self.alpha = nn.Parameter(torch.full((1,), float(alpha_init)))
 
     @staticmethod
-    def _init_projection(shape, sigma, dtype):
+    def init_projection(shape, sigma, dtype):
         """Small-Gaussian init for a complex (or real) projection weight.
 
-        For complex ``dtype`` we draw real and imaginary parts independently
+        For complex dtype we draw real and imaginary parts independently
         from ``N(0, σ²)`` — using ``torch.randn(..., dtype=complex)`` would
         give each part variance ``σ²/2``, halving the spec's std.
         """
@@ -171,9 +155,9 @@ class GEMHSA(nn.Module):
             return nn.Parameter(torch.complex(re, im))
         return nn.Parameter(torch.randn(*shape, dtype=dtype) * sigma)
 
-    def _augment(self, W):
+    def augment(self, W):
         # Channel augmentation: (B, C, *Λ, nc, nc) -> (B, 2C+1, *Λ, nc, nc).
-        # Prepend the site-local identity, append the daggered channels.
+        # Prepend the identity, append the daggered channels.
         spatial = W.shape[2:-2]
         nc = W.shape[-1]
         identity = torch.eye(nc, dtype=W.dtype, device=W.device).expand(
@@ -181,25 +165,24 @@ class GEMHSA(nn.Module):
         )
         return torch.cat([identity, W, self.gaugegroup.dagger(W)], dim=1)
 
-    def _transport_folded(self, X_nb, T, T_dag):
+    def transport(self, X_nb, T, T_dag):
         """Compute T(x) · X_nb(x, n) · T†(x) for every (h, d, n, x) with
         (H, d_qkv) folded into the column dim of the right-multiplicand.
 
         This replaces the naive broadcast matmul
-        ``T_b @ X_nb @ T_b_dag`` (with T_b broadcast over H, d_qkv) that
-        dominates the V100 hot path: it would launch B·H·d·n_off·|Λ| tiny
-        (nc, nc)@(nc, nc) cgemm's and force cuBLAS to materialise the
-        H·d-replicated T tensor. Here we issue B·n_off·|Λ| matmuls of
-        shape (nc, nc) @ (nc, H·d_qkv·nc) — 16× fewer launches at the
-        benchmark shape, with T un-broadcast. See architecture.html §13.1.
+        T_b @ X_nb @ T_b_dag (with T_b broadcast over H, d_qkv): it would
+        launch B·H·d_qkv·n_off·|Λ| tiny (nc, nc)@(nc, nc) matmuls.
+        Here we issue B·n_off·|Λ| matmuls of shape (nc, nc) @ (nc, H·d_qkv·nc)
+        — 16× fewer launches at the benchmark shape, with T un-broadcast.
+        This is because T is the same for all heads and d_qkv channels at fixed B, offset and site.
 
         Inputs:
             X_nb : (B, H, d_qkv, n_off, *Λ, nc, nc)
             T    : (B, n_off, *Λ, nc, nc)
             T_dag: (B, n_off, *Λ, nc, nc)  -- precomputed once per layer
         Returns:
-            (B, H, d_qkv, n_off, *Λ, nc, nc), bit-equivalent to the naive
-            two-matmul broadcast version up to floating-point reassociation.
+            (B, H, d_qkv, n_off, *Λ, nc, nc), equivalent to the naive
+            two-matmul broadcast version.
         """
         B = X_nb.shape[0]
         H = self.H
@@ -207,45 +190,40 @@ class GEMHSA(nn.Module):
         n = self.n_offsets
         nc = X_nb.shape[-1]
         spatial = X_nb.shape[4:-2]
-        Dsp = len(spatial)
+        D = len(spatial)
 
-        # Move (H, d) to sit just after the row index 'i'. Source axes:
-        #   0=B, 1=H, 2=d, 3=n, 4..3+Dsp=spatial, 4+Dsp=i, 5+Dsp=j
+        # Move (H, d) after the row index 'i'. Source axes:
+        #   0=B, 1=H, 2=d, 3=n, 4..3+D=spatial, 4+D=i, 5+D=j
         # Target:
-        #   0=B, 1=n, 2..1+Dsp=spatial, 2+Dsp=i, 3+Dsp=H, 4+Dsp=d, 5+Dsp=j
-        perm = (0, 3) + tuple(range(4, 4 + Dsp)) + (4 + Dsp, 1, 2, 5 + Dsp)
+        #   0=B, 1=n, 2..1+D=spatial, 2+D=i, 3+D=H, 4+D=d, 5+D=j
+        perm = (0, 3) + tuple(range(4, 4 + D)) + (4 + D, 1, 2, 5 + D)
         Xp = X_nb.permute(*perm)
-        # Flatten (H, d, j) -> wide column. reshape forces a contiguous copy.
+        # Flatten (H, d, j).
         X_flat = Xp.reshape(B, n, *spatial, nc, H * d * nc)
         # Left-multiply: one big matmul per (B, n_off, x).
         L = T @ X_flat  # (B, n, *Λ, nc, H*d*nc)
 
-        # Now right-multiply by T†. Unflatten then re-flatten so (i, H, d)
-        # become rows and j stays the contraction axis:
+        # Now right-multiply by T†. (nc, H*d*nc) -> (nc, H, d, nc) -> (nc*H*d, nc)
         L = L.reshape(B, n, *spatial, nc, H, d, nc)
         L_flat = L.reshape(B, n, *spatial, nc * H * d, nc)
         R = L_flat @ T_dag  # (B, n, *Λ, nc*H*d, nc)
 
         # Reshape and permute back to (B, H, d, n, *Λ, nc, nc).
         out = R.reshape(B, n, *spatial, nc, H, d, nc)
-        inv_perm = (
-            (0, 3 + Dsp, 4 + Dsp, 1) + tuple(range(2, 2 + Dsp)) + (2 + Dsp, 5 + Dsp)
-        )
+        inv_perm = (0, 3 + D, 4 + D, 1) + tuple(range(2, 2 + D)) + (2 + D, 5 + D)
         return out.permute(*inv_perm).contiguous()
 
-    def _attend(self, Q, K, V, T):
+    def attend(self, Q, K, V, T):
         """Fully batched gauge-equivariant attention over the L1-ball.
 
         Single fused pass — no Python loop over offsets. Pipeline:
           1. Gather K(x+Δx_i), V(x+Δx_i)
-          2. Adjoint transport: K̃ = T(x) · K(x+Δx) · T†(x), with (H, d_qkv)
-             folded into the matmul column dim (see ``_transport_folded``).
+          2. Adjoint transport: K' = T(x) · K(x+Δx) · T†(x)
           3. Scalar score Re Σ_c Tr[Q_c† · K̃_c] / √(d_qkv·nc) computed as a
              Frobenius product, plus the per-(head, offset) bias.
           4. Softmax over the offset axis.
-          5. Value path Q† · Ṽ — but α-weighted *before* the matmul
-             (Σ_n α_n (Q† Ṽ_n) = Q† (Σ_n α_n Ṽ_n) by linearity), so we issue
-             a single matmul instead of one per offset.
+          5. Value path Q† · V' — but α-weighted *before* the matmul
+             Σ_n α_n (Q† Ṽ_n) = Q† (Σ_n α_n Ṽ_n)
         """
         nc = Q.shape[-1]
 
@@ -260,26 +238,21 @@ class GEMHSA(nn.Module):
         ]  # (B, H, d_qkv, n_off, *Λ, nc, nc) -> for each lattice site and neighbor, a (B, H, d, nc, nc) K tensor
         V_nb = V[nb_indexer]  # same
 
-        # 2. Adjoint transport: T · X · T† with (H, d_qkv) folded into the
-        # column dim of the right-multiplicand to avoid the tiny-matmul
-        # broadcast over (H, d_qkv). T is computed once per layer (shared
-        # between K and V) — its dagger too. See _transport_folded.
+        # 2. Transport: T · X · T†. T is computed once per layer (shared
+        # between K and V) — its dagger too.
         T_dag = self.gaugegroup.dagger(T)
-        K_tilde = self._transport_folded(K_nb, T, T_dag)
-        V_tilde = self._transport_folded(V_nb, T, T_dag)
+        K_tilde = self.transport(K_nb, T, T_dag)
+        V_tilde = self.transport(V_nb, T, T_dag)
 
-        # 3. Score = Tr[Q_c† K̃_c]/sqrt(Nc d_qkv); Implementable via Frobenius product instead of expensive matmul
+        # 3. Score = Tr[Q_c† K'_c]/sqrt(Nc d_qkv); Implementable via Frobenius product without matmul
         Q_e = Q.unsqueeze(3)  # (B, H, d_qkv, 1, *Λ, nc, nc)
         score = (Q_e.conj() * K_tilde).sum(dim=(2, -2, -1)).real
         score = score / math.sqrt(self.d_qkv * nc)
         # score: (B, H, n_off, *Λ)
 
         # 4. Per-offset bias: b_h[h, n], broadcast over (B, *Λ).
-        # ``.real`` is defensive: ``b_h`` is semantically real, but a user
-        # calling ``block.to(torch.complex128)`` would cast it to complex —
-        # we don't want the imaginary part (always 0 with zero init) to
-        # contaminate the score and break softmax (no complex softmax kernel).
         bias = self.b_h  # (H, n_off)
+        # bias must be real b.c. score must be real
         if torch.is_complex(bias):
             bias = bias.real
         score = score + bias.view(1, self.H, self.n_offsets, *([1] * self.D))
@@ -287,10 +260,8 @@ class GEMHSA(nn.Module):
         # 5. Softmax over offsets.
         alpha = torch.softmax(score, dim=2)
 
-        # 6. Value path. Sum V_tilde over n_off with α weights BEFORE the
-        # Q† matmul — matmul is linear in its right operand, so this is
-        # mathematically identical to "matmul-per-offset then weight then
-        # sum" but issues 24× fewer matmul calls at R=2 in D=3.
+        # 6. Value path. Sum V' over n_off with α weights BEFORE the
+        # Q† matmul.
         # alpha: (B, H, n_off, *Λ) → (B, H, 1, n_off, *Λ, 1, 1) to broadcast
         # over the d_qkv and the two color axes.
         alpha_b = alpha.unsqueeze(2).unsqueeze(-1).unsqueeze(-1)
@@ -301,11 +272,10 @@ class GEMHSA(nn.Module):
     def forward(self, W, T):
         """Run the block.
 
-        ``W`` : covariant input field, ``(B, C, *Λ, nc, nc)``.
-        ``T`` : precomputed transports, ``(B, n_offsets, *Λ, nc, nc)`` with
-        offset axis ordered by ``self.offsets``.
+        W : input field, (B, C, *Λ, nc, nc)
+        T : precomputed transports, (B, n_offsets, *Λ, nc, nc)
 
-        Returns a tensor of the same shape as ``W``.
+        Returns a tensor of the same shape as W.
         """
 
         assert T.shape[1] == self.n_offsets, (
@@ -324,23 +294,23 @@ class GEMHSA(nn.Module):
 
         # Augment, then mix channels to build Q, K, V of shape
         # (B, H, d_qkv, *Λ, nc, nc).
-        W_aug = self._augment(W)  # (B, C̃, *Λ, nc, nc), contiguous
+        W_aug = self.augment(W)  # (B, C', *Λ, nc, nc), contiguous
         B = W_aug.shape[0]
         trailing = W_aug.shape[2:]  # (*Λ, nc, nc)
 
         # Collapse dimensions so that matmul broadcasts correctly:
-        #   (H·d, C̃) @ (B, C̃, N) -> (B, H·d, N).
-        W_aug_flat = W_aug.view(B, self.C_tilde, -1)
-        w_Q_flat = self.w_Q.view(self.H * self.d_qkv, self.C_tilde)
-        w_K_flat = self.w_K.view(self.H * self.d_qkv, self.C_tilde)
-        w_V_flat = self.w_V.view(self.H * self.d_qkv, self.C_tilde)
+        #   (H·d, C') @ (B, C', N) -> (B, H·d, N).
+        W_aug_flat = W_aug.view(B, self.C_prime, -1)
+        w_Q_flat = self.w_Q.view(self.H * self.d_qkv, self.C_prime)
+        w_K_flat = self.w_K.view(self.H * self.d_qkv, self.C_prime)
+        w_V_flat = self.w_V.view(self.H * self.d_qkv, self.C_prime)
 
         Q = torch.matmul(w_Q_flat, W_aug_flat).view(B, self.H, self.d_qkv, *trailing)
         K = torch.matmul(w_K_flat, W_aug_flat).view(B, self.H, self.d_qkv, *trailing)
         V = torch.matmul(w_V_flat, W_aug_flat).view(B, self.H, self.d_qkv, *trailing)
 
         # Transport, score, softmax, multiplicative value.
-        out = self._attend(Q, K, V, T)  # (B, H, d_qkv, *Λ, nc, nc)
+        out = self.attend(Q, K, V, T)  # (B, H, d_qkv, *Λ, nc, nc)
 
         # Channel mix back to C output channels.
         W_mix = torch.einsum("iha,bha...->bi...", self.w_mix, out)  # (B, C, *Λ, nc, nc)
@@ -434,8 +404,17 @@ class GELT(nn.Module):
         self.gemhsa_models = nn.ModuleList(
             [
                 GEMHSA(
-                    gaugegroup, L, D, R, d_input, nhead, d_qkv, gate, dtype,
-                    alpha_init=alpha_init, init_scale=init_scale,
+                    gaugegroup,
+                    L,
+                    D,
+                    R,
+                    d_input,
+                    nhead,
+                    d_qkv,
+                    gate,
+                    dtype,
+                    alpha_init=alpha_init,
+                    init_scale=init_scale,
                 )
                 for i in range(gemhsa_layers)
             ]

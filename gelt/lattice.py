@@ -25,7 +25,7 @@ import torch
 
 
 class GaugeGroup(ABC):
-    """Abstract gauge group, parametrised by its defining-representation dimension ``nc``."""
+    """Abstract gauge group, parametrised by its defining-representation dimension nc."""
 
     name: str
     nc: int
