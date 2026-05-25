@@ -18,7 +18,7 @@ from gelt import (
     local_gauge_transformation,
     random_links,
 )
-from gelt.blocks import GELT, GEMHSA
+from gelt.blocks import GELT, GEMHSA, ChannelLift
 
 
 def _unitary_omega(L, D, nc, seed):
@@ -159,6 +159,57 @@ def test_gemhsa_gauge_equivariance_z2():
     expected = local_gauge_transformation(out, omega, gg)
 
     assert torch.allclose(out_g, expected, atol=1e-12)
+
+
+def test_channel_lift_identity_extend_init():
+    """Identity-extend init: first c_in output channels copy the input verbatim,
+    the rest are zero. Makes ``d_model == d_input`` a no-op at init."""
+    torch.manual_seed(0)
+    c_in, c_out = 3, 8
+    lift = ChannelLift(c_in, c_out, dtype=torch.complex64)
+    W = torch.randn(2, c_in, 4, 4, 2, 2, dtype=torch.complex64)
+    out = lift(W)
+    assert out.shape == (2, c_out, 4, 4, 2, 2)
+    assert torch.allclose(out[:, :c_in], W)
+    assert torch.all(out[:, c_in:] == 0)
+
+
+def test_gelt_d_model_widened_gauge_equivariant():
+    """GELT with d_model > d_input stays gauge-equivariant end-to-end.
+
+    The internal residual stream is wider than the plaquette input; the
+    front-end ChannelLift must not break the W → Ω W Ω† transformation.
+    """
+    torch.manual_seed(13)
+    L, D, R, nc = 4, 2, 2, 2
+    gg = SU(nc)
+    dtype = torch.complex128
+
+    U = random_links(L=L, D=D, gaugegroup=gg, dtype=dtype)
+    P = build_transport_average(U.unsqueeze(0), R=R, gaugegroup=gg)
+
+    # Build plaquette input (D(D-1)/2 = 1 channel for D=2). The trace is a
+    # gauge invariant, so we test by comparing scalar outputs at sites.
+    from gelt.lattice import plaquette_tensor
+
+    X = plaquette_tensor(U.unsqueeze(0), gg)  # (1, n_pairs, *Λ, nc, nc)
+
+    omega = _unitary_omega(L, D, nc, seed=13)
+    U_g = link_gauge_transformation(U, omega, gg)
+    X_g = plaquette_tensor(U_g.unsqueeze(0), gg)
+    P_g = build_transport_average(U_g.unsqueeze(0), R=R, gaugegroup=gg)
+
+    model = GELT(
+        gaugegroup=gg, L=L, D=D, R=R, nhead=2, gemhsa_layers=2,
+        d_qkv=4, dtype=dtype, d_model=8, reduction="none",
+    )
+
+    y = model(X, P)
+    y_g = model(X_g, P_g)
+    # GELT readout is gauge invariant: y == y_g.
+    assert torch.allclose(y, y_g, atol=1e-9), (
+        f"max diff = {(y - y_g).abs().max().item():.3e}"
+    )
 
 
 def test_gelt_z2_real_forward_backward():

@@ -41,8 +41,10 @@ class GEMHSA(nn.Module):
        loop-doubling expressivity argument.
        NOTE: could use another projection for Q, more general
     6. **channel mix back to C** via a complex linear (H, d_qkv) → C.
-        NOTE: C is typically small (1/3/6), we might want to expand channels instead of
-        collapsing back to C at each layer
+        NOTE: C is the model's working width inside the GEMHSA stack. It is
+        decoupled from the (small) plaquette input count D(D-1)/2 ∈ {1, 3, 6}
+        by the front-end ``ChannelLift`` in ``GELT``; pass ``d_model`` to
+        widen it.
     7. **residual + L-Act gate.** W_act = g(W_res) · W_res with
        W_res = W_in + W_mix and g(W) = ReLU(Re Tr[W]/nc)
        or softplus(Re Tr[W]/nc).
@@ -295,8 +297,6 @@ class GEMHSA(nn.Module):
         trailing = W_aug.shape[2:]  # (*Λ, nc, nc)
 
         # Fused QKV: a single (3·H·d, C') @ (B, C', N) matmul, then split.
-        # cuBLAS amortises the launch and avoids three small-m tile-wasted
-        # GEMMs at small C'.
         W_aug_flat = W_aug.view(B, self.C_prime, -1)
         w_QKV_flat = self.w_QKV.view(3 * self.H * self.d_qkv, self.C_prime)
         QKV = torch.matmul(w_QKV_flat, W_aug_flat)  # (B, 3·H·d, N)
@@ -307,8 +307,7 @@ class GEMHSA(nn.Module):
         out = self.attend(Q, K, V, T, T_dag)  # (B, H, d_qkv, *Λ, nc, nc)
 
         # Channel mix back to C output channels. Expressed as a single matmul
-        # ``(C, H·d) @ (B, H·d, |Λ|·nc·nc) -> (B, C, |Λ|·nc·nc)`` — lower
-        # launch overhead than einsum and no planner cost in eager mode.
+        # ``(C, H·d) @ (B, H·d, |Λ|·nc·nc) -> (B, C, |Λ|·nc·nc)``
         HD = self.H * self.d_qkv
         out_flat = out.reshape(B, HD, -1)
         w_mix_flat = self.w_mix.view(self.C, HD)
@@ -360,6 +359,51 @@ class MLP(nn.Module):
         return x
 
 
+class ChannelLift(nn.Module):
+    """Per-site complex linear over the channel axis.
+
+    Gauge-equivariant by linearity: every output channel is a complex linear
+    combination of input channels, so if every input channel transforms in
+    the adjoint ``W → Ω W Ω†``, every output channel does too (the Ω, Ω†
+    factors pull out of the sum because the mix coefficients are scalars).
+
+    Used at the front of ``GELT`` to widen the plaquette channel count
+    ``C_in = D(D-1)/2 ∈ {1, 3, 6}`` to a configurable ``d_model`` so the
+    intermediate GEMHSA blocks do not collapse the residual stream to a
+    handful of channels.
+
+    Init is **identity-extend**: the first ``C_in`` output channels copy the
+    input verbatim, the remaining ``d_model - C_in`` are zero. This makes
+    ``d_model == C_in`` bit-exactly backward-compatible with the un-lifted
+    model, and gives extra channels a clean starting point — the first
+    GEMHSA's random Q/K/V projections + the residual ``W_lift + W_mix``
+    populate them within one block.
+    """
+
+    def __init__(self, c_in: int, c_out: int, dtype=torch.complex64):
+        super().__init__()
+        if c_out < c_in:
+            raise ValueError(
+                f"ChannelLift expects c_out >= c_in (got c_in={c_in}, "
+                f"c_out={c_out}). The lift is meant to widen the input."
+            )
+        self.c_in = c_in
+        self.c_out = c_out
+        weight = torch.zeros(c_out, c_in, dtype=dtype)
+        weight[:c_in, :c_in] = torch.eye(c_in, dtype=dtype)
+        self.weight = nn.Parameter(weight)
+
+    def forward(self, W):
+        # W: (B, C_in, *Λ, nc, nc) -> (B, C_out, *Λ, nc, nc).
+        # Single matmul on the channel axis; the (nc, nc) matrices ride along
+        # in the flattened trailing axis.
+        B, C_in = W.shape[0], W.shape[1]
+        trailing = W.shape[2:]
+        W_flat = W.reshape(B, C_in, -1)
+        out = torch.matmul(self.weight, W_flat)
+        return out.view(B, self.c_out, *trailing)
+
+
 class GELT(nn.Module):
     """Full GELT model:
     Pipeline:
@@ -390,15 +434,32 @@ class GELT(nn.Module):
         alpha_init: float = 0.0,
         init_scale: float = 1.0,
         mlp_zero_init: bool = True,
+        d_model: int | None = None,
     ):
         # Plaquette input -> D(D-1)/2 plaquettes per site.
         d_input = D * (D - 1) // 2
+        # Internal residual-stream width. Defaults to d_input (no lift) for
+        # backward compatibility; pass d_model > d_input to widen the
+        # intermediate channels via the front-end ChannelLift.
+        if d_model is None:
+            d_model = d_input
+        if d_model < d_input:
+            raise ValueError(
+                f"d_model must be >= d_input = D(D-1)/2 = {d_input}, got {d_model}."
+            )
+        self.d_input = d_input
+        self.d_model = d_model
         super(GELT, self).__init__()
         if reduction not in ("sum", "mean", "none"):
             raise ValueError(
                 f"reduction must be 'sum', 'mean', or 'none', got {reduction!r}"
             )
         self.reduction = reduction
+        # Channel lift to widen the small plaquette input to d_model. When
+        # d_model == d_input the lift is the identity matrix and is a no-op
+        # at init (still trainable — the model can learn to mix plaquette
+        # channels even at unchanged width).
+        self.lift = ChannelLift(d_input, d_model, dtype=dtype)
         # ModuleList so the GEMHSA parameters are registered with PyTorch
         # and picked up by .parameters() / .to() / .state_dict().
         self.gemhsa_models = nn.ModuleList(
@@ -408,7 +469,7 @@ class GELT(nn.Module):
                     L,
                     D,
                     R,
-                    d_input,
+                    d_model,
                     nhead,
                     d_qkv,
                     gate,
@@ -425,17 +486,9 @@ class GELT(nn.Module):
         # `.to(complex_dtype)` on GELT would otherwise miscast the MLP.
         real_dtype = torch.float64 if dtype == torch.complex128 else torch.float32
         self.trace = Trace()
-        self.mlp = MLP(2 * d_input, mlp_hidden, mlp_out).to(real_dtype)
+        self.mlp = MLP(2 * d_model, mlp_hidden, mlp_out).to(real_dtype)
         # Zero-init the MLP's last linear layer: at init the model outputs 0
-        # at every site, so the untrained prediction is exactly 0. Paired
-        # with the train-script-side target standardization (notes/
-        # architecture.html §6.1), this makes the untrained model the
-        # constant predictor at the (normalized) target mean, i.e. R² = 0
-        # — the trivial mean-baseline. Gradients still flow on the first
-        # step via fc1 → fc2. Disable (``mlp_zero_init=False``) when the
-        # zero-init combines with α=0 to trap training at the constant
-        # predictor — most often on highly nonlinear per-site targets like
-        # Wilson loops at R>1.
+        # at every site, so the untrained prediction is exactly 0.
         if mlp_zero_init:
             nn.init.zeros_(self.mlp.fc2.weight)
             nn.init.zeros_(self.mlp.fc2.bias)
@@ -455,8 +508,11 @@ class GELT(nn.Module):
             W = W.to(w_dtype)
         if T.dtype != w_dtype:
             T = T.to(w_dtype)
-        # T_dag is shared across all stacked GEMHSA layers, so the dagger and
-        # the bandwidth-bound op over (B, n_off, *Λ, nc, nc) only run once.
+        # Lift the (small) plaquette channel count to d_model before the
+        # GEMHSA stack. With identity-extend init this is bit-exactly the
+        # input when d_model == d_input.
+        W = self.lift(W)
+        # T_dag is shared across all stacked GEMHSA layers
         T_dag = first_layer.gaugegroup.dagger(T)
         W_attn = self.attn(W, T, T_dag)
         trace = self.trace(W_attn)

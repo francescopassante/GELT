@@ -198,6 +198,11 @@ if __name__ == "__main__":
         "alpha_init": 0.5,
         "init_scale": 10.0,
         "mlp_zero_init": False,
+        # Widen the residual-stream beyond the small plaquette channel count
+        # D(D-1)/2 ∈ {1, 3, 6} via the front-end ChannelLift. Decouples the
+        # GEMHSA working width from the input dimensionality so intermediate
+        # layers don't collapse to 1–6 channels.
+        "d_model": 16,
     }
 
     train_dataset, val_dataset, test_dataset = build_plaquette_datasets(
