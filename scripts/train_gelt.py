@@ -1,7 +1,4 @@
 from functools import partial
-import argparse
-import copy
-import time
 
 import torch
 import torch.nn as nn
@@ -17,195 +14,6 @@ from gelt.lattice import rectangular_wilson_loop
  This is a minimal training script used for lookup on how to train the architecture
 ========================================================================================
 """
-
-
-def cuda_elapsed_ms(fn):
-    """Run ``fn`` once and return ``(result, elapsed_ms)`` using CUDA events."""
-    torch.cuda.synchronize()
-    start = torch.cuda.Event(enable_timing=True)
-    end = torch.cuda.Event(enable_timing=True)
-    start.record()
-    result = fn()
-    end.record()
-    torch.cuda.synchronize()
-    return result, start.elapsed_time(end)
-
-
-def print_gpu_profile_header(model, train_loader, device):
-    print("\n=== GELT GPU profile context ===")
-    print(f"torch: {torch.__version__}")
-    print(f"device: {device}")
-    if device.type == "cuda":
-        props = torch.cuda.get_device_properties(device)
-        print(
-            f"gpu: {props.name} | cc {props.major}.{props.minor} | "
-            f"memory {props.total_memory / 1024**3:.2f} GiB"
-        )
-        print(
-            "cuda flags: "
-            f"allow_tf32_matmul={torch.backends.cuda.matmul.allow_tf32} | "
-            f"allow_tf32_cudnn={torch.backends.cudnn.allow_tf32}"
-        )
-    print(
-        f"dataloader: batch_size={train_loader.batch_size} | "
-        f"num_workers={train_loader.num_workers} | pin_memory={train_loader.pin_memory}"
-    )
-    first_layer = model.gemhsa_models[0]
-    print(
-        "model: "
-        f"layers={len(model.gemhsa_models)} | H={first_layer.H} | "
-        f"d_qkv={first_layer.d_qkv} | C={first_layer.C} | "
-        f"C_prime={first_layer.C_prime} | n_offsets={first_layer.n_offsets} | "
-        f"gate={first_layer.gate} | reduction={model.reduction}"
-    )
-    n_params = sum(p.numel() for p in model.parameters())
-    n_real_dofs = sum(
-        p.numel() * (2 if p.is_complex() else 1) for p in model.parameters()
-    )
-    print(f"params: {n_params:,} tensors ({n_real_dofs:,} real DOFs)")
-
-
-def profile_training_step(model, batch, criterion, optimizer, device):
-    """Print one full training-step breakdown on a real batch."""
-    if device.type != "cuda":
-        print("[profile] CUDA is unavailable; skipping CUDA-event timings.")
-        return
-
-    X_cpu, T_cpu, y_cpu = batch
-    torch.cuda.reset_peak_memory_stats(device)
-
-    (X, T, y), copy_ms = cuda_elapsed_ms(
-        lambda: (
-            X_cpu.to(device, non_blocking=True),
-            T_cpu.to(device, non_blocking=True),
-            y_cpu.to(device, non_blocking=True),
-        )
-    )
-
-    model.train()
-    optimizer.zero_grad(set_to_none=True)
-    outputs, fwd_ms = cuda_elapsed_ms(lambda: model(X, T))
-    loss, loss_ms = cuda_elapsed_ms(lambda: criterion(outputs, y))
-    _, bwd_ms = cuda_elapsed_ms(lambda: loss.backward())
-    model_state = copy.deepcopy(model.state_dict())
-    optimizer_state = copy.deepcopy(optimizer.state_dict())
-    _, step_ms = cuda_elapsed_ms(lambda: optimizer.step())
-    model.load_state_dict(model_state)
-    optimizer.load_state_dict(optimizer_state)
-
-    peak_mb = torch.cuda.max_memory_allocated(device) / 1024**2
-    print("\n=== one training step timing ===")
-    print(
-        f"batch: X={tuple(X.shape)} {X.dtype} | T={tuple(T.shape)} {T.dtype} | "
-        f"y={tuple(y.shape)} {y.dtype} | out={tuple(outputs.shape)}"
-    )
-    print(
-        f"copy={copy_ms:.3f} ms | forward={fwd_ms:.3f} ms | "
-        f"loss={loss_ms:.3f} ms | backward={bwd_ms:.3f} ms | "
-        f"optim_step={step_ms:.3f} ms | total={copy_ms + fwd_ms + loss_ms + bwd_ms + step_ms:.3f} ms"
-    )
-    print(
-        f"loss={loss.detach().item():.6g} | "
-        f"peak_cuda_alloc={peak_mb:.1f} MiB"
-    )
-    optimizer.zero_grad(set_to_none=True)
-
-
-def profile_gemhsa_sections(model, batch, device):
-    """Print forward-only section timings for each GEMHSA layer on one batch."""
-    if device.type != "cuda":
-        return
-
-    X_cpu, T_cpu, _ = batch
-    X = X_cpu.to(device, non_blocking=True)
-    T = T_cpu.to(device, non_blocking=True)
-    first_layer = model.gemhsa_models[0]
-    w_dtype = first_layer.w_QKV.dtype
-    if X.dtype != w_dtype:
-        X = X.to(w_dtype)
-    if T.dtype != w_dtype:
-        T = T.to(w_dtype)
-    T_dag = first_layer.gaugegroup.dagger(T)
-
-    was_training = model.training
-    model.eval()
-    W = X
-
-    print("\n=== GEMHSA forward section timings ===")
-    with torch.no_grad():
-        for layer_idx, layer in enumerate(model.gemhsa_models):
-            nc = W.shape[-1]
-            trailing = W.shape[2:]
-            B = W.shape[0]
-            HD = layer.H * layer.d_qkv
-
-            def f_qkv():
-                W_aug = layer.augment(W)
-                W_aug_flat = W_aug.view(B, layer.C_prime, -1)
-                w_QKV_flat = layer.w_QKV.view(3 * HD, layer.C_prime)
-                QKV = torch.matmul(w_QKV_flat, W_aug_flat)
-                QKV = QKV.view(B, 3, layer.H, layer.d_qkv, *trailing)
-                return QKV.unbind(dim=1)
-
-            (Q, K, V), qkv_ms = cuda_elapsed_ms(f_qkv)
-
-            idx = tuple(layer._nbr_idx[k] for k in range(layer.D))
-            nb_indexer = (slice(None),) * 3 + idx + (slice(None), slice(None))
-
-            def f_gather():
-                return K[nb_indexer], V[nb_indexer]
-
-            (K_nb, V_nb), gather_ms = cuda_elapsed_ms(f_gather)
-
-            def f_transport():
-                KV_nb = torch.cat((K_nb, V_nb), dim=2)
-                KV_tilde = layer.transport(KV_nb, T, T_dag)
-                return KV_tilde.split(layer.d_qkv, dim=2)
-
-            (K_tilde, V_tilde), transport_ms = cuda_elapsed_ms(f_transport)
-
-            def f_score_value():
-                score = torch.einsum(
-                    "bhd...ij,bhdn...ij->bhn...", Q.conj(), K_tilde
-                ).real
-                score = score / (layer.d_qkv * nc) ** 0.5
-                bias = layer.b_h.real if layer.b_h.is_complex() else layer.b_h
-                score = score + bias.view(layer._bias_view_shape)
-                alpha = torch.softmax(score, dim=2)
-                alpha_b = alpha.unsqueeze(2).unsqueeze(-1).unsqueeze(-1)
-                V_weighted = (alpha_b * V_tilde).sum(dim=3)
-                Q_dag = layer.gaugegroup.dagger(Q)
-                return torch.matmul(Q_dag, V_weighted)
-
-            out, score_value_ms = cuda_elapsed_ms(f_score_value)
-
-            def f_mix_gate():
-                out_flat = out.reshape(B, HD, -1)
-                w_mix_flat = layer.w_mix.view(layer.C, HD)
-                W_mix = torch.matmul(w_mix_flat, out_flat).view(B, layer.C, *trailing)
-                W_res = W + W_mix
-                trace_per_chan = W_res.diagonal(dim1=-2, dim2=-1).sum(-1).real / nc
-                if layer.gate == "relu":
-                    g = torch.relu(trace_per_chan)
-                else:
-                    g = torch.nn.functional.softplus(trace_per_chan)
-                W_act = g.unsqueeze(-1).unsqueeze(-1) * W_res
-                return W + layer.alpha * (W_act - W)
-
-            W, mix_gate_ms = cuda_elapsed_ms(f_mix_gate)
-            total_ms = qkv_ms + gather_ms + transport_ms + score_value_ms + mix_gate_ms
-            print(
-                f"layer {layer_idx}: "
-                f"qkv={qkv_ms:.3f} ms | gather={gather_ms:.3f} ms | "
-                f"transport={transport_ms:.3f} ms | score_value={score_value_ms:.3f} ms | "
-                f"mix_gate={mix_gate_ms:.3f} ms | sum={total_ms:.3f} ms"
-            )
-
-        _, end_to_end_ms = cuda_elapsed_ms(lambda: model(X, T))
-        print(f"model forward end-to-end: {end_to_end_ms:.3f} ms")
-
-    if was_training:
-        model.train()
 
 
 def evaluate(model, test_loader, criterion, device, save_outputs=False, progress=True):
@@ -248,7 +56,6 @@ def train_model(
     epochs,
     patience=5,
     checkpoint_path: str = "best_model.pth",
-    profile_every: int = 0,
 ):
     best_val_loss = float("inf")
     train_losses = []
@@ -260,28 +67,13 @@ def train_model(
         model.train()
         train_loss = 0.0
         train_count = 0
-        epoch_t0 = time.perf_counter()
-        data_wait = 0.0
-        compute_time = 0.0
-        last_batch_end = time.perf_counter()
-        for batch_idx, (X, T, y) in enumerate(train_loader):
-            batch_t0 = time.perf_counter()
-            data_wait += batch_t0 - last_batch_end
-            X, T, y = (
-                X.to(device, non_blocking=True),
-                T.to(device, non_blocking=True),
-                y.to(device, non_blocking=True),
-            )
-            optimizer.zero_grad(set_to_none=True)
+        for X, T, y in train_loader:
+            X, T, y = X.to(device), T.to(device), y.to(device)
+            optimizer.zero_grad()
             outputs = model(X, T)
             loss = criterion(outputs, y)
             loss.backward()
             optimizer.step()
-            if device.type == "cuda":
-                torch.cuda.synchronize()
-            batch_t1 = time.perf_counter()
-            compute_time += batch_t1 - batch_t0
-            last_batch_end = batch_t1
             batch_size = y.shape[0]
             train_loss += loss.item() * batch_size
             train_count += batch_size
@@ -300,16 +92,7 @@ def train_model(
         else:
             epochs_no_improve += 1
 
-        epoch_s = time.perf_counter() - epoch_t0
-        epoch_bar.set_postfix(
-            train=f"{train_loss:.4f}", val=f"{val_loss:.4f}", sec=f"{epoch_s:.1f}"
-        )
-        if profile_every > 0 and (epoch + 1) % profile_every == 0:
-            epoch_bar.write(
-                f"  ep {epoch + 1:>3d} timing: epoch={epoch_s:.2f}s | "
-                f"train_compute={compute_time:.2f}s | data_wait={data_wait:.2f}s | "
-                f"batches={batch_idx + 1}"
-            )
+        epoch_bar.set_postfix(train=f"{train_loss:.4f}", val=f"{val_loss:.4f}")
 
         # Unfreeze-cascade diagnostic. With ReZero α=0 and zero-init mlp.fc2,
         # only the MLP receives gradient on step 0; α and the GEMHSA params
@@ -337,20 +120,6 @@ def train_model(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--profile",
-        action="store_true",
-        help="Print GPU timing and memory diagnostics before training.",
-    )
-    parser.add_argument(
-        "--profile-every",
-        type=int,
-        default=10,
-        help="When --profile is set, print per-epoch timing every N epochs.",
-    )
-    args = parser.parse_args()
-
     torch.manual_seed(0)
     from gelt import SU, Z2, build_plaquette_datasets
 
@@ -358,6 +127,7 @@ if __name__ == "__main__":
     L = 8
     gaugegroup = Z2()
     R = 2
+    model_dtype = torch.float32 if isinstance(gaugegroup, Z2) else torch.complex64
 
     beta = 1
     # Per-site Wilson loop target: y has shape (B, *Λ). Paired with
@@ -409,9 +179,9 @@ if __name__ == "__main__":
         "gemhsa_layers": 3,
         "d_qkv": 16,
         "gate": "softplus",
-        # Z2 is represented by real 1x1 matrices. Keeping the model real avoids
-        # complex kernels and halves the attention activations on this task.
-        "dtype": torch.float32,
+        # Z2 can run as a real model. SU(N) must stay complex; otherwise
+        # GELT.forward would cast complex plaquettes/transports down to real.
+        "dtype": model_dtype,
         "mlp_hidden": 32,
         "mlp_out": 1,
         # Per-site target → no spatial reduction. Use "sum" for the Wilson
@@ -485,12 +255,6 @@ if __name__ == "__main__":
 
     model = model.to(device)
 
-    if args.profile:
-        print_gpu_profile_header(model, train_loader, device)
-        profile_batch = next(iter(train_loader))
-        profile_training_step(model, profile_batch, criterion, optimizer, device)
-        profile_gemhsa_sections(model, profile_batch, device)
-
     train_losses, val_losses, full_epochs = train_model(
         model=model,
         train_loader=train_loader,
@@ -502,7 +266,6 @@ if __name__ == "__main__":
         epochs=train_parameters["epochs"],
         patience=train_parameters["patience"],
         checkpoint_path=train_parameters["checkpoint_path"],
-        profile_every=args.profile_every if args.profile else 0,
     )
 
     # Load best model to evaluate on test set
