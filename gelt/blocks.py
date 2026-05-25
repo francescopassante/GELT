@@ -105,9 +105,8 @@ class GEMHSA(nn.Module):
         self.register_buffer("_nbr_idx", nbr_idx)
 
         # Per-offset score bias. Previously this was tied across the lattice
-        # rotation/reflection symmetries, enforcing
-        # architectural isotropy. That tying is
-        # a strictly stronger symmetry than most physical targets have: e.g. a 1×R
+        # rotation/reflection symmetries, enforcing architectural isotropy. That tying is
+        # a stronger symmetry than most physical targets have: e.g. a 1×R
         # rectangular Wilson loop in the (μ,ν) can't be learned this way.
         self.b_h = nn.Parameter(torch.zeros(self.H, self.n_offsets))
         # Precomputed reshape target for broadcasting b_h over (B, *Λ) at score time.
@@ -123,20 +122,19 @@ class GEMHSA(nn.Module):
         identity = torch.eye(nc, dtype=dtype).view(1, 1, *([1] * D), nc, nc)
         self.register_buffer("_identity", identity)
 
-        # Fused QKV projection. Stacking Q/K/V into one weight lets us issue a
-        # single (3·H·d, C') @ (B, C', N) matmul instead of three separate ones —
-        # cuBLAS amortises launch + tile waste, especially at small C'.
+        # Fused QKV projection.
+        # a single (3·H·d, C') @ (B, C', N) matmul instead of three separate ones
         # σ ≈ 0.02·init_scale / √C' (real & imag parts independently). With
         # init_scale=1 and small w^V combined with the residual connection,
         # the block is roughly identity at init (-> stackable layers).
         sigma = 0.02 * init_scale / math.sqrt(self.C_prime)
-        self.w_QKV = self.init_projection(
-            (3, self.H, self.d_qkv, self.C_prime), sigma, dtype
+        self.w_QKV = nn.Parameter(
+            torch.randn(3, self.H, self.d_qkv, self.C_prime, dtype=dtype) * sigma
         )
         # channel mix back to C output channels.
         sigma_mix = 0.02 * init_scale / math.sqrt(self.H * self.d_qkv)
-        self.w_mix = self.init_projection(
-            (self.C, self.H, self.d_qkv), sigma_mix, dtype
+        self.w_mix = nn.Parameter(
+            torch.randn(self.C, self.H, self.d_qkv, dtype=dtype) * sigma_mix
         )
 
         # ReZero / LayerScale: per-block learnable scalar α. alpha_init=0
@@ -144,21 +142,6 @@ class GEMHSA(nn.Module):
         # on hard targets. Init α to a small positive value
         # (e.g. 0.05) forces the multiplicative path to contribute from the start
         self.alpha = nn.Parameter(torch.full((1,), float(alpha_init)))
-
-    @staticmethod
-    def init_projection(shape, sigma, dtype):
-        """Small-Gaussian init for a complex (or real) projection weight.
-
-        For complex dtype we draw real and imaginary parts independently
-        from ``N(0, σ²)`` — using ``torch.randn(..., dtype=complex)`` would
-        give each part variance ``σ²/2``, halving the spec's std.
-        """
-        if dtype.is_complex:
-            real_dtype = torch.float32 if dtype == torch.complex64 else torch.float64
-            re = torch.randn(*shape, dtype=real_dtype) * sigma
-            im = torch.randn(*shape, dtype=real_dtype) * sigma
-            return nn.Parameter(torch.complex(re, im))
-        return nn.Parameter(torch.randn(*shape, dtype=dtype) * sigma)
 
     def augment(self, W):
         # Channel augmentation: (B, C, *Λ, nc, nc) -> (B, 2C+1, *Λ, nc, nc).
@@ -180,16 +163,16 @@ class GEMHSA(nn.Module):
         This is because T is the same for all heads and d_qkv channels at fixed B, offset and site.
 
         Inputs:
-            X_nb : (B, H, d_qkv, n_off, *Λ, nc, nc)
+            X_nb : (B, H, d, n_off, *Λ, nc, nc)
             T    : (B, n_off, *Λ, nc, nc)
             T_dag: (B, n_off, *Λ, nc, nc)  -- precomputed once per layer
         Returns:
-            (B, H, d_qkv, n_off, *Λ, nc, nc), equivalent to the naive
+            (B, H, d, n_off, *Λ, nc, nc), equivalent to the naive
             two-matmul broadcast version.
         """
         B = X_nb.shape[0]
-        H = self.H
-        d = self.d_qkv
+        H = X_nb.shape[1]
+        d = X_nb.shape[2]
         n = self.n_offsets
         nc = X_nb.shape[-1]
         spatial = X_nb.shape[4:-2]
@@ -212,9 +195,6 @@ class GEMHSA(nn.Module):
         R = L_flat @ T_dag  # (B, n, *Λ, nc*H*d, nc)
 
         # Reshape and permute back to (B, H, d, n, *Λ, nc, nc).
-        # No trailing .contiguous(): downstream consumers (the elementwise
-        # product in `attend` and the final Q† @ V_weighted matmul) don't
-        # require it.
         out = R.reshape(B, n, *spatial, nc, H, d, nc)
         inv_perm = (0, 3 + D, 4 + D, 1) + tuple(range(2, 2 + D)) + (2 + D, 5 + D)
         return out.permute(*inv_perm)
@@ -249,16 +229,19 @@ class GEMHSA(nn.Module):
 
         # 2. Transport: T · X · T†. T and its dagger are shared across heads,
         # channels, and (in GELT) all stacked GEMHSA layers.
-        K_tilde = self.transport(K_nb, T, T_dag)
-        V_tilde = self.transport(V_nb, T, T_dag)
+        # K and V use the same transport. Concatenate along the channel axis
+        # so transport launches two wider batched matmuls instead of four
+        # narrower ones.
+        KV_nb = torch.cat((K_nb, V_nb), dim=2)
+        del K_nb, V_nb
+        KV_tilde = self.transport(KV_nb, T, T_dag)
+        K_tilde, V_tilde = KV_tilde.split(self.d_qkv, dim=2)
 
         # 3. Score = Tr[Q_c† K'_c]/sqrt(Nc d_qkv). Fused einsum (mul+reduce in
         # one pass) avoids materialising the full
         # (B, H, d, n_off, *Λ, nc, nc) elementwise product — saves an HBM
         # round-trip and ~1 GB at R=2, D=3, B=32, L=8, nc=3.
-        score = torch.einsum(
-            "bhd...ij,bhdn...ij->bhn...", Q.conj(), K_tilde
-        ).real
+        score = torch.einsum("bhd...ij,bhdn...ij->bhn...", Q.conj(), K_tilde).real
         score = score / math.sqrt(self.d_qkv * nc)
         # score: (B, H, n_off, *Λ)
 
