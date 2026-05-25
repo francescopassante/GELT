@@ -340,7 +340,8 @@ class Trace(nn.Module):
     def forward(self, W):
         # W: (B, C, *Λ, nc, nc) -> trace over color
         trace = W.diagonal(dim1=-2, dim2=-1).sum(-1)  # (B, C, *Λ)
-        out = torch.cat([trace.real, trace.imag], dim=1)  # (B, 2C, *Λ)
+        imag = trace.imag if trace.is_complex() else torch.zeros_like(trace)
+        out = torch.cat([trace.real, imag], dim=1)  # (B, 2C, *Λ)
         return out
 
 

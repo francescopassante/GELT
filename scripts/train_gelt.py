@@ -409,7 +409,9 @@ if __name__ == "__main__":
         "gemhsa_layers": 3,
         "d_qkv": 16,
         "gate": "softplus",
-        "dtype": torch.complex64,
+        # Z2 is represented by real 1x1 matrices. Keeping the model real avoids
+        # complex kernels and halves the attention activations on this task.
+        "dtype": torch.float32,
         "mlp_hidden": 32,
         "mlp_out": 1,
         # Per-site target → no spatial reduction. Use "sum" for the Wilson

@@ -18,7 +18,7 @@ from gelt import (
     local_gauge_transformation,
     random_links,
 )
-from gelt.blocks import GEMHSA
+from gelt.blocks import GELT, GEMHSA
 
 
 def _unitary_omega(L, D, nc, seed):
@@ -159,3 +159,34 @@ def test_gemhsa_gauge_equivariance_z2():
     expected = local_gauge_transformation(out, omega, gg)
 
     assert torch.allclose(out_g, expected, atol=1e-12)
+
+
+def test_gelt_z2_real_forward_backward():
+    """Full GELT supports real-valued Z2 models without forcing complex kernels."""
+    torch.manual_seed(5)
+    L, D, R, B = 4, 2, 1, 2
+    gg = Z2()
+    dtype = torch.float32
+
+    U = random_links(L=L, D=D, gaugegroup=gg, dtype=dtype, N=B)
+    T = build_transport_average(U, R=R, gaugegroup=gg)
+    W = torch.randn(B, D * (D - 1) // 2, *([L] * D), 1, 1, dtype=dtype)
+
+    model = GELT(
+        gaugegroup=gg,
+        L=L,
+        D=D,
+        R=R,
+        nhead=1,
+        gemhsa_layers=1,
+        d_qkv=2,
+        dtype=dtype,
+        reduction="none",
+    )
+    out = model(W, T)
+    assert out.shape == (B, L, L)
+    assert out.dtype == dtype
+
+    out.square().mean().backward()
+    for name, p in model.named_parameters():
+        assert p.grad is None or torch.isfinite(p.grad).all(), f"non-finite grad on {name}"
