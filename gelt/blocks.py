@@ -236,14 +236,12 @@ class GEMHSA(nn.Module):
         KV_tilde = self.transport(KV_nb, T, T_dag)
         K_tilde, V_tilde = KV_tilde.split(self.d_qkv, dim=2)
 
-        # 3. Score = Tr[Q_c† K'_c]/sqrt(Nc d_qkv). Frobenius product as
-        # explicit mul+sum: benchmarked 3× faster than the equivalent einsum
-        # on CPU and ~25% faster on MPS — PyTorch's einsum materialises the
-        # broadcasted product anyway on this asymmetric pattern (Q has no
-        # n_off axis, K_tilde does), so the "fused mul+reduce" win didn't
-        # appear in practice.
-        Q_e = Q.unsqueeze(3)  # (B, H, d_qkv, 1, *Λ, nc, nc)
-        score = (Q_e.conj() * K_tilde).sum(dim=(2, -2, -1)).real
+        # 3. Score = Tr[Q_c† K'_c]/sqrt(Nc d_qkv). Fused einsum: measured
+        # much faster than the explicit mul+sum on V100 (CUDA einsum
+        # dispatches this asymmetric pattern as a fused contraction without
+        # materialising the broadcasted product). The reverse holds on CPU
+        # and MPS — mul+sum wins there — but training is V100-only.
+        score = torch.einsum("bhd...ij,bhdn...ij->bhn...", Q.conj(), K_tilde).real
         score = score / math.sqrt(self.d_qkv * nc)
         # score: (B, H, n_off, *Λ)
 
