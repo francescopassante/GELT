@@ -121,12 +121,6 @@ def train_model(
 
 if __name__ == "__main__":
     torch.manual_seed(0)
-    # TF32 on A100 (no effect on V100/CPU): the float32 GEMMs that back
-    # complex64 matmul — including transport — run on tensor cores. Verify
-    # gauge-invariance drift via notes/architecture.html §7 before relying
-    # on this for production runs.
-    torch.set_float32_matmul_precision("high")
-    torch.backends.cuda.matmul.allow_tf32 = True
     from gelt import SU, Z2, build_plaquette_datasets
 
     D = 3
