@@ -110,23 +110,28 @@ class GEMHSA(nn.Module):
         # a strictly stronger symmetry than most physical targets have: e.g. a 1×R
         # rectangular Wilson loop in the (μ,ν) can't be learned this way.
         self.b_h = nn.Parameter(torch.zeros(self.H, self.n_offsets))
+        # Precomputed reshape target for broadcasting b_h over (B, *Λ) at score time.
+        self._bias_view_shape = (1, self.H, self.n_offsets) + (1,) * D
 
         # Channel augmentation expands
         # C -> C' = 2C + 1 by appending the identity and daggers.
         self.C_prime = 2 * d_input + 1
 
-        # Initialize q/k/v/w matrices wiht σ ≈ 0.02·init_scale / √C', real and
-        # imaginary parts independently. init_scale=1 and small w^V, together with residula connection,
-        # makes the block roughly identity at init (-> stackable layers)
+        # Cached on-site identity for `augment`: shape (1, 1, *[1]*D, nc, nc),
+        # broadcast at forward time. Avoids re-allocating torch.eye every step.
+        nc = gaugegroup.nc
+        identity = torch.eye(nc, dtype=dtype).view(1, 1, *([1] * D), nc, nc)
+        self.register_buffer("_identity", identity)
+
+        # Fused QKV projection. Stacking Q/K/V into one weight lets us issue a
+        # single (3·H·d, C') @ (B, C', N) matmul instead of three separate ones —
+        # cuBLAS amortises launch + tile waste, especially at small C'.
+        # σ ≈ 0.02·init_scale / √C' (real & imag parts independently). With
+        # init_scale=1 and small w^V combined with the residual connection,
+        # the block is roughly identity at init (-> stackable layers).
         sigma = 0.02 * init_scale / math.sqrt(self.C_prime)
-        self.w_Q = self.init_projection(
-            (self.H, self.d_qkv, self.C_prime), sigma, dtype
-        )
-        self.w_K = self.init_projection(
-            (self.H, self.d_qkv, self.C_prime), sigma, dtype
-        )
-        self.w_V = self.init_projection(
-            (self.H, self.d_qkv, self.C_prime), sigma, dtype
+        self.w_QKV = self.init_projection(
+            (3, self.H, self.d_qkv, self.C_prime), sigma, dtype
         )
         # channel mix back to C output channels.
         sigma_mix = 0.02 * init_scale / math.sqrt(self.H * self.d_qkv)
@@ -160,9 +165,7 @@ class GEMHSA(nn.Module):
         # Prepend the identity, append the daggered channels.
         spatial = W.shape[2:-2]
         nc = W.shape[-1]
-        identity = torch.eye(nc, dtype=W.dtype, device=W.device).expand(
-            W.shape[0], 1, *spatial, nc, nc
-        )
+        identity = self._identity.expand(W.shape[0], 1, *spatial, nc, nc)
         return torch.cat([identity, W, self.gaugegroup.dagger(W)], dim=1)
 
     def transport(self, X_nb, T, T_dag):
@@ -209,11 +212,14 @@ class GEMHSA(nn.Module):
         R = L_flat @ T_dag  # (B, n, *Λ, nc*H*d, nc)
 
         # Reshape and permute back to (B, H, d, n, *Λ, nc, nc).
+        # No trailing .contiguous(): downstream consumers (the elementwise
+        # product in `attend` and the final Q† @ V_weighted matmul) don't
+        # require it.
         out = R.reshape(B, n, *spatial, nc, H, d, nc)
         inv_perm = (0, 3 + D, 4 + D, 1) + tuple(range(2, 2 + D)) + (2 + D, 5 + D)
-        return out.permute(*inv_perm).contiguous()
+        return out.permute(*inv_perm)
 
-    def attend(self, Q, K, V, T):
+    def attend(self, Q, K, V, T, T_dag):
         """Fully batched gauge-equivariant attention over the L1-ball.
 
         Single fused pass — no Python loop over offsets. Pipeline:
@@ -224,6 +230,9 @@ class GEMHSA(nn.Module):
           4. Softmax over the offset axis.
           5. Value path Q† · V' — but α-weighted *before* the matmul
              Σ_n α_n (Q† Ṽ_n) = Q† (Σ_n α_n Ṽ_n)
+
+        ``T`` and ``T_dag`` are shared across all GEMHSA layers in a stacked
+        GELT; the dagger is computed once at the GELT level and threaded in.
         """
         nc = Q.shape[-1]
 
@@ -238,24 +247,27 @@ class GEMHSA(nn.Module):
         ]  # (B, H, d_qkv, n_off, *Λ, nc, nc) -> for each lattice site and neighbor, a (B, H, d, nc, nc) K tensor
         V_nb = V[nb_indexer]  # same
 
-        # 2. Transport: T · X · T†. T is computed once per layer (shared
-        # between K and V) — its dagger too.
-        T_dag = self.gaugegroup.dagger(T)
+        # 2. Transport: T · X · T†. T and its dagger are shared across heads,
+        # channels, and (in GELT) all stacked GEMHSA layers.
         K_tilde = self.transport(K_nb, T, T_dag)
         V_tilde = self.transport(V_nb, T, T_dag)
 
-        # 3. Score = Tr[Q_c† K'_c]/sqrt(Nc d_qkv); Implementable via Frobenius product without matmul
-        Q_e = Q.unsqueeze(3)  # (B, H, d_qkv, 1, *Λ, nc, nc)
-        score = (Q_e.conj() * K_tilde).sum(dim=(2, -2, -1)).real
+        # 3. Score = Tr[Q_c† K'_c]/sqrt(Nc d_qkv). Fused einsum (mul+reduce in
+        # one pass) avoids materialising the full
+        # (B, H, d, n_off, *Λ, nc, nc) elementwise product — saves an HBM
+        # round-trip and ~1 GB at R=2, D=3, B=32, L=8, nc=3.
+        score = torch.einsum(
+            "bhd...ij,bhdn...ij->bhn...", Q.conj(), K_tilde
+        ).real
         score = score / math.sqrt(self.d_qkv * nc)
         # score: (B, H, n_off, *Λ)
 
-        # 4. Per-offset bias: b_h[h, n], broadcast over (B, *Λ).
-        bias = self.b_h  # (H, n_off)
-        # bias must be real b.c. score must be real
-        if torch.is_complex(bias):
-            bias = bias.real
-        score = score + bias.view(1, self.H, self.n_offsets, *([1] * self.D))
+        # 4. Per-offset bias b_h[h, n], broadcast over (B, *Λ). The view
+        # shape is precomputed at __init__; the .real fallback handles the
+        # case where module-wide ``.to(complex_dtype)`` upcast the parameter
+        # (b_h is initialised real, but tests cast the whole block).
+        bias = self.b_h.real if self.b_h.is_complex() else self.b_h
+        score = score + bias.view(self._bias_view_shape)
 
         # 5. Softmax over offsets.
         alpha = torch.softmax(score, dim=2)
@@ -269,11 +281,19 @@ class GEMHSA(nn.Module):
         Q_dag = self.gaugegroup.dagger(Q)  # (B, H, d_qkv, *Λ, nc, nc)
         return torch.matmul(Q_dag, V_weighted)  # (B, H, d_qkv, *Λ, nc, nc)
 
-    def forward(self, W, T):
+    def forward(self, W, T, T_dag=None):
         """Run the block.
 
         W : input field, (B, C, *Λ, nc, nc)
         T : precomputed transports, (B, n_offsets, *Λ, nc, nc)
+        T_dag : optional precomputed dagger of T. When called from
+                ``GELT.attn`` this is computed once and shared across all
+                stacked layers; standalone callers can leave it as ``None``
+                and the block will compute it lazily.
+
+        Inputs are expected to be in the model's weight dtype already;
+        ``GELT.forward`` performs the cast once on entry. Standalone callers
+        that pass real-valued data into a complex model should cast first.
 
         Returns a tensor of the same shape as W.
         """
@@ -282,13 +302,8 @@ class GEMHSA(nn.Module):
             f"Expected T.shape[1] == {self.n_offsets} (number of offsets), got {T.shape[1]}"
         )
 
-        # Cast inputs to the model's weight dtype (e.g. complex64) so that
-        # real-valued data (Z₂ float32 plaquettes) can be fed to a complex model.
-        w_dtype = self.w_Q.dtype
-        if W.dtype != w_dtype:
-            W = W.to(w_dtype)
-        if T.dtype != w_dtype:
-            T = T.to(w_dtype)
+        if T_dag is None:
+            T_dag = self.gaugegroup.dagger(T)
 
         nc = W.shape[-1]
 
@@ -298,22 +313,25 @@ class GEMHSA(nn.Module):
         B = W_aug.shape[0]
         trailing = W_aug.shape[2:]  # (*Λ, nc, nc)
 
-        # Collapse dimensions so that matmul broadcasts correctly:
-        #   (H·d, C') @ (B, C', N) -> (B, H·d, N).
+        # Fused QKV: a single (3·H·d, C') @ (B, C', N) matmul, then split.
+        # cuBLAS amortises the launch and avoids three small-m tile-wasted
+        # GEMMs at small C'.
         W_aug_flat = W_aug.view(B, self.C_prime, -1)
-        w_Q_flat = self.w_Q.view(self.H * self.d_qkv, self.C_prime)
-        w_K_flat = self.w_K.view(self.H * self.d_qkv, self.C_prime)
-        w_V_flat = self.w_V.view(self.H * self.d_qkv, self.C_prime)
-
-        Q = torch.matmul(w_Q_flat, W_aug_flat).view(B, self.H, self.d_qkv, *trailing)
-        K = torch.matmul(w_K_flat, W_aug_flat).view(B, self.H, self.d_qkv, *trailing)
-        V = torch.matmul(w_V_flat, W_aug_flat).view(B, self.H, self.d_qkv, *trailing)
+        w_QKV_flat = self.w_QKV.view(3 * self.H * self.d_qkv, self.C_prime)
+        QKV = torch.matmul(w_QKV_flat, W_aug_flat)  # (B, 3·H·d, N)
+        QKV = QKV.view(B, 3, self.H, self.d_qkv, *trailing)
+        Q, K, V = QKV.unbind(dim=1)
 
         # Transport, score, softmax, multiplicative value.
-        out = self.attend(Q, K, V, T)  # (B, H, d_qkv, *Λ, nc, nc)
+        out = self.attend(Q, K, V, T, T_dag)  # (B, H, d_qkv, *Λ, nc, nc)
 
-        # Channel mix back to C output channels.
-        W_mix = torch.einsum("iha,bha...->bi...", self.w_mix, out)  # (B, C, *Λ, nc, nc)
+        # Channel mix back to C output channels. Expressed as a single matmul
+        # ``(C, H·d) @ (B, H·d, |Λ|·nc·nc) -> (B, C, |Λ|·nc·nc)`` — lower
+        # launch overhead than einsum and no planner cost in eager mode.
+        HD = self.H * self.d_qkv
+        out_flat = out.reshape(B, HD, -1)
+        w_mix_flat = self.w_mix.view(self.C, HD)
+        W_mix = torch.matmul(w_mix_flat, out_flat).view(B, self.C, *trailing)
 
         # Residual + L-Act gate. The gate is a real scalar per (B, C, x).
         W_res = W + W_mix
@@ -440,13 +458,25 @@ class GELT(nn.Module):
             nn.init.zeros_(self.mlp.fc2.weight)
             nn.init.zeros_(self.mlp.fc2.bias)
 
-    def attn(self, W, T):
+    def attn(self, W, T, T_dag):
         for layer in self.gemhsa_models:
-            W = layer(W, T)
+            W = layer(W, T, T_dag)
         return W
 
     def forward(self, W, T):
-        W_attn = self.attn(W, T)
+        # Cast inputs to the model's weight dtype once (hoisted out of every
+        # GEMHSA layer's forward) so real-valued data (Z₂ float32 plaquettes)
+        # can be fed to a complex model without a per-layer cast.
+        first_layer = self.gemhsa_models[0]
+        w_dtype = first_layer.w_QKV.dtype
+        if W.dtype != w_dtype:
+            W = W.to(w_dtype)
+        if T.dtype != w_dtype:
+            T = T.to(w_dtype)
+        # T_dag is shared across all stacked GEMHSA layers, so the dagger and
+        # the bandwidth-bound op over (B, n_off, *Λ, nc, nc) only run once.
+        T_dag = first_layer.gaugegroup.dagger(T)
+        W_attn = self.attn(W, T, T_dag)
         trace = self.trace(W_attn)
         site_out = self.mlp(trace)  # (B, *Λ, mlp_out)
         # squeeze(-1) handles mlp_out=1 → (B, *Λ).

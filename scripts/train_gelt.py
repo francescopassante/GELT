@@ -103,8 +103,7 @@ def train_model(
             alphas = [f"{layer.alpha.item():+.3f}" for layer in model.gemhsa_models]
             fc2_std = model.mlp.fc2.weight.detach().abs().mean().item()
             epoch_bar.write(
-                f"  ep {epoch + 1:>3d}  α=[{', '.join(alphas)}]  "
-                f"|fc2|̄={fc2_std:.4f}"
+                f"  ep {epoch + 1:>3d}  α=[{', '.join(alphas)}]  |fc2|̄={fc2_std:.4f}"
             )
 
         if epochs_no_improve >= patience:
@@ -122,6 +121,12 @@ def train_model(
 
 if __name__ == "__main__":
     torch.manual_seed(0)
+    # TF32 on A100 (no effect on V100/CPU): the float32 GEMMs that back
+    # complex64 matmul — including transport — run on tensor cores. Verify
+    # gauge-invariance drift via notes/architecture.html §7 before relying
+    # on this for production runs.
+    torch.set_float32_matmul_precision("high")
+    torch.backends.cuda.matmul.allow_tf32 = True
     from gelt import SU, Z2, build_plaquette_datasets
 
     D = 3
