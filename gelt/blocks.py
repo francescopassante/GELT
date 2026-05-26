@@ -66,6 +66,8 @@ class GEMHSA(nn.Module):
         gate="softplus",
         dtype=torch.complex64,
         alpha_init: float = 0.0,
+        alpha_attn_init: float = 0.0,
+        alpha_bilin_init: float = 1.0,
         init_scale: float = 1.0,
     ):
         super(GEMHSA, self).__init__()
@@ -144,6 +146,19 @@ class GEMHSA(nn.Module):
         # on hard targets. Init α to a small positive value
         # (e.g. 0.05) forces the multiplicative path to contribute from the start
         self.alpha = nn.Parameter(torch.full((1,), float(alpha_init)))
+
+        # Untied per-path scalars on the two sub-paths of the fused
+        # attention/bilinear value step (see notes/new_architecture.md):
+        #   alpha_attn  weights the pure attention-weighted aggregate V_weighted
+        #               — transformer-style sum, no Q† multiplication.
+        #   alpha_bilin weights the L-Bilin loop-doubling step Q† · V_weighted
+        #               — the multiplicative path that doubles loop length.
+        # Defaults (attn=0, bilin=1) reproduce the original fused behaviour
+        # exactly. Warm-start alpha_attn > 0 (e.g. 0.3) to engage a pure-
+        # attention contribution independently of the bilinear; this lets the
+        # gradient decouple routing from multiplication at depth.
+        self.alpha_attn = nn.Parameter(torch.full((1,), float(alpha_attn_init)))
+        self.alpha_bilin = nn.Parameter(torch.full((1,), float(alpha_bilin_init)))
 
     def augment(self, W):
         # Channel augmentation: (B, C, *Λ, nc, nc) -> (B, 2C+1, *Λ, nc, nc).
@@ -262,7 +277,15 @@ class GEMHSA(nn.Module):
         alpha_b = alpha.unsqueeze(2).unsqueeze(-1).unsqueeze(-1)
         V_weighted = (alpha_b * V_tilde).sum(dim=3)  # (B, H, d_qkv, *Λ, nc, nc)
         Q_dag = self.gaugegroup.dagger(Q)  # (B, H, d_qkv, *Λ, nc, nc)
-        return torch.matmul(Q_dag, V_weighted)  # (B, H, d_qkv, *Λ, nc, nc)
+        # Two value-path branches with separate learnable scalar weights:
+        #   alpha_attn * V_weighted              — transformer-style attention
+        #                                          sum (no Q† factor).
+        #   alpha_bilin * (Q† · V_weighted)      — L-Bilin loop-doubling step.
+        # Both are gauge-equivariant at x (V_weighted is the attention-weighted
+        # sum of transported V's; Q†·V_weighted multiplies on the left by Q†
+        # which transforms with Ω_x on both sides).
+        bilin = torch.matmul(Q_dag, V_weighted)  # (B, H, d_qkv, *Λ, nc, nc)
+        return self.alpha_attn * V_weighted + self.alpha_bilin * bilin
 
     def forward(self, W, T, T_dag=None):
         """Run the block.
@@ -436,6 +459,8 @@ class GELT(nn.Module):
         mlp_out=1,
         reduction: str = "sum",
         alpha_init: float = 0.0,
+        alpha_attn_init: float = 0.0,
+        alpha_bilin_init: float = 1.0,
         init_scale: float = 1.0,
         mlp_zero_init: bool = True,
         d_model: int | None = None,
@@ -480,6 +505,8 @@ class GELT(nn.Module):
                     gate,
                     dtype,
                     alpha_init=alpha_init,
+                    alpha_attn_init=alpha_attn_init,
+                    alpha_bilin_init=alpha_bilin_init,
                     init_scale=init_scale,
                 )
                 for i in range(gemhsa_layers)
