@@ -106,6 +106,10 @@ def train_model(
                     )
                     first_batch = False
 
+            # Clip *after* the diagnostic grad-norm measurement above so the
+            # reported ‖grad‖ still shows pre-clip spikes. Prevents a single
+            # bad batch from poisoning Adam's second-moment buffer.
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
             batch_size = y.shape[0]
             train_loss += loss.item() * batch_size

@@ -73,6 +73,10 @@ def train_model(
             outputs = model(X, T)
             loss = criterion(outputs, y)
             loss.backward()
+            # Clip before stepping: prevents a single bad batch from poisoning
+            # Adam's second-moment buffer (a ~1e10 gradient permanently zeros
+            # the effective LR via lr / (√v + ε)).
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
             batch_size = y.shape[0]
             train_loss += loss.item() * batch_size
