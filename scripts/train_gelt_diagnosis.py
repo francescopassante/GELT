@@ -9,6 +9,17 @@ from gelt import haar_ensemble
 from gelt.blocks import GELT
 from gelt.lattice import rectangular_wilson_loop
 
+
+def averaged_wilson_loop(config, gaugegroup, R, T, mu, nu):
+    """Lattice-averaged Re Tr W(R, T) / nc — one scalar per config.
+
+    Wraps ``rectangular_wilson_loop`` (per-site, shape ``(B, *Λ)``) and reduces
+    over all spatial axes. Pairs with ``reduction="mean"`` on GELT so the model
+    output and target are both shape ``(B,)``.
+    """
+    y = rectangular_wilson_loop(config, gaugegroup, R=R, T=T, mu=mu, nu=nu)
+    return y.mean(dim=tuple(range(1, y.ndim)))
+
 """
 ========================================================================================
  This is a minimal training script used for lookup on how to train the architecture
@@ -95,7 +106,7 @@ def train_model(
                 for p in model.parameters():
                     if p.grad is not None:
                         total_sq += p.grad.detach().pow(2).sum().item()
-                grad_norm_sum += total_sq ** 0.5
+                grad_norm_sum += total_sq**0.5
                 grad_norm_batches += 1
                 if first_batch and epoch < 3:
                     epoch_bar.write(
@@ -121,7 +132,7 @@ def train_model(
 
         out_mean = out_sum / out_count
         out_var = max(out_sq_sum / out_count - out_mean * out_mean, 0.0)
-        out_std = out_var ** 0.5
+        out_std = out_var**0.5
         avg_grad_norm = grad_norm_sum / max(grad_norm_batches, 1)
 
         val_loss = evaluate(model, val_loader, criterion, device, progress=False)
@@ -171,20 +182,22 @@ if __name__ == "__main__":
     torch.manual_seed(0)
     from gelt import SU, Z2, build_plaquette_datasets
 
-    D = 3
+    D = 2
     L = 8
     gaugegroup = Z2()
-    R = 2
+    R = 1
     model_dtype = torch.float32 if isinstance(gaugegroup, Z2) else torch.complex64
 
     beta = 1
-    # Per-site Wilson loop target: y has shape (B, *Λ). Paired with
-    # ``reduction="none"`` on GELT, the model's per-site readout is supervised
-    # directly — every site contributes a sample, and the equivariant trace
-    # head outputs the locally gauge-invariant quantity at x.
-    loop_R, loop_T, mu, nu = 2, 2, 0, 1
+    # Lattice-averaged Wilson loop target: y has shape (B,). Paired with
+    # ``reduction="mean"`` on GELT, the model averages its per-site readout
+    # over the spatial axes and is supervised against the configuration-level
+    # mean ⟨Re Tr W⟩. This is a strictly weaker constraint than per-site
+    # supervision — errors at different anchors can cancel — and matches the
+    # translation-invariant quantity most physical observables actually need.
+    loop_R, loop_T, mu, nu = 3, 3, 0, 1
     dataset_parameters = {
-        "N": 2000,
+        "N": 1000,
         "D": D,
         "L": L,
         "gaugegroup": gaugegroup,
@@ -195,36 +208,38 @@ if __name__ == "__main__":
         "structured": True,
         "sampler": haar_ensemble,
         "beta": beta,
-        "target": partial(rectangular_wilson_loop, R=loop_R, T=loop_T, mu=mu, nu=nu),
+        "target": partial(averaged_wilson_loop, R=loop_R, T=loop_T, mu=mu, nu=nu),
         "n_therm": 200,
         "n_skip": 5,
-        "dtype": torch.float32,
+        "dtype": torch.complex64,
     }
 
     train_parameters = {
         # ReZero α and zero-init mlp.fc2 mean the gradient-flow unfreezing
         # cascade (fc2 → fc1 → α → Q/K/V/mix) is slow at lr=1e-3 — pushing the
         # LR up gets training past the identity-branch stall in a few epochs.
-        "lr": 1e-2,
+        "lr": 3e-3,
         "batch_size": 64,
-        "epochs": 300,
-        "patience": 30,
+        "epochs": 3000,
+        "patience": 3000,
         "checkpoint_path": "best_gelt.pth",
     }
 
-    # Debug-capacity GELT for the per-site Wilson loop target. The 2×2 loop is
-    # quartic in plaquettes (W = P·P·P·P in Z₂), so the model needs depth and
-    # head count to compose multi-site products. The earlier matched-capacity
-    # config (nhead=2, d_qkv=8, gemhsa_layers=2, mlp_hidden=16) was sized for
-    # the linear-in-P action target and is too small for Wilson loops — leave
-    # the matched shootout for after the per-site path is validated.
+    # Debug-capacity GELT for the lattice-averaged Wilson loop target. A 3×3
+    # loop has plaquette degree 9 in Z₂, so the model still needs depth and
+    # head count to compose multi-site products — averaging only relaxes the
+    # per-anchor reconstruction requirement, not the underlying loop algebra.
+    # The earlier matched-capacity config (nhead=2, d_qkv=8, gemhsa_layers=2,
+    # mlp_hidden=16) was sized for the linear-in-P action target and is too
+    # small for Wilson loops — leave the matched shootout for after the
+    # averaged path is validated.
     model_parameters = {
         "gaugegroup": gaugegroup,
         "L": L,
         "D": D,
         "R": R,
-        "nhead": 4,
-        "gemhsa_layers": 3,
+        "nhead": 1,
+        "gemhsa_layers": 4,
         "d_qkv": 16,
         "gate": "softplus",
         # Z2 can run as a real model. SU(N) must stay complex; otherwise
@@ -232,9 +247,10 @@ if __name__ == "__main__":
         "dtype": model_dtype,
         "mlp_hidden": 32,
         "mlp_out": 1,
-        # Per-site target → no spatial reduction. Use "sum" for the Wilson
-        # action, "mean" for the average ⟨W⟩.
-        "reduction": "none",
+        # Lattice-averaged target → "mean" spatial reduction on the GELT
+        # readout. Use "none" for per-site supervision, "sum" for the
+        # extensive Wilson action.
+        "reduction": "mean",
         # Warm-start the ReZero α and drop the MLP fc2 zero-init: the default
         # α=0 + fc2=0 combo traps training at the constant-mean predictor on
         # the 2×2 Wilson loop target. α=0.5 puts the multiplicative path at
@@ -366,9 +382,9 @@ if __name__ == "__main__":
     plt.savefig("gelt_loss.png", dpi=150, bbox_inches="tight")
     plt.close()
 
-    # Flatten per-site targets/predictions for the scatter; subsample if dense
-    # so matplotlib stays responsive (per-site targets give |Λ| points per
-    # config, e.g. 8³·N_test ≈ 150 k points at L=8, D=3).
+    # Flatten targets/predictions for the scatter; with the lattice-averaged
+    # target this is one point per test config (≈ 150 at the default split),
+    # but the subsample guard is kept for parity with the per-site path.
     t_flat = all_targets.reshape(-1).numpy()
     o_flat = all_outputs.reshape(-1).numpy()
     if t_flat.size > 20000:

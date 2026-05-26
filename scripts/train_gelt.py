@@ -127,10 +127,10 @@ if __name__ == "__main__":
     torch.manual_seed(0)
     from gelt import SU, Z2, build_plaquette_datasets
 
-    D = 3
+    D = 2
     L = 8
-    gaugegroup = Z2()
-    R = 2
+    gaugegroup = SU(2)
+    R = 1
     model_dtype = torch.float32 if isinstance(gaugegroup, Z2) else torch.complex64
 
     beta = 1
@@ -138,9 +138,9 @@ if __name__ == "__main__":
     # ``reduction="none"`` on GELT, the model's per-site readout is supervised
     # directly — every site contributes a sample, and the equivariant trace
     # head outputs the locally gauge-invariant quantity at x.
-    loop_R, loop_T, mu, nu = 2, 2, 0, 1
+    loop_R, loop_T, mu, nu = 3, 3, 0, 1
     dataset_parameters = {
-        "N": 2000,
+        "N": 1000,
         "D": D,
         "L": L,
         "gaugegroup": gaugegroup,
@@ -154,17 +154,17 @@ if __name__ == "__main__":
         "target": partial(rectangular_wilson_loop, R=loop_R, T=loop_T, mu=mu, nu=nu),
         "n_therm": 200,
         "n_skip": 5,
-        "dtype": torch.float32,
+        "dtype": torch.complex64,
     }
 
     train_parameters = {
         # ReZero α and zero-init mlp.fc2 mean the gradient-flow unfreezing
         # cascade (fc2 → fc1 → α → Q/K/V/mix) is slow at lr=1e-3 — pushing the
         # LR up gets training past the identity-branch stall in a few epochs.
-        "lr": 1e-2,
+        "lr": 3e-3,
         "batch_size": 64,
-        "epochs": 300,
-        "patience": 30,
+        "epochs": 3000,
+        "patience": 3000,
         "checkpoint_path": "best_gelt.pth",
     }
 
@@ -179,8 +179,8 @@ if __name__ == "__main__":
         "L": L,
         "D": D,
         "R": R,
-        "nhead": 4,
-        "gemhsa_layers": 3,
+        "nhead": 1,
+        "gemhsa_layers": 4,
         "d_qkv": 16,
         "gate": "softplus",
         # Z2 can run as a real model. SU(N) must stay complex; otherwise
@@ -200,13 +200,13 @@ if __name__ == "__main__":
         # near-uniform softmax floor so attention has per-offset signal to
         # learn from on epoch 0.
         "alpha_init": 0.5,
-        "init_scale": 10.0,
+        "init_scale": 10,
         "mlp_zero_init": False,
         # Widen the residual-stream beyond the small plaquette channel count
         # D(D-1)/2 ∈ {1, 3, 6} via the front-end ChannelLift. Decouples the
         # GEMHSA working width from the input dimensionality so intermediate
         # layers don't collapse to 1–6 channels.
-        "d_model": 16,
+        "d_model": 8,
     }
 
     train_dataset, val_dataset, test_dataset = build_plaquette_datasets(
