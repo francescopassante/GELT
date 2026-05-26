@@ -5,9 +5,9 @@ import torch.nn as nn
 import torch.optim as optim
 from tqdm import tqdm
 
-from gelt import haar_ensemble
 from gelt.blocks import GELT
 from gelt.lattice import rectangular_wilson_loop
+from gelt.sampler import mcmc_ensemble
 
 
 def averaged_wilson_loop(config, gaugegroup, R, T, mu, nu):
@@ -184,11 +184,14 @@ if __name__ == "__main__":
 
     D = 2
     L = 8
-    gaugegroup = Z2()
+    gaugegroup = SU(2)
     R = 1
     model_dtype = torch.float32 if isinstance(gaugegroup, Z2) else torch.complex64
 
-    beta = 1
+    # 2D SU(2) is exactly solvable (no phase transition); β≈2 sits in the
+    # weak-coupling regime where Wilson loops have a clean, smoothly varying
+    # signal — appropriate working point for the diagnostic run.
+    beta = 2.0
     # Lattice-averaged Wilson loop target: y has shape (B,). Paired with
     # ``reduction="mean"`` on GELT, the model averages its per-site readout
     # over the spatial axes and is supervised against the configuration-level
@@ -204,14 +207,19 @@ if __name__ == "__main__":
         "R": R,
         "splits": [0.7, 0.15, 0.15],
         "save": False,
-        "prefix": f"z2_plaquette_L{L}_D{D}_N2000_beta{beta}_R{R}_wloop{loop_R}x{loop_T}",
+        "prefix": f"su2_plaquette_L{L}_D{D}_N1000_beta{beta}_R{R}_wloop{loop_R}x{loop_T}_singlepath",
         "structured": True,
-        "sampler": haar_ensemble,
+        # SU(2) Metropolis via _SWEEP_FN[SU] = su2_metropolis_sweep.
+        "sampler": mcmc_ensemble,
         "beta": beta,
         "target": partial(averaged_wilson_loop, R=loop_R, T=loop_T, mu=mu, nu=nu),
         "n_therm": 200,
         "n_skip": 5,
         "dtype": torch.complex64,
+        # Single canonical shortest path per offset (rotation symmetry
+        # broken); A/B variant against the default "average" mode for the
+        # path-averaging diagnostic — see notes/architecture.html §3.3.
+        "transport_mode": "single",
     }
 
     train_parameters = {
