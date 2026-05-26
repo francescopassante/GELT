@@ -343,10 +343,13 @@ class Trace(nn.Module):
 
 
 class MLP(nn.Module):
-    def __init__(self, in_features, hidden_features, out_features):
+    def __init__(self, in_features, hidden_features, out_features, dropout: float = 0.0):
         super(MLP, self).__init__()
         self.fc1 = nn.Linear(in_features, hidden_features)
-
+        # Dropout sits between fc1's ReLU and fc2. It acts on gauge-invariant
+        # trace features, so it does not affect equivariance. Identity (no-op)
+        # when dropout=0.0.
+        self.dropout = nn.Dropout(dropout)
         self.fc2 = nn.Linear(hidden_features, out_features)
 
     def forward(self, x):
@@ -355,6 +358,7 @@ class MLP(nn.Module):
         # movedim is the permutation we actually want.
         x = x.movedim(1, -1)
         x = F.relu(self.fc1(x))
+        x = self.dropout(x)
         x = self.fc2(x)
         return x
 
@@ -435,6 +439,7 @@ class GELT(nn.Module):
         init_scale: float = 1.0,
         mlp_zero_init: bool = True,
         d_model: int | None = None,
+        mlp_dropout: float = 0.0,
     ):
         # Plaquette input -> D(D-1)/2 plaquettes per site.
         d_input = D * (D - 1) // 2
@@ -486,7 +491,7 @@ class GELT(nn.Module):
         # `.to(complex_dtype)` on GELT would otherwise miscast the MLP.
         real_dtype = torch.float64 if dtype == torch.complex128 else torch.float32
         self.trace = Trace()
-        self.mlp = MLP(2 * d_model, mlp_hidden, mlp_out).to(real_dtype)
+        self.mlp = MLP(2 * d_model, mlp_hidden, mlp_out, dropout=mlp_dropout).to(real_dtype)
         # Zero-init the MLP's last linear layer: at init the model outputs 0
         # at every site, so the untrained prediction is exactly 0.
         if mlp_zero_init:
