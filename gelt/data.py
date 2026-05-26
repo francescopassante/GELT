@@ -27,6 +27,7 @@ def build_plaquette_datasets(
     structured: bool = True,
     R: Optional[int] = None,
     prefix: Optional[str] = None,
+    transport_mode: str = "average",
 ):
     """Dataset of (plaquette config, target), optionally with precomputed transports.
 
@@ -43,9 +44,15 @@ def build_plaquette_datasets(
     ``structured=False``: X shape ``(N, n_pairs · nc², *Λ)`` — flattened color axes, for CNN.
     ``structured=True`` : X shape ``(N, n_pairs, *Λ, nc, nc)`` — full matrix layout, for GELT.
 
-    ``R`` : if given, the shortest-path-averaged transport tensor is computed
-    once per link config (from which the plaquettes were derived) and stored
-    alongside ``X`` and ``y``.
+    ``R`` : if given, the transport tensor is computed once per link config
+    (from which the plaquettes were derived) and stored alongside ``X`` and ``y``.
+
+    ``transport_mode`` : passed through to :func:`build_transport_average`.
+        ``"average"`` (default) builds the shortest-path-averaged transport
+        (rotation-symmetric, the architecture's default). ``"single"`` builds
+        the single-canonical-path variant (rotation symmetry broken; useful
+        for A/B testing whether path averaging dilutes a specific-path target
+        like a rectangular Wilson loop).
     """
     if save and prefix is None:
         raise ValueError("prefix must be provided when save=True.")
@@ -56,7 +63,7 @@ def build_plaquette_datasets(
     X = Ps if structured else flatten_color(Ps)
     y = target(configs, gaugegroup)
     T = (
-        build_transport_average(configs, R=R, gaugegroup=gaugegroup)
+        build_transport_average(configs, R=R, gaugegroup=gaugegroup, mode=transport_mode)
         if R is not None
         else None
     )

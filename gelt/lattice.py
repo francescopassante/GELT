@@ -301,18 +301,34 @@ def build_transport_average(
     U: torch.Tensor,
     R: int,
     gaugegroup: GaugeGroup,
+    mode: str = "average",
 ) -> torch.Tensor:
-    """Shortest-path-averaged parallel transports for **every** offset 0 < |Δx|₁ ≤ R.
+    """Parallel transports for **every** offset 0 < |Δx|₁ ≤ R.
 
-    For each signed lattice offset Δx in the L1-ball of radius R, the returned
-    tensor entry equals the **average** over all shortest lattice paths from x
-    to x+Δx:
+    Two aggregation modes share the same DP recursion and produce the same
+    output shape/offset ordering — pick one with ``mode``:
+
+    ``mode="average"`` (default, the architecture's design choice).
+    For each signed lattice offset Δx, the entry is the **average** over all
+    shortest lattice paths from x to x+Δx:
 
         T_Δx(x)  =  (1 / N_Δx)  Σ_{P : x→x+Δx, |P|=|Δx|₁}  U_P
 
     with ``N_Δx = |Δx|₁! / Π_μ |Δx_μ|!`` the multinomial number of shortest
     paths. The DP builds the unnormalised sum and divides by ``N_Δx`` at the
-    end. Normalising by a scalar preserves gauge covariance: under site-local Ω,
+    end. Preserves lattice rotation symmetry on top of gauge covariance.
+
+    ``mode="single"`` (A/B variant for the path-averaging diagnostic).
+    For each Δx, the entry is the transport along **one canonical shortest
+    path** — at every DP step the lowest-index nonzero direction is taken,
+    so the path walks |Δx_0| signed steps in direction 0, then |Δx_1| in
+    direction 1, etc. Gauge covariance and translation equivariance still
+    hold (each individual link step is gauge-covariant). 90°-rotation
+    equivariance is **broken** — the path picks a preferred direction order.
+    No normalisation (a single path, not a mean).
+
+    Either way, normalising / not normalising by a scalar preserves gauge
+    covariance: under site-local Ω,
 
         T_Δx(x)  →  Ω(x) · T_Δx(x) · Ω†(x+Δx)
 
@@ -320,6 +336,10 @@ def build_transport_average(
 
         T_Δx(x) = Σ_{μ : Δx_μ > 0}  U_μ(x) · T_{Δx − ê_μ}(x + ê_μ)
                 + Σ_{μ : Δx_μ < 0}  U†_μ(x − ê_μ) · T_{Δx + ê_μ}(x − ê_μ)
+
+    Under ``mode="single"`` the outer sum collapses to its first nonzero
+    branch (lowest-index μ), so every DP step picks one predecessor instead
+    of D-many.
 
     Sub-offsets ``Δx ∓ ê_μ`` always have strictly smaller L1 norm and the
     same component signs (just one zeroed out, possibly), so ordering the
@@ -343,6 +363,8 @@ def build_transport_average(
         Manhattan radius.
     gaugegroup
         Gauge group (used for the backward-link daggers).
+    mode
+        ``"average"`` (default) or ``"single"`` — see above.
     Returns
     -------
     Stacked transport tensor in canonical offset order — shape
@@ -350,6 +372,8 @@ def build_transport_average(
     :func:`l1_ball_offsets` ``(D, R)``: sorted by ``|Δx|₁`` then
     lexicographically. Use that helper to look up the index for a given Δx.
     """
+    if mode not in ("average", "single"):
+        raise ValueError(f"mode must be 'average' or 'single', got {mode!r}")
     if U.ndim < 6:
         raise ValueError(
             "U must be batched with shape (N, D, *Λ, nc, nc). "
@@ -403,6 +427,10 @@ def build_transport_average(
             else:
                 continue
             t = contrib if t is None else t + contrib
+            if mode == "single":
+                # Collapse the sum to its first nonzero branch: canonical
+                # shortest path = lowest-index nonzero direction at every step.
+                break
 
         table[dx] = t
 
@@ -411,6 +439,10 @@ def build_transport_average(
     del (
         table
     )  # release the per-offset references; the stacked tensor owns the data now.
+
+    # Single-path mode: one path per offset, no average to normalise away.
+    if mode == "single":
+        return stacked
 
     # Normalise each offset slice by the number of shortest paths N_Δx.
     # N_Δx is the multinomial coefficient |Δx|₁! / Π_μ |Δx_μ|!: the |Δx|₁ steps
