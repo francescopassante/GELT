@@ -242,7 +242,12 @@ if __name__ == "__main__":
     # Bump down to 3×3 / 2×3 if you want to confirm the easier targets first.
     loop_R, loop_T, mu, nu = 4, 4, 0, 1
     dataset_parameters = {
-        "N": 2000,
+        # Per-site supervision serves |Λ|·N labels; for L=8 that's 64×N. With
+        # N=1000 the architecture overfits per-site 3×3 (train≈0.2, val≈1.7)
+        # — the MLP memorizes via local gauge-invariant features. N=5000
+        # quintuples the label budget; combined with mlp_hidden=16 + dropout
+        # below, val should track train.
+        "N": 5000,
         "D": D,
         "L": L,
         "gaugegroup": gaugegroup,
@@ -274,6 +279,11 @@ if __name__ == "__main__":
         "batch_size": 64,
         "epochs": 3000,
         "patience": 3000,
+        # AdamW + weight_decay=1e-3 instead of bare Adam: with no L2 pressure
+        # on the MLP, the readout head freely memorizes per-site labels via
+        # the wide bank of transported degree-1 plaquette features. 1e-3 is
+        # a generic starting point — drop to 1e-4 if it hurts convergence.
+        "weight_decay": 1e-3,
         "checkpoint_path": "best_gelt_lcnn.pth",
     }
 
@@ -299,8 +309,18 @@ if __name__ == "__main__":
         "d_qkv": 16,
         "gate": "softplus",
         "dtype": model_dtype,
-        "mlp_hidden": 64,
+        # Capacity cap on the trace-readout MLP. With mlp_hidden=64 the
+        # readout has ~4k weights — easily enough to memorize per-site
+        # training labels via local gauge invariants of transported
+        # plaquettes (the symptom: train≈0.2, val≈1.7 on per-site 3×3).
+        # mlp_hidden=16 caps the readout below the memorization threshold
+        # and forces the gauge-equivariant pipeline to do the work.
+        "mlp_hidden": 16,
         "mlp_out": 1,
+        # Dropout on the MLP's hidden activations. Acts on gauge-invariant
+        # trace features, so equivariance is preserved. Standard regularization
+        # to suppress per-site memorization that survives the capacity cap.
+        "mlp_dropout": 0.3,
         # Lattice-averaged supervision pairs with "mean" reduction.
         "reduction": "mean",
         # Outer ReZero α: keep DAMPENED on the 8-layer alternating stack.
@@ -312,14 +332,18 @@ if __name__ == "__main__":
         # longer rather than crank α back up.
         "alpha_init": 0.1,
         # Per-branch warm-starts: only A and C matter under this pattern.
-        # α_A=1 keeps the constructive L-Conv basis at full strength inside
-        # W_res; the outer α damps the contribution to the residual stream
-        # so depth doesn't explode. α_C=0.3 so L-Bilin's degree-2 product
-        # doesn't dominate the residual stream at later layers — its
-        # multiplicative growth is faster than L-Conv's additive growth.
-        "alpha_A_init": 1.0,
+        # α_A=0.5 brings the constructive L-Conv basis down to roughly the
+        # same residual-stream contribution as L-Bilin. The earlier
+        # α_A=1.0 + α_C=0.3 schedule caused L-Bilin to die during training
+        # (α_C collapsed to ≈0.02 by ep 30): L-Conv's identity-extension
+        # basis floods the residual stream, L-Bilin's tiny σ ≈ 0.02
+        # projections cannot compete, the optimizer concentrates updates
+        # on L-Conv, and L-Bilin starves. Equalizing α_A and α_C keeps
+        # both branches engaged so operator degree can actually grow
+        # past 1 (needed for any Wilson loop above 1×1).
+        "alpha_A_init": 0.5,
         "alpha_B_init": 0.0,  # unused — pattern has no 'B' layers
-        "alpha_C_init": 0.3,
+        "alpha_C_init": 0.5,
         "init_scale": 1.0,    # no need to lift attention scores — no attention.
         "mlp_zero_init": False,
         # Wider residual stream so L-Bilin has channel diversity to multiply.
@@ -350,7 +374,14 @@ if __name__ == "__main__":
     model = GELT(**model_parameters)
 
     criterion = nn.MSELoss()
-    optimizer = optim.Adam(model.parameters(), lr=train_parameters["lr"])
+    # AdamW (Adam + decoupled weight decay) instead of bare Adam — the
+    # readout MLP has no other regularization pathway and freely memorizes
+    # per-site labels without weight_decay > 0.
+    optimizer = optim.AdamW(
+        model.parameters(),
+        lr=train_parameters["lr"],
+        weight_decay=train_parameters["weight_decay"],
+    )
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10000, gamma=0.5)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
