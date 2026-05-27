@@ -46,6 +46,32 @@ corner-anchored `3x3` loop. So failure on `3x3` does not prove the current model
 is useless for every physical observable. It does show that the model has not
 yet learned a scalable, reliable loop-building mechanism.
 
+This gives a useful diagnostic axis: the **per-site** target versus the
+**lattice-averaged** target `<W>`. The per-site target forces every anchor
+to reconstruct `W(R, T, x)` locally. This does not fight translation symmetry:
+the target is translation-equivariant and the model's `reduction="none"` head
+is translation-equivariant too. It is nevertheless a much stronger constraint
+than the lattice average, because every anchor must be right rather than only
+the aggregate. The averaged target only requires the mean to be correct and
+allows per-anchor errors to cancel, which is a strictly weaker constraint and
+matches many physical observables more closely. Crucially, the averaged target
+can also be reachable by a *statistical shortcut*: for some ensembles and
+couplings, `<W>` may be approximated from lower-order local statistics
+(plaquette density, short-range correlations, smearing-level features) without
+ever building a clean corner-anchored loop. So:
+
+- if per-site succeeds, the architecture has learned the algebra;
+- if per-site fails but averaged succeeds, the architecture is learning a
+  smooth functional rather than the algebra — fine for many physics tasks,
+  but not evidence that loop-building works;
+- if averaged also fails, the failure is deeper than colocation/multi-
+  plication alone. It may indicate insufficient receptive field, channel
+  width, training signal, statistics, or optimization even for the weaker
+  observable.
+
+This is a cheap and important separator and should be run before any major
+architectural rewrite.
+
 ## 2. Legacy fused GEMHSA: expressive but hard to optimize
 
 The legacy block computes attention and bilinear multiplication in one fused
@@ -108,6 +134,24 @@ each useful non-local product now requires a choreography:
 1. attention must move the right partial object to site `x`;
 2. the residual stream must keep that object in a usable channel;
 3. the local FFN must multiply it with another compatible local object.
+
+One thing to clarify: the softmax does not build the parallel transport itself.
+The per-offset object `T_{Delta x}(x)` is precomputed by the transport builder;
+the attention softmax mixes over the *choice of offset* `Delta x`. There are
+two separate issues here:
+
+- with `transport_mode="single"`, each `T_{Delta x}` is one canonical path, so
+  the transport is a clean group-valued Wilson line. The remaining pathology is
+  attention sharpness: the optimizer must make the offset distribution nearly
+  one-hot at the same time as the channels align;
+- with `transport_mode="average"`, each `T_{Delta x}` is an exact average over
+  shortest paths, but in a non-abelian group that average is generally not
+  itself a unitary/group-valued transporter. Then there can be an additional
+  path-averaging pollution issue on top of the attention sharpness issue.
+
+So the colocation bottleneck should be tested under `single` transports before
+blaming the split design alone. Under averaged transports, failure can mix two
+effects: non-unitary path averaging and softmax offset mixing.
 
 This can be harder than the fused block if attention is too narrow. The current
 attention path has several bottlenecks:
@@ -212,6 +256,45 @@ token mixing with a gauge-covariant token algebra. Attention remains the
 adaptive part, but exact transport/multiplication primitives carry the physical
 inductive bias.
 
+### Honest framing: this is largely L-CNN + adaptive attention
+
+Branch A, with learned signed coefficients over an L1-ball of offsets, is
+mathematically L-CNN's L-Conv:
+```text
+Phi'(x) = sum_{Δx} W_{Δx} · T_{Δx}(x) Phi(x+Δx) T_{Δx}^dagger(x).
+```
+Branch C is L-Bilin. So branches A+C are L-CNN; branch B (softmax attention
+over the same transported values) is the genuinely new component.
+
+This matters for the thesis framing. The original GELT contribution is that the
+multiplicative value path `alpha · Q^dagger · V_tilde` tries to replace
+L-Conv + L-Bilin while preserving loop-doubling expressivity. The proposed
+three-branch design partially walks that back for the hard regime: it
+reintroduces L-CNN-like primitives as the reliable algebraic backbone, while
+keeping attention as the adaptive routing component. That can still be a valid
+new hybrid architecture, but it should be presented honestly as
+"L-CNN-style gauge-covariant operator algebra plus adaptive attention", not as
+a pure attention replacement for L-CNN.
+
+### Cheaper intermediate before the full rewrite
+
+The three-branch design is a large refactor. Before committing to it, a
+minimal sidecar version captures most of the diagnosed pathology with much
+less code:
+
+1. Add the zero offset to the existing attention/transport table.
+2. Increase `nhead` at fixed (or only moderately increased) `d_qkv` so each
+   head is an independent route, not just extra value width sharing one
+   softmax.
+3. Add a *single* parallel non-softmax transport branch (a learned linear
+   combination over offsets, applied to the same `T_{Δx}` outputs) alongside
+   softmax attention. Initialize this branch constructively at a basis of
+   single-offset routes.
+4. Keep the existing `Q^dagger · V` value path; do not split it.
+
+If this closes the `2x3`/`3x3` gap, the diagnosis is confirmed and the full
+three-branch rewrite is not necessary. If it does not, the rewrite is justified.
+
 ## 6. Why this is fundamentally better
 
 The proposed direction is better than the fused `GEMHSA` because routing and
@@ -219,6 +302,33 @@ multiplication no longer have to be learned as a single entangled decision. A
 transport branch can learn "which neighboring covariant features should be
 available at this site" while the bilinear branch learns "which local features
 should be multiplied." The gradients become more local in function space.
+
+The phrase "more local gradients" needs to be earned, since the same parameter
+count realizes a similar function class either way. The real claim is that
+**SGD is not reparameterization-invariant**: the loss landscape geometry
+depends on *how* the function is parameterized, and SGD follows the geometry.
+Three concrete effects make the decoupled form easier to optimize from random
+init:
+
+1. *Multiplicative coupling at init.* In a fused `Q^dagger T V`, the gradient
+   for `Q` is proportional to `V` and vice versa. At random init both are
+   small and unaligned, so each one's gradient signal is small and noisy —
+   a chicken-and-egg problem. Decoupling into an additive transport branch
+   plus a later local multiplication breaks this dependency: the transport
+   branch's parameters get a gradient that does not require `Q` to be
+   aligned yet.
+2. *Depth of the product chain.* A degree-9 loop is a product of nine
+   transported factors. In a fused stack this is literally a chain of
+   matrix products in the forward graph, and an early-layer parameter's
+   gradient is a product of all downstream `Q`, `V` matrices. Small or
+   random downstream factors give vanishing/noisy gradients — the same
+   mechanism that motivated residual connections in ordinary deep nets.
+3. *Saddles at zero.* A bilinear `f(Q, V) = Q V` has a large saddle at
+   `Q = V = 0`. Random init places the model near it and SGD escapes
+   slowly. Additive paths do not have this saddle and let the optimizer
+   make progress immediately.
+
+The expressivity is similar; the optimization trajectory is what changes.
 
 It is better than the current split architecture because colocation is no
 longer limited to a small number of softmax mixtures. The model gets an
@@ -243,8 +353,18 @@ them.
 ## 7. Experimental checks
 
 To validate the diagnosis, run these ablations before committing to a large
-rewrite:
+rewrite. They are listed roughly in increasing cost.
 
+0. Switch the supervision target from the per-site Wilson loop to the
+   lattice-averaged `<W>` at the same `R x T`. This is a one-line change
+   (set `reduction="mean"` on the GELT and mean-reduce the dataset target).
+   It separates the architecture's ability to access `R x T`-scale information
+   from its ability to perform exact corner-anchored reconstruction. Run this
+   first on `3x3`. If averaged-`3x3` works, the algebra problem is the
+   bottleneck and the architectural fixes below are the right direction; if
+   averaged-`3x3` also fails, the problem may be deeper (receptive field,
+   channel width, optimization, data statistics, or signal access) and should
+   be diagnosed before any rewrite.
 1. Add the zero offset to the attention/transport table and test whether the
    split model improves on `2x3`.
 2. Increase `nhead` substantially at fixed or moderately increased `d_qkv`.
