@@ -88,9 +88,16 @@ class GEMHSA(nn.Module):
             raise ValueError(f"gate must be 'relu' or 'softplus', got {gate}")
         self.gate = gate
 
-        # offsets is a list of the Δx_i in the L1 ball of radius R
-        self.offsets = l1_ball_offsets(D, R)
-        # n_offsets for R=1 D=2 is 4; for R=1 D=3 is 6; for R=2 D=3 is 24...
+        # offsets is a list of the Δx_i in the L1 ball of radius R. The
+        # Δx = 0 self-offset is prepended (transport is the identity), so
+        # the attention has an explicit "attend to self" slot in addition
+        # to the residual skip. External transport tensors from
+        # ``build_transport_average`` only carry the non-zero offsets; the
+        # block synthesises the identity for the zero offset inside
+        # ``forward``.
+        self.offsets = [tuple([0] * D)] + l1_ball_offsets(D, R)
+        # n_offsets for R=1 D=2 is 5; for R=1 D=3 is 7; for R=2 D=3 is 25...
+        # (one more than l1_ball_offsets due to the zero self-offset).
         self.n_offsets = len(self.offsets)
 
         # _nbr_idx[d, i, x] are the coords of the neighbor of x at offset Δx_i
@@ -304,14 +311,29 @@ class GEMHSA(nn.Module):
         Returns a tensor of the same shape as W.
         """
 
-        assert T.shape[1] == self.n_offsets, (
-            f"Expected T.shape[1] == {self.n_offsets} (number of offsets), got {T.shape[1]}"
+        # External T carries only the non-zero offsets; the Δx = 0 entry
+        # (whose transport is the identity) is synthesised here.
+        expected_external = self.n_offsets - 1
+        assert T.shape[1] == expected_external, (
+            f"Expected T.shape[1] == {expected_external} (non-zero offsets), "
+            f"got {T.shape[1]}"
         )
 
+        nc = W.shape[-1]
+        B = T.shape[0]
+        spatial = T.shape[2:-2]
+        identity_T = (
+            torch.eye(nc, dtype=T.dtype, device=T.device)
+            .view(1, 1, *([1] * self.D), nc, nc)
+            .expand(B, 1, *spatial, nc, nc)
+        )
+        T = torch.cat([identity_T, T], dim=1)
         if T_dag is None:
             T_dag = self.gaugegroup.dagger(T)
-
-        nc = W.shape[-1]
+        else:
+            # T_dag was computed for the external (non-zero) offsets;
+            # prepend the identity (its own dagger) so it lines up with T.
+            T_dag = torch.cat([identity_T, T_dag], dim=1)
 
         # Augment, then mix channels to build Q, K, V of shape
         # (B, H, d_qkv, *Λ, nc, nc).
