@@ -106,6 +106,36 @@ def train_model(
             optimizer.zero_grad()
             outputs = model(X, T)
             loss = criterion(outputs, y)
+            # NaN guard. The deep alternating stack with the L-Act gate can
+            # blow up at random init if outer α is too large (see
+            # discussion in the training-script docstring). When that
+            # happens the loss goes to inf/nan in a single batch and any
+            # subsequent backward call permanently corrupts Adam's second-
+            # moment buffer. Skip the offending batch, sweep a per-layer
+            # diagnostic to locate where the blow-up originates, then halt
+            # with an actionable message instead of crashing 200 epochs in.
+            if not torch.isfinite(loss):
+                epoch_bar.write(
+                    f"  ep {epoch:>3d}  NON-FINITE LOSS ({loss.item()}). "
+                    f"Per-layer ‖W‖ trace on this batch:"
+                )
+                with torch.no_grad():
+                    W_dbg = X.to(next(model.parameters()).dtype)
+                    T_dbg = T.to(W_dbg.dtype)
+                    W_dbg = model.lift(W_dbg)
+                    T_dag_dbg = model.blocks[0].gaugegroup.dagger(T_dbg)
+                    epoch_bar.write(f"    after lift: ‖W‖={W_dbg.abs().max().item():.3e}")
+                    for i, layer in enumerate(model.blocks):
+                        W_dbg = layer(W_dbg, T_dbg, T_dag_dbg)
+                        finite = torch.isfinite(W_dbg).all().item()
+                        epoch_bar.write(
+                            f"    block {i} [{layer.branches}]: "
+                            f"‖W‖={W_dbg.abs().max().item():.3e}  finite={finite}"
+                        )
+                raise RuntimeError(
+                    "Forward NaN: lower alpha_init, alpha_A_init, or alpha_C_init, "
+                    "or set l_act=False to drop the softplus gate."
+                )
             loss.backward()
 
             with torch.no_grad():
@@ -273,15 +303,23 @@ if __name__ == "__main__":
         "mlp_out": 1,
         # Lattice-averaged supervision pairs with "mean" reduction.
         "reduction": "mean",
-        # Outer ReZero ON; warm-start so the block engages from epoch 0
-        # (same logic as train_gelt_diagnosis.py).
-        "alpha_init": 1.0,
+        # Outer ReZero α: keep DAMPENED on the 8-layer alternating stack.
+        # With α=1 each block scales the residual stream by ~3-4×
+        # (constructive L-Conv ≈ identity-extension + softplus L-Act),
+        # and 8 layers compound to >10⁴ → forward NaN. α=0.1 keeps each
+        # block at ~1.16× growth (8 layers → ~3.5×), stable end-to-end.
+        # The trade-off is that the block engages more slowly — train
+        # longer rather than crank α back up.
+        "alpha_init": 0.1,
         # Per-branch warm-starts: only A and C matter under this pattern.
-        # α_A=1 (constructive basis active immediately), α_C=1 (L-Bilin
-        # multiplies the L-Conv output from depth 2 onward).
+        # α_A=1 keeps the constructive L-Conv basis at full strength inside
+        # W_res; the outer α damps the contribution to the residual stream
+        # so depth doesn't explode. α_C=0.3 so L-Bilin's degree-2 product
+        # doesn't dominate the residual stream at later layers — its
+        # multiplicative growth is faster than L-Conv's additive growth.
         "alpha_A_init": 1.0,
         "alpha_B_init": 0.0,  # unused — pattern has no 'B' layers
-        "alpha_C_init": 1.0,
+        "alpha_C_init": 0.3,
         "init_scale": 1.0,    # no need to lift attention scores — no attention.
         "mlp_zero_init": False,
         # Wider residual stream so L-Bilin has channel diversity to multiply.
