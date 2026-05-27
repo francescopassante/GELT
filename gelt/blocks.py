@@ -69,6 +69,7 @@ class GEMHSA(nn.Module):
         dtype=torch.complex64,
         alpha_init: float = 0.0,
         init_scale: float = 1.0,
+        qk_init_scale: float = 1.0,
     ):
         super(GEMHSA, self).__init__()
         self.gaugegroup = gaugegroup
@@ -134,14 +135,24 @@ class GEMHSA(nn.Module):
         self.register_buffer("_identity", identity)
 
         # Fused QKV projection.
-        # a single (3·H·d, C') @ (B, C', N) matmul instead of three separate ones
-        # σ ≈ 0.02·init_scale / √C' (real & imag parts independently). With
-        # init_scale=1 and small w^V combined with the residual connection,
-        # the block is roughly identity at init (-> stackable layers).
-        sigma = 0.02 * init_scale / math.sqrt(self.C_prime)
-        self.w_QKV = nn.Parameter(
-            torch.randn(3, self.H, self.d_qkv, self.C_prime, dtype=dtype) * sigma
-        )
+        # a single (3·H·d, C') @ (B, C', N) matmul instead of three separate ones.
+        # Q/K and V are initialized at DIFFERENT scales:
+        #   σ_V  = 0.02·init_scale / √C'  (small — keeps the value path tiny so
+        #                                  the residual stream W + W_act is near
+        #                                  identity at init, preserving stackability)
+        #   σ_QK = qk_init_scale  / √C'   (standard transformer scale by default)
+        # The score Re Tr[Q†·K̃] / √(d·nc) is O(σ_QK²·|W|²) at init. With the
+        # old tied σ ≈ 0.02·init_scale/√C', score variance ~ σ⁴ ~ 1e-8 collapsed
+        # the softmax to uniform on epoch 0 — no axis-selectivity signal could
+        # ever start propagating to Q/K. Decoupling lets the score channel sit
+        # at O(1) magnitude immediately while V stays small.
+        sigma_v = 0.02 * init_scale / math.sqrt(self.C_prime)
+        sigma_qk = qk_init_scale / math.sqrt(self.C_prime)
+        w_qkv = torch.randn(3, self.H, self.d_qkv, self.C_prime, dtype=dtype)
+        w_qkv[0] *= sigma_qk  # Q
+        w_qkv[1] *= sigma_qk  # K
+        w_qkv[2] *= sigma_v   # V
+        self.w_QKV = nn.Parameter(w_qkv)
         # channel mix back to C output channels.
         sigma_mix = 0.02 * init_scale / math.sqrt(self.H * self.d_qkv)
         self.w_mix = nn.Parameter(
@@ -474,6 +485,7 @@ class GELT(nn.Module):
         reduction: str = "sum",
         alpha_init: float = 0.0,
         init_scale: float = 1.0,
+        qk_init_scale: float = 1.0,
         mlp_zero_init: bool = True,
         d_model: int | None = None,
         mlp_dropout: float = 0.0,
@@ -518,6 +530,7 @@ class GELT(nn.Module):
                     dtype,
                     alpha_init=alpha_init,
                     init_scale=init_scale,
+                    qk_init_scale=qk_init_scale,
                 )
                 for i in range(gemhsa_layers)
             ]

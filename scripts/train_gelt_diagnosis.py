@@ -264,11 +264,16 @@ if __name__ == "__main__":
         # the 2×2 Wilson loop target. α=0.5 puts the multiplicative path at
         # ~half the residual stream (α=0.05 left it at ~4% and the MLP just
         # kept reading the raw plaquette at site x, never using the multi-
-        # site contribution). init_scale=10 lifts score magnitudes off the
-        # near-uniform softmax floor so attention has per-offset signal to
-        # learn from on epoch 0.
+        # site contribution). init_scale now controls σ_V only (value path —
+        # kept small so the residual stream is near-identity at init);
+        # qk_init_scale controls σ_QK (score channel) and is decoupled so the
+        # softmax can have real dynamic range from epoch 0 — with the old
+        # tied init, score variance was O(σ⁴) ~ 1e-8 and softmax was uniform,
+        # so no per-offset gradient ever reached Q/K and bias was the only
+        # path to axis selection.
         "alpha_init": 0.5,
         "init_scale": 10.0,
+        "qk_init_scale": 1.0,
         "mlp_zero_init": False,
         # Widen the residual-stream beyond the small plaquette channel count
         # D(D-1)/2 ∈ {1, 3, 6} via the front-end ChannelLift. Decouples the
