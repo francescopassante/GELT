@@ -45,9 +45,11 @@ class GEMHSA(nn.Module):
         decoupled from the (small) plaquette input count D(D-1)/2 ∈ {1, 3, 6}
         by the front-end ``ChannelLift`` in ``GELT``; pass ``d_model`` to
         widen it.
-    7. **residual + L-Act gate.** W_act = g(W_res) · W_res with
-       W_res = W_in + W_mix and g(W) = ReLU(Re Tr[W]/nc)
-       or softplus(Re Tr[W]/nc).
+    7. **residual + L-Act gate.** W_act = g(W_mix) · W_mix with
+       g(W) = ReLU(Re Tr[W]/nc) or softplus(Re Tr[W]/nc);
+       the block output is W_in + W_act (standard transformer-style
+       residual — only the sublayer output is gated, the residual stream
+       is left untouched).
 
     The transport T is precomputed by the dataset builder (it is a
     function of the link configuration only
@@ -66,8 +68,6 @@ class GEMHSA(nn.Module):
         gate="softplus",
         dtype=torch.complex64,
         alpha_init: float = 0.0,
-        alpha_attn_init: float = 0.0,
-        alpha_bilin_init: float = 1.0,
         init_scale: float = 1.0,
     ):
         super(GEMHSA, self).__init__()
@@ -153,19 +153,6 @@ class GEMHSA(nn.Module):
         # on hard targets. Init α to a small positive value
         # (e.g. 0.05) forces the multiplicative path to contribute from the start
         self.alpha = nn.Parameter(torch.full((1,), float(alpha_init)))
-
-        # Untied per-path scalars on the two sub-paths of the fused
-        # attention/bilinear value step (see notes/new_architecture.md):
-        #   alpha_attn  weights the pure attention-weighted aggregate V_weighted
-        #               — transformer-style sum, no Q† multiplication.
-        #   alpha_bilin weights the L-Bilin loop-doubling step Q† · V_weighted
-        #               — the multiplicative path that doubles loop length.
-        # Defaults (attn=0, bilin=1) reproduce the original fused behaviour
-        # exactly. Warm-start alpha_attn > 0 (e.g. 0.3) to engage a pure-
-        # attention contribution independently of the bilinear; this lets the
-        # gradient decouple routing from multiplication at depth.
-        self.alpha_attn = nn.Parameter(torch.full((1,), float(alpha_attn_init)))
-        self.alpha_bilin = nn.Parameter(torch.full((1,), float(alpha_bilin_init)))
 
     def augment(self, W):
         # Channel augmentation: (B, C, *Λ, nc, nc) -> (B, 2C+1, *Λ, nc, nc).
@@ -271,8 +258,8 @@ class GEMHSA(nn.Module):
         # shape is precomputed at __init__; the .real fallback handles the
         # case where module-wide ``.to(complex_dtype)`` upcast the parameter
         # (b_h is initialised real, but tests cast the whole block).
-        bias = self.b_h.real if self.b_h.is_complex() else self.b_h
-        score = score + bias.view(self._bias_view_shape)
+        # bias = self.b_h.real if self.b_h.is_complex() else self.b_h
+        score = score  # + bias.view(self._bias_view_shape)
 
         # 5. Softmax over offsets.
         alpha = torch.softmax(score, dim=2)
@@ -292,7 +279,8 @@ class GEMHSA(nn.Module):
         # sum of transported V's; Q†·V_weighted multiplies on the left by Q†
         # which transforms with Ω_x on both sides).
         bilin = torch.matmul(Q_dag, V_weighted)  # (B, H, d_qkv, *Λ, nc, nc)
-        return self.alpha_attn * V_weighted + self.alpha_bilin * bilin
+        return bilin
+        # return self.alpha_attn * V_weighted + self.alpha_bilin * bilin
 
     def forward(self, W, T, T_dag=None):
         """Run the block.
@@ -358,18 +346,20 @@ class GEMHSA(nn.Module):
         w_mix_flat = self.w_mix.view(self.C, HD)
         W_mix = torch.matmul(w_mix_flat, out_flat).view(B, self.C, *trailing)
 
-        # Residual + L-Act gate. The gate is a real scalar per (B, C, x).
-        W_res = W + W_mix
-        trace_per_chan = W_res.diagonal(dim1=-2, dim2=-1).sum(-1).real / nc
+        # Residual + L-Act gate. Standard transformer-style: gate only the
+        # sublayer output (W_mix), then add to the untouched residual W.
+        # The gate is a real scalar per (B, C, x).
+        trace_per_chan = W_mix.diagonal(dim1=-2, dim2=-1).sum(-1).real / nc
         if self.gate == "relu":
             g = F.relu(trace_per_chan)
         else:
             g = F.softplus(trace_per_chan)
-        W_act = g.unsqueeze(-1).unsqueeze(-1) * W_res
+        W_act = g.unsqueeze(-1).unsqueeze(-1) * W_mix
+        return W + W_act
         # ReZero: blend toward the L-Act output with a per-block scalar α
         # (zero-init). At α=0 the block is bit-exactly the identity W → W;
         # during training α grows and the gate/mix path takes over.
-        return W + self.alpha * (W_act - W)
+        # return W + self.alpha * (W_act - W)
 
 
 class Trace(nn.Module):
@@ -388,7 +378,9 @@ class Trace(nn.Module):
 
 
 class MLP(nn.Module):
-    def __init__(self, in_features, hidden_features, out_features, dropout: float = 0.0):
+    def __init__(
+        self, in_features, hidden_features, out_features, dropout: float = 0.0
+    ):
         super(MLP, self).__init__()
         self.fc1 = nn.Linear(in_features, hidden_features)
         # Dropout sits between fc1's ReLU and fc2. It acts on gauge-invariant
@@ -481,8 +473,6 @@ class GELT(nn.Module):
         mlp_out=1,
         reduction: str = "sum",
         alpha_init: float = 0.0,
-        alpha_attn_init: float = 0.0,
-        alpha_bilin_init: float = 1.0,
         init_scale: float = 1.0,
         mlp_zero_init: bool = True,
         d_model: int | None = None,
@@ -527,8 +517,6 @@ class GELT(nn.Module):
                     gate,
                     dtype,
                     alpha_init=alpha_init,
-                    alpha_attn_init=alpha_attn_init,
-                    alpha_bilin_init=alpha_bilin_init,
                     init_scale=init_scale,
                 )
                 for i in range(gemhsa_layers)
@@ -540,7 +528,9 @@ class GELT(nn.Module):
         # `.to(complex_dtype)` on GELT would otherwise miscast the MLP.
         real_dtype = torch.float64 if dtype == torch.complex128 else torch.float32
         self.trace = Trace()
-        self.mlp = MLP(2 * d_model, mlp_hidden, mlp_out, dropout=mlp_dropout).to(real_dtype)
+        self.mlp = MLP(2 * d_model, mlp_hidden, mlp_out, dropout=mlp_dropout).to(
+            real_dtype
+        )
         # Zero-init the MLP's last linear layer: at init the model outputs 0
         # at every site, so the untrained prediction is exactly 0.
         if mlp_zero_init:
