@@ -109,10 +109,35 @@ class RoutedBlock(nn.Module):
         init_scale: float = 1.0,
         trilinear: bool = False,
         constructive_A: bool = True,
+        branches: str = "ABC",
+        residual_skip: bool = True,
+        l_act: bool = True,
     ):
         super().__init__()
         if gate not in ("relu", "softplus"):
             raise ValueError(f"gate must be 'relu' or 'softplus', got {gate}")
+
+        # ---- branch selection ------------------------------------------------
+        # Subset of {"A","B","C"} that says which branches this block actually
+        # computes and allocates parameters for. Used by GELT's ``pattern`` to
+        # build L-CNN-style alternating stacks: e.g. ``branches="A"`` is a
+        # pure L-Conv layer, ``branches="C"`` is a pure L-Bilin layer.
+        # Inactive branches consume no parameters and no compute.
+        branches = "".join(sorted(set(branches.upper())))
+        if not branches or set(branches) - set("ABC"):
+            raise ValueError(
+                f"branches must be a non-empty subset of {{'A','B','C'}}, got {branches!r}"
+            )
+        self.branches = branches
+        self.has_A = "A" in branches
+        self.has_B = "B" in branches
+        self.has_C = "C" in branches
+        # ``residual_skip`` and ``l_act`` toggle the residual ReZero gate and
+        # the L-Act post-nonlinearity respectively. Defaults reproduce the
+        # original block exactly; flip both off for a strict L-CNN layer
+        # (output = α_A·A(W) + α_B·B(W) + α_C·C(W), no residual add, no gate).
+        self.residual_skip = bool(residual_skip)
+        self.l_act = bool(l_act)
 
         self.gaugegroup = gaugegroup
         self.D = D
@@ -134,10 +159,14 @@ class RoutedBlock(nn.Module):
         # branch always has an explicit identity route (codex §5). The
         # external transport tensor only carries the non-zero offsets;
         # the identity slot is synthesised in ``forward``.
-        self.offsets = [tuple([0] * D)] + l1_ball_offsets(D, R)
-        self.n_offsets = len(self.offsets)
-        # _nbr_idx[d, i, x] = (x[d] + Δx_i[d]) mod L. Periodic gather.
-        self.register_buffer("_nbr_idx", _build_nbr_idx(self.offsets, L, D))
+        # Only branches that actually transport (A, B) need offsets and the
+        # neighbour-index buffer; a pure L-Bilin block doesn't.
+        self._needs_transport = self.has_A or self.has_B
+        if self._needs_transport:
+            self.offsets = [tuple([0] * D)] + l1_ball_offsets(D, R)
+            self.n_offsets = len(self.offsets)
+            # _nbr_idx[d, i, x] = (x[d] + Δx_i[d]) mod L. Periodic gather.
+            self.register_buffer("_nbr_idx", _build_nbr_idx(self.offsets, L, D))
 
         # Augmented channel count: C -> C' = 2C + 1 (identity + daggers).
         self.C_prime = 2 * d_input + 1
@@ -146,29 +175,38 @@ class RoutedBlock(nn.Module):
         identity = torch.eye(nc, dtype=dtype).view(1, 1, *([1] * D), nc, nc)
         self.register_buffer("_identity", identity)
 
+        # σ for the QKV-style projections — shared across B (QKV) and C (QV).
+        sigma = 0.02 * init_scale / math.sqrt(self.C_prime)
+        sigma_mix = 0.02 * init_scale / math.sqrt(self.H * self.d_qkv)
+
         # -----------------------------------------------------------------
         # Branch A — L-Conv (algebraic transport mixing).
         # w_A has shape (C_out, n_offsets, C_in_aug). Output channel c is
         #     A(x)_c = Σ_{r, c'} w_A[c, r, c'] · W̃[c', r](x)
         # with W̃[c', r](x) = T(x,r) · W'(x+r)_{c'} · T†(x,r).
         # -----------------------------------------------------------------
-        if constructive_A:
-            # Constructive init (codex §5 last bullet): start with single-
-            # offset, single-channel basis routes — output channel c picks
-            # one (offset, augmented-channel) pair (round-robin over the
-            # n_offsets · C' basis). With α_A warm-started > 0 this gives
-            # the model an L-CNN basis from epoch 0 rather than asking the
-            # optimizer to discover transport routes from random init.
-            w_A = torch.zeros(d_input, self.n_offsets, self.C_prime, dtype=dtype)
-            basis_size = self.n_offsets * self.C_prime
-            for c in range(d_input):
-                flat_idx = c % basis_size
-                r_idx, k_idx = divmod(flat_idx, self.C_prime)
-                w_A[c, r_idx, k_idx] = 1.0
-        else:
-            sigma_A = 0.02 * init_scale / math.sqrt(self.n_offsets * self.C_prime)
-            w_A = torch.randn(d_input, self.n_offsets, self.C_prime, dtype=dtype) * sigma_A
-        self.w_A = nn.Parameter(w_A)
+        if self.has_A:
+            if constructive_A:
+                # Constructive init (codex §5 last bullet): start with single-
+                # offset, single-channel basis routes — output channel c picks
+                # one (offset, augmented-channel) pair (round-robin over the
+                # n_offsets · C' basis). With α_A warm-started > 0 this gives
+                # the model an L-CNN basis from epoch 0 rather than asking the
+                # optimizer to discover transport routes from random init.
+                w_A = torch.zeros(d_input, self.n_offsets, self.C_prime, dtype=dtype)
+                basis_size = self.n_offsets * self.C_prime
+                for c in range(d_input):
+                    flat_idx = c % basis_size
+                    r_idx, k_idx = divmod(flat_idx, self.C_prime)
+                    w_A[c, r_idx, k_idx] = 1.0
+            else:
+                sigma_A = 0.02 * init_scale / math.sqrt(self.n_offsets * self.C_prime)
+                w_A = (
+                    torch.randn(d_input, self.n_offsets, self.C_prime, dtype=dtype)
+                    * sigma_A
+                )
+            self.w_A = nn.Parameter(w_A)
+            self.alpha_A = nn.Parameter(torch.full((1,), float(alpha_A_init)))
 
         # -----------------------------------------------------------------
         # Branch B — soft attention routing.
@@ -177,20 +215,20 @@ class RoutedBlock(nn.Module):
         # value path is the attention-weighted sum of transported V's
         # (no Q† factor — that lives in Branch C).
         # -----------------------------------------------------------------
-        sigma = 0.02 * init_scale / math.sqrt(self.C_prime)
-        self.w_QKV_B = nn.Parameter(
-            torch.randn(3, self.H, self.d_qkv, self.C_prime, dtype=dtype) * sigma
-        )
-        # Per-(head, offset) score bias. Untied across the lattice rotation/
-        # reflection symmetries — the rectangular Wilson-loop targets need
-        # axis-selective routing (same rationale as ``GEMHSA.b_h``).
-        self.b_h = nn.Parameter(torch.zeros(self.H, self.n_offsets))
-        self._bias_view_shape = (1, self.H, self.n_offsets) + (1,) * D
-        # Mix branch-B output back to the C-channel residual stream.
-        sigma_mix = 0.02 * init_scale / math.sqrt(self.H * self.d_qkv)
-        self.w_mix_B = nn.Parameter(
-            torch.randn(self.C, self.H, self.d_qkv, dtype=dtype) * sigma_mix
-        )
+        if self.has_B:
+            self.w_QKV_B = nn.Parameter(
+                torch.randn(3, self.H, self.d_qkv, self.C_prime, dtype=dtype) * sigma
+            )
+            # Per-(head, offset) score bias. Untied across the lattice rotation/
+            # reflection symmetries — the rectangular Wilson-loop targets need
+            # axis-selective routing (same rationale as ``GEMHSA.b_h``).
+            self.b_h = nn.Parameter(torch.zeros(self.H, self.n_offsets))
+            self._bias_view_shape = (1, self.H, self.n_offsets) + (1,) * D
+            # Mix branch-B output back to the C-channel residual stream.
+            self.w_mix_B = nn.Parameter(
+                torch.randn(self.C, self.H, self.d_qkv, dtype=dtype) * sigma_mix
+            )
+            self.alpha_B = nn.Parameter(torch.full((1,), float(alpha_B_init)))
 
         # -----------------------------------------------------------------
         # Branch C — local L-Bilin (optionally trilinear).
@@ -198,27 +236,25 @@ class RoutedBlock(nn.Module):
         # multiply at the same anchor: Q_b†(x) · V_b(x) [ · V2_b(x) ].
         # No transport, no neighbours, no softmax — pure local L-Bilin.
         # -----------------------------------------------------------------
-        n_factors = 3 if trilinear else 2
-        self.w_QV_C = nn.Parameter(
-            torch.randn(n_factors, self.H, self.d_qkv, self.C_prime, dtype=dtype) * sigma
-        )
-        self.w_mix_C = nn.Parameter(
-            torch.randn(self.C, self.H, self.d_qkv, dtype=dtype) * sigma_mix
-        )
+        if self.has_C:
+            n_factors = 3 if trilinear else 2
+            self.w_QV_C = nn.Parameter(
+                torch.randn(n_factors, self.H, self.d_qkv, self.C_prime, dtype=dtype)
+                * sigma
+            )
+            self.w_mix_C = nn.Parameter(
+                torch.randn(self.C, self.H, self.d_qkv, dtype=dtype) * sigma_mix
+            )
+            self.alpha_C = nn.Parameter(torch.full((1,), float(alpha_C_init)))
 
         # -----------------------------------------------------------------
-        # Per-branch ReZero scalars + outer ReZero gate.
-        # alpha (outer) gates the whole (W_act − W) update so the block is
-        # bit-exactly W → W at alpha=0. The per-branch α_A/B/C control the
-        # mixture inside W_res = W + α_A·A + α_B·B + α_C·C; warm-starting
-        # them > 0 engages each branch from epoch 0 (codex §6: additive
-        # parallel branches break the multiplicative-coupling chicken-and-
-        # egg problem of the fused stack).
+        # Outer ReZero gate. Identity-at-init at alpha=0; gates the whole
+        # (W_act − W) update. Only allocated when residual_skip=True (the
+        # only mode that uses it). Per-branch α_A/B/C live with their
+        # respective branches above.
         # -----------------------------------------------------------------
-        self.alpha = nn.Parameter(torch.full((1,), float(alpha_init)))
-        self.alpha_A = nn.Parameter(torch.full((1,), float(alpha_A_init)))
-        self.alpha_B = nn.Parameter(torch.full((1,), float(alpha_B_init)))
-        self.alpha_C = nn.Parameter(torch.full((1,), float(alpha_C_init)))
+        if self.residual_skip:
+            self.alpha = nn.Parameter(torch.full((1,), float(alpha_init)))
 
     # ---------------------------------------------------------------------
     # Shared transport-bank helper. Transports the AUGMENTED field per
@@ -348,55 +384,69 @@ class RoutedBlock(nn.Module):
     # ---------------------------------------------------------------------
     def forward(self, W, T, T_dag=None):
         """W : (B, C, *Λ, nc, nc).
-        T : (B, n_offsets - 1, *Λ, nc, nc) — non-zero offsets only.
+        T : (B, n_offsets - 1, *Λ, nc, nc) — non-zero offsets only. May be
+            ``None`` when the block has no transport branches (pure L-Bilin).
         T_dag : optional precomputed dagger of T (shared across stacked
                 blocks by ``GELT.attn``).
         """
-        expected_external = self.n_offsets - 1
-        assert T.shape[1] == expected_external, (
-            f"Expected T.shape[1] == {expected_external} (non-zero offsets), "
-            f"got {T.shape[1]}"
-        )
-
-        nc = W.shape[-1]
-        B = T.shape[0]
-        spatial = T.shape[2:-2]
-        # Synthesise the identity transport for the zero offset and
-        # prepend it so T lines up with our self-offset-included
-        # offsets list.
-        identity_T = (
-            torch.eye(nc, dtype=T.dtype, device=T.device)
-            .view(1, 1, *([1] * self.D), nc, nc)
-            .expand(B, 1, *spatial, nc, nc)
-        )
-        T = torch.cat([identity_T, T], dim=1)
-        if T_dag is None:
-            T_dag = self.gaugegroup.dagger(T)
-        else:
-            T_dag = torch.cat([identity_T, T_dag], dim=1)
-
         # Channel augmentation: (B, C, *Λ, nc, nc) -> (B, C', *Λ, nc, nc).
         W_aug = _augment(W, self.gaugegroup, self._identity)
         trailing = W_aug.shape[2:]  # (*Λ, nc, nc)
 
-        # Shared transport bank: T(x,r) · W'(x+r) · T†(x,r) for every r,
-        # consumed by branches A and B. Branch C is purely local and
-        # doesn't need transports.
-        W_tilde = self._transport_bank(W_aug, T, T_dag)
+        # Transport bank — built once and shared by branches A and B. Skip
+        # entirely when this block has no transport branches (pure L-Bilin),
+        # which lets the block run without a T input.
+        W_tilde = None
+        if self._needs_transport:
+            expected_external = self.n_offsets - 1
+            assert T is not None and T.shape[1] == expected_external, (
+                f"Expected T with {expected_external} non-zero offsets, "
+                f"got {None if T is None else T.shape[1]}"
+            )
+            nc = W.shape[-1]
+            B = T.shape[0]
+            spatial = T.shape[2:-2]
+            # Synthesise the identity transport for the zero offset and
+            # prepend it so T lines up with our self-offset-included
+            # offsets list.
+            identity_T = (
+                torch.eye(nc, dtype=T.dtype, device=T.device)
+                .view(1, 1, *([1] * self.D), nc, nc)
+                .expand(B, 1, *spatial, nc, nc)
+            )
+            T = torch.cat([identity_T, T], dim=1)
+            if T_dag is None:
+                T_dag = self.gaugegroup.dagger(T)
+            else:
+                T_dag = torch.cat([identity_T, T_dag], dim=1)
+            W_tilde = self._transport_bank(W_aug, T, T_dag)
 
-        A_out = self.branch_A(W_tilde, trailing)
-        B_out = self.branch_B(W_aug, W_tilde, trailing)
-        C_out = self.branch_C(W_aug, trailing)
+        # Accumulate active-branch contributions. Inactive branches consume
+        # no compute and no parameters — for pattern="A,C,A,C,..." each
+        # block runs only one branch.
+        W_branch = None
+        if self.has_A:
+            W_branch = self.alpha_A * self.branch_A(W_tilde, trailing)
+        if self.has_B:
+            B_out = self.alpha_B * self.branch_B(W_aug, W_tilde, trailing)
+            W_branch = B_out if W_branch is None else W_branch + B_out
+        if self.has_C:
+            C_out = self.alpha_C * self.branch_C(W_aug, trailing)
+            W_branch = C_out if W_branch is None else W_branch + C_out
 
-        # Mixed residual update: α_A·A + α_B·B + α_C·C added to W, then
-        # L-Act gate, then outer ReZero. At α=0 the block is exactly
-        # W → W; non-zero outer α blends in the gated mixed branches.
-        W_branch = (
-            self.alpha_A * A_out + self.alpha_B * B_out + self.alpha_C * C_out
-        )
-        W_res = W + W_branch
-        W_act = _l_act_gate(W_res, self.gate)
-        return W + self.alpha * (W_act - W)
+        # Two-axis switch for L-CNN replication:
+        #   residual_skip=True, l_act=True  → original routed block (default).
+        #   residual_skip=False, l_act=True → output = g(W_branch)·W_branch
+        #                                     (drops the residual; L-CNN-like
+        #                                     "replace W with the branch output").
+        #   residual_skip=False, l_act=False → output = W_branch (strict L-CNN
+        #                                     L-Conv / L-Bilin layer, no gate).
+        if self.residual_skip:
+            W_res = W + W_branch
+            W_out = _l_act_gate(W_res, self.gate) if self.l_act else W_res
+            return W + self.alpha * (W_out - W)
+        else:
+            return _l_act_gate(W_branch, self.gate) if self.l_act else W_branch
 
 
 class GELT(nn.Module):
@@ -451,6 +501,22 @@ class GELT(nn.Module):
         mlp_dropout: float = 0.0,
         trilinear: bool = False,
         constructive_A: bool = True,
+        # ----- L-CNN-replication knobs --------------------------------------
+        # ``pattern``: comma-separated string of per-layer branch sets, e.g.
+        #   "A,C,A,C,A,C,A,C"  → alternating L-Conv / L-Bilin (L-CNN style),
+        #   "AC,AC,AC,AC"      → 4 blocks each running A and C in parallel,
+        #   "ABC,ABC,ABC,ABC"  → default full three-branch routed block.
+        # When ``None`` (default) every layer runs all three branches (back-
+        # compat with the original block). Setting ``pattern`` overrides
+        # ``n_layers``; otherwise we expand to ``["ABC"] * n_layers``.
+        pattern: str | list[str] | None = None,
+        # ``residual_skip`` / ``l_act``: drop the residual ReZero gate and/or
+        # the L-Act post-nonlinearity inside every block. ``residual_skip=False``
+        # plus ``l_act=False`` gives strict L-CNN layers (output = α·branch(W),
+        # no residual add, no gate) — useful for the "is this just L-CNN?"
+        # reproduction check.
+        residual_skip: bool = True,
+        l_act: bool = True,
         # back-compat aliases so existing training scripts keep working
         gemhsa_layers: int | None = None,
     ):
@@ -471,10 +537,23 @@ class GELT(nn.Module):
             )
         self.reduction = reduction
 
-        if n_layers is None:
-            if gemhsa_layers is None:
-                raise ValueError("Must specify n_layers (or gemhsa_layers).")
-            n_layers = gemhsa_layers
+        # Resolve the layer pattern. When ``pattern`` is None we fall back to
+        # the old "all blocks are full three-branch" behaviour driven by
+        # ``n_layers`` (and ``gemhsa_layers`` alias).
+        if pattern is None:
+            if n_layers is None:
+                if gemhsa_layers is None:
+                    raise ValueError("Must specify n_layers, gemhsa_layers, or pattern.")
+                n_layers = gemhsa_layers
+            pattern_list = ["ABC"] * n_layers
+        else:
+            if isinstance(pattern, str):
+                pattern_list = [s.strip() for s in pattern.split(",") if s.strip()]
+            else:
+                pattern_list = [str(s).strip() for s in pattern]
+            if not pattern_list:
+                raise ValueError("pattern must contain at least one layer spec.")
+        self.pattern = pattern_list
 
         # ChannelLift: identity-extend init when d_model == d_input.
         self.lift = ChannelLift(d_input, d_model, dtype=dtype)
@@ -498,8 +577,11 @@ class GELT(nn.Module):
                     init_scale=init_scale,
                     trilinear=trilinear,
                     constructive_A=constructive_A,
+                    branches=br,
+                    residual_skip=residual_skip,
+                    l_act=l_act,
                 )
-                for _ in range(n_layers)
+                for br in pattern_list
             ]
         )
         # Back-compat alias for the per-layer α diagnostic in
@@ -522,9 +604,15 @@ class GELT(nn.Module):
 
     def forward(self, W, T):
         first_layer = self.blocks[0]
-        # All RoutedBlocks expose w_QKV_B as their first attention weight;
-        # pick its dtype as the model dtype.
-        w_dtype = first_layer.w_QKV_B.dtype
+        # Pick a model dtype from whichever projection the first block has —
+        # a layer might be pure L-Conv (only w_A), pure L-Bilin (only w_QV_C),
+        # or attention-bearing (w_QKV_B). All branches share the same dtype.
+        if hasattr(first_layer, "w_QKV_B"):
+            w_dtype = first_layer.w_QKV_B.dtype
+        elif hasattr(first_layer, "w_A"):
+            w_dtype = first_layer.w_A.dtype
+        else:
+            w_dtype = first_layer.w_QV_C.dtype
         if W.dtype != w_dtype:
             W = W.to(w_dtype)
         if T.dtype != w_dtype:
