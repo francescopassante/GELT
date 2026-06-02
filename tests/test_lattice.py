@@ -13,6 +13,7 @@ from gelt.lattice import (
     link_gauge_transformation,
     plaquette_tensor,
     random_links,
+    topological_charge_density,
 )
 
 
@@ -97,6 +98,50 @@ def test_plaquette_covariance_z2(z2, L, D):
         f"Plaquette covariance P'=ΩPΩ† violated (L={L}, D={D}); "
         f"max diff = {(P_prime - P_expected).abs().max().item()}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Topological charge density (D=4 only)
+# ---------------------------------------------------------------------------
+
+
+def test_topo_charge_invariant_su2():
+    """q_x is gauge invariant: F→ΩFΩ† leaves Tr[FF] unchanged (SU(2), complex128)."""
+    L, D = 4, 4
+    su2 = SU(2)
+    torch.manual_seed(0)
+    U = random_links(L, D, su2, dtype=torch.complex128)
+    omega = _random_omega(L, D, su2, torch.complex128, seed=4)
+
+    q_before = topological_charge_density(U.unsqueeze(0), su2)[0]
+    U_prime = link_gauge_transformation(U, omega, su2)
+    q_after = topological_charge_density(U_prime.unsqueeze(0), su2)[0]
+
+    assert torch.allclose(q_before, q_after, atol=1e-12), (
+        f"Topological charge density not gauge invariant (SU(2)); "
+        f"max diff = {(q_before - q_after).abs().max().item()}"
+    )
+
+
+def test_topo_charge_nonzero_su2_zero_z2(z2):
+    """q_x is generically nonzero for SU(2) but identically zero for Z₂."""
+    L, D = 4, 4
+    su2 = SU(2)
+    torch.manual_seed(0)
+    U_su2 = random_links(L, D, su2, dtype=torch.complex128)
+    q_su2 = topological_charge_density(U_su2.unsqueeze(0), su2)[0]
+    assert q_su2.abs().max() > 1e-6, "Expected nonzero q_x for SU(2) links."
+
+    U_z2 = random_links(L, D, z2, dtype=torch.float64)
+    q_z2 = topological_charge_density(U_z2.unsqueeze(0), z2)[0]
+    assert q_z2.abs().max() < 1e-12, "Expected identically zero q_x for Z₂ links."
+
+
+def test_topo_charge_requires_4d(z2):
+    """Topological charge density rejects D≠4."""
+    U = random_links(4, 3, z2, dtype=torch.float64).unsqueeze(0)
+    with pytest.raises(ValueError, match="D=4"):
+        topological_charge_density(U, z2)
 
 
 # ---------------------------------------------------------------------------

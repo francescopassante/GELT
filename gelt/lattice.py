@@ -176,6 +176,99 @@ def action(
     return beta * (n_plaq_per_config - re_tr_over_nc.flatten(1).sum(1))
 
 
+def _permutation_sign(perm: Tuple[int, ...]) -> int:
+    """Sign (±1) of a permutation, by counting inversions."""
+    sign = 1
+    p = list(perm)
+    n = len(p)
+    for i in range(n):
+        for j in range(i + 1, n):
+            if p[i] > p[j]:
+                sign = -sign
+    return sign
+
+
+def topological_charge_density(
+    U: torch.Tensor,
+    gaugegroup: GaugeGroup,
+    plaquettes: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """Plaquette ("naive") topological charge density q_x at every site.
+
+        q_x = (ε_{μνρσ} / 32π²) Tr[ F_{μν}(x) · F_{ρσ}(x) ],
+        F_{μν}(x) = (P_{μν}(x) − P_{μν}†(x)) / (2i),
+
+    summed over all four indices μ, ν, ρ, σ ∈ {0,1,2,3}.  ``F_{μν}`` is the
+    Hermitian (anti-Hermitian-part-of-the-plaquette) lattice field strength
+    built from the 1×1 plaquette ``P_{μν}``; it is antisymmetric in its plane
+    indices (``F_{νμ} = −F_{μν}``, since ``P_{νμ} = P_{μν}†``).
+
+    Defined only in D = 4 — the Levi-Civita symbol ε_{μνρσ} needs exactly four
+    directions. The density vanishes identically for Z₂/real links (``P`` is
+    its own dagger), and the total charge ``Q = Σ_x q_x`` only carries
+    topological meaning for non-abelian SU(N≥2).
+
+    Parameters
+    ----------
+    U
+        Batched link tensor ``(B, D, *Λ, nc, nc)`` (used to read D, and to
+        compute the plaquettes if ``plaquettes`` is not supplied).
+    gaugegroup
+        Gauge group (used for the dagger).
+    plaquettes
+        Optional precomputed ``(B, n_pairs, *Λ, nc, nc)`` plaquette tensor.
+
+    Returns
+    -------
+    Real tensor of shape ``(B, *Λ)`` — q_x at every site of every config.
+    """
+    D = U.shape[1]
+    if D != 4:
+        raise ValueError(
+            f"Topological charge density is defined only in D=4, got D={D}."
+        )
+    P = plaquettes if plaquettes is not None else plaquette_tensor(U, gaugegroup)
+
+    # F_{μν} = (P_{μν} − P_{μν}†)/(2i) for each μ<ν plane (the order
+    # plaquette_tensor stacks them in); fill in F_{νμ} = −F_{μν}. Dividing by
+    # the imaginary 2i promotes Z₂'s real (and identically antisymmetric-zero)
+    # plaquettes to complex, matching SU(N).
+    pairs = [(mu, nu) for mu in range(D) for nu in range(mu + 1, D)]
+    F: Dict[Tuple[int, int], torch.Tensor] = {}
+    for idx, (mu, nu) in enumerate(pairs):
+        Pmn = P[:, idx]
+        f = (Pmn - gaugegroup.dagger(Pmn)) / 2j
+        F[(mu, nu)] = f
+        F[(nu, mu)] = -f
+
+    # q_x = (1/32π²) Σ_{μνρσ} ε_{μνρσ} Tr[F_{μν} F_{ρσ}]. itertools.permutations
+    # enumerates exactly the 24 all-distinct index tuples (every other term has
+    # ε = 0). The imaginary parts cancel in the antisymmetric sum; take .real.
+    q: Optional[torch.Tensor] = None
+    for mu, nu, rho, sigma in itertools.permutations(range(D)):
+        sign = _permutation_sign((mu, nu, rho, sigma))
+        prod = F[(mu, nu)] @ F[(rho, sigma)]
+        tr = prod.diagonal(dim1=-2, dim2=-1).sum(dim=-1)  # (B, *Λ), complex
+        term = sign * tr
+        q = term if q is None else q + term
+
+    return q.real / (32.0 * math.pi**2)
+
+
+def topological_charge(
+    U: torch.Tensor,
+    gaugegroup: GaugeGroup,
+    plaquettes: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """Total topological charge ``Q = Σ_x q_x`` (one scalar per config).
+
+    Sums :func:`topological_charge_density` over all sites; returns shape
+    ``(B,)``. This is the scalar regression target analogous to :func:`action`.
+    """
+    q = topological_charge_density(U, gaugegroup, plaquettes=plaquettes)
+    return q.flatten(1).sum(1)
+
+
 def link_gauge_transformation(
     U: torch.Tensor,
     omega: torch.Tensor,
