@@ -453,7 +453,7 @@ def train_model(
 
 if __name__ == "__main__":
     torch.manual_seed(0)
-    from gelt import SU, Z2, build_plaquette_datasets
+    from gelt import SU, Z2, build_plaquette_datasets, load_plaquette_datasets
 
     D = 2
     L = 8
@@ -479,7 +479,7 @@ if __name__ == "__main__":
         "gaugegroup": gaugegroup,
         "R": R,
         "splits": [0.7, 0.15, 0.15],
-        "save": False,
+        "save": True,
         "prefix": f"su2_plaquette_L{L}_D{D}_N1000_beta{beta}_R{R}_wloop{loop_R}x{loop_T}_singlepath",
         "structured": True,
         # SU(2) Metropolis via _SWEEP_FN[SU] = su2_metropolis_sweep.
@@ -555,9 +555,20 @@ if __name__ == "__main__":
         "d_model": 16,
     }
 
-    train_dataset, val_dataset, test_dataset = build_plaquette_datasets(
-        **dataset_parameters
-    )
+    # Reuse a previously saved dataset if one exists under this prefix;
+    # otherwise generate it now (save=True writes it for next time).
+    from pathlib import Path
+
+    _prefix = dataset_parameters["prefix"]
+    if all(
+        Path(f"datasets/{s}_dataset_{_prefix}.pt").exists()
+        for s in ("train", "val", "test")
+    ):
+        train_dataset, val_dataset, test_dataset = load_plaquette_datasets(_prefix)
+    else:
+        train_dataset, val_dataset, test_dataset = build_plaquette_datasets(
+            **dataset_parameters
+        )
 
     # Standardize the target (notes/architecture.html §6.1). Compute (μ_y, σ_y)
     # on the train split, then mutate the shared full-y tensor in place — all

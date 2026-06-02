@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Callable, Optional, Sequence
 
 import torch
-from torch.utils.data import TensorDataset, random_split
+from torch.utils.data import Subset, TensorDataset, random_split
 
 from gelt.lattice import (
     GaugeGroup,
@@ -109,6 +109,42 @@ def split(X, y, splits, save, prefix, T: Optional[torch.Tensor] = None):
         torch.save(_subset(val.indices), out_dir / f"val_dataset_{prefix}.pt")
         torch.save(_subset(test.indices), out_dir / f"test_dataset_{prefix}.pt")
 
+    return train, val, test
+
+
+def load_plaquette_datasets(prefix: str, datasets_dir: str = "datasets"):
+    """Reload a ``(train, val, test)`` triple previously written by ``save=True``.
+
+    Mirrors the return structure of :func:`build_plaquette_datasets`: the three
+    splits are :class:`~torch.utils.data.Subset` views over a *single* shared
+    ``TensorDataset``, so the in-place target standardization the train scripts
+    do on the train split (``train.dataset.tensors[-1][train.indices]``)
+    propagates to val/test exactly as it does on a freshly built dataset.
+    """
+    out_dir = Path(datasets_dir)
+    order = ("train", "val", "test")
+    splits = {}
+    for name in order:
+        path = out_dir / f"{name}_dataset_{prefix}.pt"
+        if not path.exists():
+            raise FileNotFoundError(f"No saved dataset at {path}.")
+        # Saved objects are TensorDataset pickles, not plain tensors.
+        splits[name] = torch.load(path, weights_only=False)
+
+    # Concatenate the splits back into one TensorDataset and re-derive contiguous
+    # index ranges, restoring the shared-underlying-tensor property that
+    # random_split gives a freshly built dataset.
+    n_tensors = len(splits["train"].tensors)
+    combined = [
+        torch.cat([splits[name].tensors[i] for name in order]) for i in range(n_tensors)
+    ]
+    full = TensorDataset(*combined)
+
+    n_train, n_val = len(splits["train"]), len(splits["val"])
+    n_test = len(splits["test"])
+    train = Subset(full, list(range(0, n_train)))
+    val = Subset(full, list(range(n_train, n_train + n_val)))
+    test = Subset(full, list(range(n_train + n_val, n_train + n_val + n_test)))
     return train, val, test
 
 

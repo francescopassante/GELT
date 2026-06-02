@@ -7,7 +7,7 @@ instead of 'from gelt.blocks import GELT'.
 
 from .blocks import GELT
 from .cnn_baseline import LatticeCNN
-from .data import build_plaquette_datasets
+from .data import build_plaquette_datasets, load_plaquette_datasets
 from .lattice import (
     SU,
     Z2,

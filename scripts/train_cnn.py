@@ -106,7 +106,7 @@ def train_model(
 
 if __name__ == "__main__":
     torch.manual_seed(0)
-    from gelt import SU, Z2, build_plaquette_datasets
+    from gelt import SU, Z2, build_plaquette_datasets, load_plaquette_datasets
 
     D = 3
     L = 8
@@ -123,7 +123,7 @@ if __name__ == "__main__":
         "gaugegroup": gaugegroup,
         "R": None,
         "splits": [0.7, 0.15, 0.15],
-        "save": False,
+        "save": True,
         "prefix": f"z2_plaquette_L{L}_D{D}_N2000_beta{beta}_wloop{loop_R}x{loop_T}",
         "structured": False,
         "sampler": haar_ensemble,
@@ -142,9 +142,20 @@ if __name__ == "__main__":
         "checkpoint_path": "best_cnn.pth",
     }
 
-    train_dataset, val_dataset, test_dataset = build_plaquette_datasets(
-        **dataset_parameters
-    )
+    # Reuse a previously saved dataset if one exists under this prefix;
+    # otherwise generate it now (save=True writes it for next time).
+    from pathlib import Path
+
+    _prefix = dataset_parameters["prefix"]
+    if all(
+        Path(f"datasets/{s}_dataset_{_prefix}.pt").exists()
+        for s in ("train", "val", "test")
+    ):
+        train_dataset, val_dataset, test_dataset = load_plaquette_datasets(_prefix)
+    else:
+        train_dataset, val_dataset, test_dataset = build_plaquette_datasets(
+            **dataset_parameters
+        )
 
     # Derive in_channels from the data so it stays in sync with structured/dtype/group:
     # for SU(N) with structured=False, flatten_color yields 2 · n_pairs · nc² channels.
