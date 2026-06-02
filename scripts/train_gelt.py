@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.optim as optim
 from tqdm import tqdm
 
-from gelt import haar_ensemble
+from gelt import haar_ensemble, mcmc_ensemble
 from gelt.blocks_rope import GELT
 from gelt.lattice import rectangular_wilson_loop
 
@@ -139,17 +139,18 @@ if __name__ == "__main__":
     # directly — every site contributes a sample, and the equivariant trace
     # head outputs the locally gauge-invariant quantity at x.
     loop_R, loop_T, mu, nu = 3, 3, 0, 1
+    N = 1000
     dataset_parameters = {
-        "N": 1000,
+        "N": N,
         "D": D,
         "L": L,
         "gaugegroup": gaugegroup,
         "R": R,
         "splits": [0.7, 0.15, 0.15],
         "save": True,
-        "prefix": f"z2_plaquette_L{L}_D{D}_N2000_beta{beta}_R{R}_wloop{loop_R}x{loop_T}",
+        "prefix": f"{gaugegroup}_L{L}_D{D}_N{N}_beta{beta}_R{R}_wloop{loop_R}x{loop_T}",
         "structured": True,
-        "sampler": haar_ensemble,
+        "sampler": mcmc_ensemble,
         "beta": beta,
         "target": partial(rectangular_wilson_loop, R=loop_R, T=loop_T, mu=mu, nu=nu),
         "n_therm": 200,
@@ -181,12 +182,12 @@ if __name__ == "__main__":
         "R": R,
         "nhead": 1,
         "gemhsa_layers": 4,
-        "d_qkv": 16,
+        "d_qkv": 4,
         "gate": "softplus",
         # Z2 can run as a real model. SU(N) must stay complex; otherwise
         # GELT.forward would cast complex plaquettes/transports down to real.
         "dtype": model_dtype,
-        "mlp_hidden": 32,
+        "mlp_hidden": 3,
         "mlp_out": 1,
         # Per-site target → no spatial reduction. Use "sum" for the Wilson
         # action, "mean" for the average ⟨W⟩.
@@ -204,12 +205,12 @@ if __name__ == "__main__":
         "alpha_init": 0.5,
         "init_scale": 10,
         "qk_init_scale": 1.0,
-        "mlp_zero_init": False,
+        "mlp_zero_init": True,
         # Widen the residual-stream beyond the small plaquette channel count
         # D(D-1)/2 ∈ {1, 3, 6} via the front-end ChannelLift. Decouples the
         # GEMHSA working width from the input dimensionality so intermediate
         # layers don't collapse to 1–6 channels.
-        "d_model": 8,
+        "d_model": 4,
     }
 
     # Reuse a previously saved dataset if one exists under this prefix;
