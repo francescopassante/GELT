@@ -8,6 +8,7 @@ for U(1)/SU(2)/SU(3) without restructuring the sweep loop.
 from typing import List, Optional, Tuple
 
 import torch
+from tqdm import tqdm
 
 from gelt.lattice import SU, Z2, GaugeGroup, random_links
 
@@ -284,6 +285,7 @@ def mcmc_ensemble(
     sweep_fn=None,
     dtype: torch.dtype = torch.float32,
     device: Optional[torch.device] = None,
+    progress: bool = True,
 ) -> Tuple[torch.Tensor, float]:
     """Generate a thermalized ensemble of gauge field configurations.
 
@@ -298,6 +300,8 @@ def mcmc_ensemble(
     n_configs  : number of configurations to collect
     n_therm    : thermalisation sweeps before collection begins
     n_skip     : sweeps between collected configurations (decorrelation)
+    progress   : show a tqdm progress bar over the thermalisation and
+                 production sweeps (disable for quiet runs / tests)
     sweep_fn   : single-sweep callable ``(U, gaugegroup, beta) → (U_new, acc)``.
                  If ``None``, dispatches automatically via ``_SWEEP_FN[type(gaugegroup)]``.
                  To pin a custom sweep from a call site that only accepts a sampler
@@ -331,12 +335,19 @@ def mcmc_ensemble(
 
     U = random_links(L, D, gaugegroup, dtype=dtype).to(device)
 
-    for _ in range(n_therm):
+    for _ in tqdm(
+        range(n_therm), desc="thermalising", disable=not progress, leave=False
+    ):
         U, _ = sweep_fn(U, gaugegroup, beta)
 
     configs: List[torch.Tensor] = []
     acc_rates: List[float] = []
-    for i in range(n_configs * n_skip):
+    for i in tqdm(
+        range(n_configs * n_skip),
+        desc=f"sampling {n_configs} configs",
+        disable=not progress,
+        leave=False,
+    ):
         U, acc = sweep_fn(U, gaugegroup, beta)
         if (i + 1) % n_skip == 0:
             configs.append(U.cpu())

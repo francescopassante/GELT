@@ -7,7 +7,7 @@ from tqdm import tqdm
 
 from gelt import haar_ensemble, mcmc_ensemble
 from gelt.blocks_rope import GELT
-from gelt.lattice import rectangular_wilson_loop
+from gelt.lattice import topological_charge_density
 
 """
 ========================================================================================
@@ -127,18 +127,21 @@ if __name__ == "__main__":
     torch.manual_seed(0)
     from gelt import SU, Z2, build_plaquette_datasets, load_plaquette_datasets
 
-    D = 2
-    L = 8
+    # Topological charge density q_x is defined only in D=4 (the ε_μνρσ needs
+    # four directions) and is non-trivial only for non-abelian SU(N≥2); SU(2)
+    # is the minimal physically meaningful case. L=4 keeps the 4D ensemble
+    # tractable on a laptop (4⁴ = 256 sites/config).
+    D = 4
+    L = 4
     gaugegroup = SU(2)
     R = 1
     model_dtype = torch.float32 if isinstance(gaugegroup, Z2) else torch.complex64
 
     beta = 1
-    # Per-site Wilson loop target: y has shape (B, *Λ). Paired with
-    # ``reduction="none"`` on GELT, the model's per-site readout is supervised
-    # directly — every site contributes a sample, and the equivariant trace
-    # head outputs the locally gauge-invariant quantity at x.
-    loop_R, loop_T, mu, nu = 3, 3, 0, 1
+    # Per-site topological charge density target: q_x has shape (B, *Λ). Paired
+    # with ``reduction="none"`` on GELT, the model's per-site readout is
+    # supervised directly — every site contributes a sample, and the equivariant
+    # trace head outputs the locally gauge-invariant quantity at x.
     N = 1000
     dataset_parameters = {
         "N": N,
@@ -148,11 +151,11 @@ if __name__ == "__main__":
         "R": R,
         "splits": [0.7, 0.15, 0.15],
         "save": True,
-        "prefix": f"{gaugegroup}_L{L}_D{D}_N{N}_beta{beta}_R{R}_wloop{loop_R}x{loop_T}",
+        "prefix": f"{gaugegroup}_L{L}_D{D}_N{N}_beta{beta}_R{R}_topo",
         "structured": True,
         "sampler": mcmc_ensemble,
         "beta": beta,
-        "target": partial(rectangular_wilson_loop, R=loop_R, T=loop_T, mu=mu, nu=nu),
+        "target": topological_charge_density,
         "n_therm": 200,
         "n_skip": 5,
         "dtype": torch.complex64,
@@ -169,12 +172,12 @@ if __name__ == "__main__":
         "checkpoint_path": "best_gelt.pth",
     }
 
-    # Debug-capacity GELT for the per-site Wilson loop target. The 2×2 loop is
-    # quartic in plaquettes (W = P·P·P·P in Z₂), so the model needs depth and
-    # head count to compose multi-site products. The earlier matched-capacity
-    # config (nhead=2, d_qkv=8, gemhsa_layers=2, mlp_hidden=16) was sized for
-    # the linear-in-P action target and is too small for Wilson loops — leave
-    # the matched shootout for after the per-site path is validated.
+    # Debug-capacity GELT for the per-site topological charge density target.
+    # q_x is *quadratic* in the on-site plaquettes (a single matrix bilinear
+    # Tr[F_μν F_ρσ], F = (P−P†)/2i), so in principle one GEMHSA value path
+    # suffices — the depth/head count here is generous slack for the softmax
+    # self-selection and the L-Act gate, not an algebraic requirement. Note
+    # H·d_qkv ≥ 3 is needed to hold the three dual-plane products.
     model_parameters = {
         "gaugegroup": gaugegroup,
         "L": L,
@@ -194,7 +197,7 @@ if __name__ == "__main__":
         "reduction": "none",
         # Warm-start the ReZero α and drop the MLP fc2 zero-init: the default
         # α=0 + fc2=0 combo traps training at the constant-mean predictor on
-        # the 2×2 Wilson loop target. α=0.5 puts the multiplicative path at
+        # a per-site bilinear target like q_x. α=0.5 puts the multiplicative path at
         # ~half the residual stream (α=0.05 left it at ~4% and the MLP just
         # kept reading the raw plaquette at site x, never using the multi-
         # site contribution). init_scale controls σ_V (value path — kept
@@ -209,8 +212,9 @@ if __name__ == "__main__":
         # Widen the residual-stream beyond the small plaquette channel count
         # D(D-1)/2 ∈ {1, 3, 6} via the front-end ChannelLift. Decouples the
         # GEMHSA working width from the input dimensionality so intermediate
-        # layers don't collapse to 1–6 channels.
-        "d_model": 4,
+        # layers don't collapse to 1–6 channels. In D=4 the plaquette input is
+        # already 6 channels, so d_model must be ≥ 6.
+        "d_model": 8,
     }
 
     # Reuse a previously saved dataset if one exists under this prefix;
@@ -308,7 +312,7 @@ if __name__ == "__main__":
     # ``test_loss`` and the saved arrays are in normalized space (y was
     # standardized in place above). R² is invariant under linear label
     # transforms, so we can compute it either way. Denormalize to show the
-    # scatter plot in physical Wilson-action units.
+    # scatter plot in physical (un-standardized) topological-charge-density units.
     all_targets = all_targets * sigma_y + mu_y
     all_outputs = all_outputs * sigma_y + mu_y
     test_label_var = all_targets.var(unbiased=False).item()
