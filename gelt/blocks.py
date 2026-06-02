@@ -22,8 +22,9 @@ class GEMHSA(nn.Module):
     Pipeline:
 
     1. **augment + project.** Append the on-site identity and daggers
-    (C → 2C + 1), then project to per-head Q, K, V of
-       shape (B, H, d_qkv, *Λ, nc, nc).
+    (C → 2C + 1), then project to per-head Q_s, K, V, Q_v of
+       shape (B, H, d_qkv, *Λ, nc, nc). There are two independent query
+       projections: Q_s for the score path and Q_v for the value path.
     2. **adjoint transport.** For every Δx in the L1-ball of radius R, gather
        the neighbour fields K(x+Δx), V(x+Δx) and apply the
        shortest-path-averaged transport: K'(x+Δx->x) = T(x) · K(x+Δx) · T†(x)
@@ -36,10 +37,10 @@ class GEMHSA(nn.Module):
     4. **softmax** over the offset axis (normalizes over neighbours per
        site, per head).
     5. **multiplicative value path.** Output of the attention head is
-       Σ_i α_i · Q†(x) · V'_i(x) — both factors are covariant at x, so the
+       Σ_i α_i · Q_v†(x) · V'_i(x) — both factors are covariant at x, so the
        product is covariant; this is the L-Bilin-baked-in step that gives the
-       loop-doubling expressivity argument.
-       NOTE: could use another projection for Q, more general
+       loop-doubling expressivity argument. Q_v is its own projection,
+       independent of the score-path query Q_s.
     6. **channel mix back to C** via a complex linear (H, d_qkv) → C.
         NOTE: C is the model's working width inside the GEMHSA stack. It is
         decoupled from the (small) plaquette input count D(D-1)/2 ∈ {1, 3, 6}
@@ -135,23 +136,34 @@ class GEMHSA(nn.Module):
         self.register_buffer("_identity", identity)
 
         # Fused QKV projection.
-        # a single (3·H·d, C') @ (B, C', N) matmul instead of three separate ones.
-        # Q/K and V are initialized at DIFFERENT scales:
+        # A single (4·H·d, C') @ (B, C', N) matmul instead of four separate ones.
+        # There are now TWO independent Q projections:
+        #   Q_s — the score-path query, paired with K in Re Tr[Q_s†·K̃].
+        #   Q_v — the value-path query, the left factor in Q_v†·Ṽ.
+        # Decoupling them lets the score (which neighbour to attend to) and the
+        # value bilinear (what loop to build at x) use different on-site
+        # combinations of the augmented channels — the L-Bilin loop-doubling
+        # factor no longer has to double as the attention-similarity query.
+        # The projections are initialized at scales matching their roles:
         #   σ_V  = 0.02·init_scale / √C'  (small — keeps the value path tiny so
         #                                  the residual stream W + W_act is near
         #                                  identity at init, preserving stackability)
         #   σ_QK = qk_init_scale  / √C'   (standard transformer scale by default)
-        # The score Re Tr[Q†·K̃] / √(d·nc) is O(σ_QK²·|W|²) at init. With the
+        # The score Re Tr[Q_s†·K̃] / √(d·nc) is O(σ_QK²·|W|²) at init. With the
         # old tied σ ≈ 0.02·init_scale/√C', score variance ~ σ⁴ ~ 1e-8 collapsed
         # the softmax to uniform on epoch 0 — no axis-selectivity signal could
         # ever start propagating to Q/K. Decoupling lets the score channel sit
-        # at O(1) magnitude immediately while V stays small.
+        # at O(1) magnitude immediately while V stays small. Q_v rides with the
+        # score-path scale σ_QK so the value bilinear Q_v†·Ṽ ~ σ_QK·σ_V stays
+        # small at init exactly as the old shared-Q value path did.
+        # Order along axis 0: [Q_s, K, V, Q_v].
         sigma_v = 0.02 * init_scale / math.sqrt(self.C_prime)
         sigma_qk = qk_init_scale / math.sqrt(self.C_prime)
-        w_qkv = torch.randn(3, self.H, self.d_qkv, self.C_prime, dtype=dtype)
-        w_qkv[0] *= sigma_qk  # Q
+        w_qkv = torch.randn(4, self.H, self.d_qkv, self.C_prime, dtype=dtype)
+        w_qkv[0] *= sigma_qk  # Q_s (score query)
         w_qkv[1] *= sigma_qk  # K
         w_qkv[2] *= sigma_v  # V
+        w_qkv[3] *= sigma_qk  # Q_v (value query)
         self.w_QKV = nn.Parameter(w_qkv)
         # channel mix back to C output channels.
         sigma_mix = 0.02 * init_scale / math.sqrt(self.H * self.d_qkv)
@@ -221,8 +233,11 @@ class GEMHSA(nn.Module):
         inv_perm = (0, 3 + D, 4 + D, 1) + tuple(range(2, 2 + D)) + (2 + D, 5 + D)
         return out.permute(*inv_perm)
 
-    def attend(self, Q, K, V, T, T_dag):
+    def attend(self, Q, K, V, Q_v, T, T_dag):
         """Fully batched gauge-equivariant attention over the L1-ball.
+
+        ``Q`` is the score-path query and ``Q_v`` the independent value-path
+        query — two separate on-site projections of the augmented field.
 
         Single fused pass — no Python loop over offsets. Pipeline:
           1. Gather K(x+Δx_i), V(x+Δx_i)
@@ -230,8 +245,8 @@ class GEMHSA(nn.Module):
           3. Scalar score Re Σ_c Tr[Q_c† · K̃_c] / √(d_qkv·nc) computed as a
              Frobenius product, plus the per-(head, offset) bias.
           4. Softmax over the offset axis.
-          5. Value path Q† · V' — but α-weighted *before* the matmul
-             Σ_n α_n (Q† Ṽ_n) = Q† (Σ_n α_n Ṽ_n)
+          5. Value path Q_v† · V' — but α-weighted *before* the matmul
+             Σ_n α_n (Q_v† Ṽ_n) = Q_v† (Σ_n α_n Ṽ_n)
 
         ``T`` and ``T_dag`` are shared across all GEMHSA layers in a stacked
         GELT; the dagger is computed once at the GELT level and threaded in.
@@ -281,15 +296,16 @@ class GEMHSA(nn.Module):
         # over the d_qkv and the two color axes.
         alpha_b = alpha.unsqueeze(2).unsqueeze(-1).unsqueeze(-1)
         V_weighted = (alpha_b * V_tilde).sum(dim=3)  # (B, H, d_qkv, *Λ, nc, nc)
-        Q_dag = self.gaugegroup.dagger(Q)  # (B, H, d_qkv, *Λ, nc, nc)
+        Q_v_dag = self.gaugegroup.dagger(Q_v)  # (B, H, d_qkv, *Λ, nc, nc)
         # Two value-path branches with separate learnable scalar weights:
         #   alpha_attn * V_weighted              — transformer-style attention
-        #                                          sum (no Q† factor).
-        #   alpha_bilin * (Q† · V_weighted)      — L-Bilin loop-doubling step.
+        #                                          sum (no Q_v† factor).
+        #   alpha_bilin * (Q_v† · V_weighted)    — L-Bilin loop-doubling step.
         # Both are gauge-equivariant at x (V_weighted is the attention-weighted
-        # sum of transported V's; Q†·V_weighted multiplies on the left by Q†
-        # which transforms with Ω_x on both sides).
-        bilin = torch.matmul(Q_dag, V_weighted)  # (B, H, d_qkv, *Λ, nc, nc)
+        # sum of transported V's; Q_v†·V_weighted multiplies on the left by Q_v†
+        # which transforms with Ω_x on both sides). Q_v is a value-path query
+        # projection independent of the score-path query Q.
+        bilin = torch.matmul(Q_v_dag, V_weighted)  # (B, H, d_qkv, *Λ, nc, nc)
 
         # Diagnostic intermediates — read by scripts/train_gelt_diagnosis.py
         # to introspect per-layer attention state. Stored detached / no-grad so
@@ -299,6 +315,7 @@ class GEMHSA(nn.Module):
             self._last_score = score.detach()
             self._last_alpha = alpha.detach()
             self._last_Q_norm = Q.detach().abs().pow(2).mean().sqrt().item()
+            self._last_Q_v_norm = Q_v.detach().abs().pow(2).mean().sqrt().item()
             self._last_K_tilde_norm = K_tilde.detach().abs().pow(2).mean().sqrt().item()
             self._last_V_tilde_norm = V_tilde.detach().abs().pow(2).mean().sqrt().item()
             self._last_bilin_norm = bilin.detach().abs().pow(2).mean().sqrt().item()
@@ -353,15 +370,16 @@ class GEMHSA(nn.Module):
         B = W_aug.shape[0]
         trailing = W_aug.shape[2:]  # (*Λ, nc, nc)
 
-        # Fused QKV: a single (3·H·d, C') @ (B, C', N) matmul, then split.
+        # Fused QKV: a single (4·H·d, C') @ (B, C', N) matmul, then split.
         W_aug_flat = W_aug.view(B, self.C_prime, -1)
-        w_QKV_flat = self.w_QKV.view(3 * self.H * self.d_qkv, self.C_prime)
-        QKV = torch.matmul(w_QKV_flat, W_aug_flat)  # (B, 3·H·d, N)
-        QKV = QKV.view(B, 3, self.H, self.d_qkv, *trailing)
-        Q, K, V = QKV.unbind(dim=1)
+        w_QKV_flat = self.w_QKV.view(4 * self.H * self.d_qkv, self.C_prime)
+        QKV = torch.matmul(w_QKV_flat, W_aug_flat)  # (B, 4·H·d, N)
+        QKV = QKV.view(B, 4, self.H, self.d_qkv, *trailing)
+        Q, K, V, Q_v = QKV.unbind(dim=1)
 
-        # Transport, score, softmax, multiplicative value.
-        out = self.attend(Q, K, V, T, T_dag)  # (B, H, d_qkv, *Λ, nc, nc)
+        # Transport, score, softmax, multiplicative value. Q is the score-path
+        # query (Re Tr[Q†·K̃]); Q_v is the independent value-path query (Q_v†·Ṽ).
+        out = self.attend(Q, K, V, Q_v, T, T_dag)  # (B, H, d_qkv, *Λ, nc, nc)
 
         # Channel mix back to C output channels. Expressed as a single matmul
         # ``(C, H·d) @ (B, H·d, |Λ|·nc·nc) -> (B, C, |Λ|·nc·nc)``
