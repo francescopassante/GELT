@@ -18,7 +18,7 @@ from gelt import (
     local_gauge_transformation,
     random_links,
 )
-from gelt.blocks import GELT, GEMHSA, ChannelLift
+from gelt.blocks_bias import GELT, GEMHSA, ChannelLift
 
 
 def _unitary_omega(L, D, nc, seed):
@@ -52,7 +52,9 @@ def test_gemhsa_gauge_equivariance_sun():
     U_g = link_gauge_transformation(U, omega, gg)
     W_g = local_gauge_transformation(W, omega, gg)
 
-    T = build_transport_average(U.unsqueeze(0), R=R, gaugegroup=gg)  # (1, n_off, *Λ, nc, nc)
+    T = build_transport_average(
+        U.unsqueeze(0), R=R, gaugegroup=gg
+    )  # (1, n_off, *Λ, nc, nc)
     T_g = build_transport_average(U_g.unsqueeze(0), R=R, gaugegroup=gg)
 
     block = GEMHSA(gaugegroup=gg, L=L, D=D, R=R, d_input=C, nhead=H, dtype=dtype).to(
@@ -66,9 +68,9 @@ def test_gemhsa_gauge_equivariance_sun():
     out_g = block(W_g, T_g)
     expected = local_gauge_transformation(out, omega, gg)
 
-    assert torch.allclose(out_g, expected, atol=1e-9), (
-        f"max diff = {(out_g - expected).abs().max().item():.3e}"
-    )
+    assert torch.allclose(
+        out_g, expected, atol=1e-9
+    ), f"max diff = {(out_g - expected).abs().max().item():.3e}"
 
 
 def test_gemhsa_gauge_equivariance_softplus_gate():
@@ -200,16 +202,24 @@ def test_gelt_d_model_widened_gauge_equivariant():
     P_g = build_transport_average(U_g.unsqueeze(0), R=R, gaugegroup=gg)
 
     model = GELT(
-        gaugegroup=gg, L=L, D=D, R=R, nhead=2, gemhsa_layers=2,
-        d_qkv=4, dtype=dtype, d_model=8, reduction="none",
+        gaugegroup=gg,
+        L=L,
+        D=D,
+        R=R,
+        nhead=2,
+        gemhsa_layers=2,
+        d_qkv=4,
+        dtype=dtype,
+        d_model=8,
+        reduction="none",
     )
 
     y = model(X, P)
     y_g = model(X_g, P_g)
     # GELT readout is gauge invariant: y == y_g.
-    assert torch.allclose(y, y_g, atol=1e-9), (
-        f"max diff = {(y - y_g).abs().max().item():.3e}"
-    )
+    assert torch.allclose(
+        y, y_g, atol=1e-9
+    ), f"max diff = {(y - y_g).abs().max().item():.3e}"
 
 
 def test_gelt_z2_real_forward_backward():
@@ -240,4 +250,6 @@ def test_gelt_z2_real_forward_backward():
 
     out.square().mean().backward()
     for name, p in model.named_parameters():
-        assert p.grad is None or torch.isfinite(p.grad).all(), f"non-finite grad on {name}"
+        assert (
+            p.grad is None or torch.isfinite(p.grad).all()
+        ), f"non-finite grad on {name}"

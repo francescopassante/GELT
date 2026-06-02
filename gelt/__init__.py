@@ -5,7 +5,7 @@ users can access them directly from the top-level package, e.g. 'from gelt impor
 instead of 'from gelt.blocks import GELT'.
 """
 
-from .blocks import GELT
+from .blocks_bias import GELT
 from .cnn_baseline import LatticeCNN
 from .data import build_plaquette_datasets, load_plaquette_datasets
 from .lattice import (

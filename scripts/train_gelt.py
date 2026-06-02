@@ -6,7 +6,7 @@ import torch.optim as optim
 from tqdm import tqdm
 
 from gelt import haar_ensemble
-from gelt.blocks import GELT
+from gelt.blocks_rope import GELT
 from gelt.lattice import rectangular_wilson_loop
 
 """

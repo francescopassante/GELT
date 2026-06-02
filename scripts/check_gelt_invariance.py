@@ -9,7 +9,7 @@ from gelt import (
     plaquette_tensor,
     random_links,
 )
-from gelt.blocks import GELT
+from gelt.blocks_bias import GELT
 
 torch.manual_seed(0)
 L = 4
