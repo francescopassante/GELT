@@ -64,67 +64,6 @@ def _site_parity(spatial_shape: Tuple[int, ...], device: torch.device) -> torch.
     return sum(coords) % 2
 
 
-def metropolis_sweep(
-    U: torch.Tensor,
-    gaugegroup: GaugeGroup,
-    beta: float,
-) -> Tuple[torch.Tensor, float]:
-    """One full Metropolis sweep (all directions, both checkerboard parities).
-
-    For Z₂ the proposal is the unique non-identity element U' = −U. To extend
-    to U(1)/SU(N), replace the ``U_proposed = -U_mu`` line with a group-valued
-    random proposal drawn from a neighbourhood of U_mu.
-
-    Checkerboard structure: for a fixed direction μ, sites of the same parity
-    do not share any plaquette through same-direction links, so their updates
-    commute. The even sweep then the odd sweep is equivalent to a sequential
-    site-by-site update but fully vectorised.
-
-    Parameters
-    ----------
-    U          : ``(D, *Λ, nc, nc)`` — not modified in-place
-    gaugegroup : gauge group
-    beta       : inverse coupling
-
-    Returns
-    -------
-    (U_new, acceptance_rate)
-    """
-    D = U.shape[0]
-    spatial_shape = U.shape[1:-2]
-    nc = gaugegroup.nc
-    device = U.device
-
-    parity = _site_parity(spatial_shape, device)  # (*Λ)
-
-    U = U.clone()
-    total_proposed = 0
-    total_accepted = 0
-
-    for mu in range(D):
-        for par in (0, 1):
-            A = staple_sum(U, mu, gaugegroup)  # (*Λ, nc, nc)
-            U_mu = U[mu]
-            U_proposed = -U_mu  # Z₂: only proposal is the flip
-
-            # ΔS = (β/nc) Re Tr[(U − U') · A]  > 0 means action increases
-            dS = (beta / nc) * _re_tr((U_mu - U_proposed) @ A)  # (*Λ)
-
-            rand = torch.rand(spatial_shape).to(device)
-            accept = (dS <= 0) | (rand < torch.exp(-dS.clamp(min=0)))
-
-            site_mask = parity == par  # (*Λ)
-            update_mask = accept & site_mask  # (*Λ)
-
-            total_accepted += update_mask.sum().item()
-            total_proposed += site_mask.sum().item()
-
-            # [..., None, None] adds two extra dimension to broadcast update_mask with U_mu (or U_proposed)
-            U[mu] = torch.where(update_mask[..., None, None], U_proposed, U_mu)
-
-    return U, total_accepted / total_proposed
-
-
 def _random_su2_near_identity(
     spatial_shape: Tuple[int, ...],
     epsilon: float,
@@ -167,46 +106,94 @@ def _random_su2_near_identity(
     return V
 
 
-def su2_metropolis_sweep(
+def _z2_proposal(
+    U_mu: torch.Tensor, gaugegroup: GaugeGroup, epsilon: Optional[float] = None
+) -> torch.Tensor:
+    """Z₂ proposal: the unique non-identity element U' = −U.
+
+    Deterministic, so ``epsilon`` is ignored and ``n_hits`` > 1 only toggles
+    the link back and forth — keep ``n_hits = 1`` for Z₂.
+    """
+    return -U_mu
+
+
+def _su2_proposal(
+    U_mu: torch.Tensor, gaugegroup: GaugeGroup, epsilon: float = 0.3
+) -> torch.Tensor:
+    """SU(2) proposal: U' = V · U with V a random SU(2) element near the
+    identity (see :func:`_random_su2_near_identity`).
+
+    ``epsilon`` is the width of the proposal neighbourhood; tune it to keep
+    acceptance around 50%.
+    """
+    if gaugegroup.nc != 2:
+        raise NotImplementedError(
+            f"_su2_proposal only supports SU(2), got nc={gaugegroup.nc}. "
+            "For SU(N≥3) use Cabibbo–Marinari (heat-bath on SU(2) sub-blocks)."
+        )
+    spatial_shape = U_mu.shape[:-2]
+    V = _random_su2_near_identity(spatial_shape, epsilon, U_mu.dtype, U_mu.device)
+    return V @ U_mu
+
+
+# Registry: maps GaugeGroup subclass → default Metropolis proposal kernel.
+# Add one line here when a new group's proposal is ready. The accept/reject
+# machinery in ``metropolis_sweep`` is group-agnostic; only the proposal
+# changes between groups.
+_PROPOSAL_FN: dict = {
+    Z2: _z2_proposal,
+    SU: _su2_proposal,
+    # U1: _u1_proposal,   ← future
+}
+
+
+def metropolis_sweep(
     U: torch.Tensor,
     gaugegroup: GaugeGroup,
     beta: float,
-    epsilon: float = 0.3,
+    propose_fn=None,
     n_hits: int = 1,
+    epsilon: float = 0.3,
 ) -> Tuple[torch.Tensor, float]:
-    """One full Metropolis sweep for SU(2), checkerboard-vectorised.
+    """One full Metropolis sweep (all directions, both checkerboard parities).
 
-    Mirrors :func:`metropolis_sweep` but the proposal is U' = V · U where
-    V is a random SU(2) element close to the identity (see
-    :func:`_random_su2_near_identity`). The staple sum, local action, and
-    the ΔS = (β / N_c) Re Tr[(U − U') · A] formula are identical to the
-    Z₂ case — only the proposal kernel changes.
+    The accept/reject machinery is group-agnostic — the staple sum, local
+    action, and the ΔS = (β / N_c) Re Tr[(U − U') · A] formula are identical
+    for every gauge group. Only the proposal kernel changes between groups,
+    so it is injected via ``propose_fn`` (dispatched by group type when
+    ``None``): U' = −U for Z₂, U' = V · U with V near the identity for SU(2).
 
-    For a fixed direction μ, same-parity sites do not share any plaquette
-    through same-direction links, so their updates commute and can be
-    applied in parallel — the same trick as the Z₂ sweep.
+    Checkerboard structure: for a fixed direction μ, sites of the same parity
+    do not share any plaquette through same-direction links, so their updates
+    commute. The even sweep then the odd sweep is equivalent to a sequential
+    site-by-site update but fully vectorised.
 
     Parameters
     ----------
-    U          : ``(D, *Λ, 2, 2)`` — not modified in-place
-    gaugegroup : must be ``SU(2)``
+    U          : ``(D, *Λ, nc, nc)`` — not modified in-place
+    gaugegroup : gauge group
     beta       : inverse coupling
-    epsilon    : width of the proposal neighbourhood around the identity;
-                 tune to keep acceptance around 50%
+    propose_fn : proposal kernel ``(U_mu, gaugegroup, epsilon) → U_proposed``.
+                 If ``None``, dispatches via ``_PROPOSAL_FN[type(gaugegroup)]``.
     n_hits     : Metropolis hits per link per sweep. The staple is the
                  expensive piece and is unchanged between hits at the
                  same site/parity, so multiple hits per sweep improve
-                 mixing at almost no extra cost.
+                 mixing at almost no extra cost. Leave at 1 for Z₂, whose
+                 proposal is deterministic.
+    epsilon    : width of the proposal neighbourhood for continuous groups;
+                 ignored by deterministic proposals (Z₂).
 
     Returns
     -------
     (U_new, acceptance_rate)
     """
-    if gaugegroup.nc != 2:
-        raise NotImplementedError(
-            f"su2_metropolis_sweep only supports SU(2), got nc={gaugegroup.nc}. "
-            "For SU(N≥3) use Cabibbo–Marinari (heat-bath on SU(2) sub-blocks)."
-        )
+    if propose_fn is None:
+        propose_fn = _PROPOSAL_FN.get(type(gaugegroup))
+        if propose_fn is None:
+            raise NotImplementedError(
+                f"No Metropolis proposal registered for {type(gaugegroup).__name__}. "
+                f"Pass propose_fn= explicitly or add an entry to sampler._PROPOSAL_FN."
+            )
 
     D = U.shape[0]
     spatial_shape = U.shape[1:-2]
@@ -229,8 +216,7 @@ def su2_metropolis_sweep(
 
             for _hit in range(n_hits):
                 U_mu = U[mu]
-                V = _random_su2_near_identity(spatial_shape, epsilon, U.dtype, device)
-                U_proposed = V @ U_mu
+                U_proposed = propose_fn(U_mu, gaugegroup, epsilon)
 
                 # ΔS = (β/nc) Re Tr[(U − U') · A]  > 0 means action increases
                 dS = (beta / nc) * _re_tr((U_mu - U_proposed) @ A)  # (*Λ)
@@ -270,14 +256,18 @@ def haar_ensemble(
     return random_links(L, D, gaugegroup, dtype=dtype, N=n_configs), 1.0
 
 
-# Registry: maps GaugeGroup subclass → default sweep function.
-# Add one line here when a new group/algorithm pair is ready.
-# Both SU(2) and SU(3) hash to the same `SU` key; ``su2_metropolis_sweep``
-# raises ``NotImplementedError`` for nc ≠ 2, so SU(3) callers will see a
-# clear error until a Cabibbo–Marinari sweep is wired in.
+# Registry: maps GaugeGroup subclass → default sweep function (the *algorithm*).
+# Z₂ and SU(2) both use the single group-agnostic ``metropolis_sweep`` (the
+# group enters only through ``_PROPOSAL_FN``). This registry is the extension
+# point for genuinely different algorithms — heat-bath, overrelaxation,
+# Cabibbo–Marinari — which are not accept/reject and so cannot reuse
+# ``metropolis_sweep``. Both SU(2) and SU(3) hash to the same `SU` key;
+# ``metropolis_sweep`` raises ``NotImplementedError`` (via ``_su2_proposal``)
+# for nc ≠ 2, so SU(3) callers see a clear error until a Cabibbo–Marinari
+# sweep is wired in.
 _SWEEP_FN: dict = {
     Z2: metropolis_sweep,
-    SU: su2_metropolis_sweep,
+    SU: metropolis_sweep,
     # U1:  heatbath_sweep,   ← future
     # SU3: cabibbo_marinari_sweep,
 }
