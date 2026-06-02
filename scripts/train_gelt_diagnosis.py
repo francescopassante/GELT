@@ -1,3 +1,4 @@
+import math
 from functools import partial
 
 import torch
@@ -8,6 +9,194 @@ from tqdm import tqdm
 from gelt.blocks import GELT
 from gelt.lattice import rectangular_wilson_loop
 from gelt.sampler import mcmc_ensemble
+
+
+def _param_norm(p):
+    return p.detach().abs().pow(2).mean().sqrt().item()
+
+
+def _grad_norm(g):
+    if g is None:
+        return float("nan")
+    return g.detach().abs().pow(2).mean().sqrt().item()
+
+
+def report_attention_state(model, label="", out_stream=None):
+    """Dump everything load-bearing for the 'is attention actually working?'
+    question, per GEMHSA layer.
+
+    Reads the intermediates stashed by ``GEMHSA.attend`` / ``GEMHSA.forward``
+    on the most recent forward pass (``_last_score``, ``_last_alpha``, and
+    activation/residual norms). Also reads current parameter values and
+    parameter gradients (the gradient of the LAST backward call — the caller
+    is responsible for ensuring a backward has run if grad readout is wanted).
+
+    What to look at:
+      • score σ_across_off → if ~0, softmax is uniform per site → no axis
+        selection happening, regardless of overall score magnitude.
+      • softmax entropy / log(n_off) → 1.0 = perfectly uniform, 0 = one-hot.
+        > 0.99 for many epochs means the attention is dead.
+      • α̅[n] per offset → if all ≈ 1/n_off, attention isn't picking a
+        direction. If concentrated on one offset, attention IS working.
+      • |W_act| / |W_in| → sublayer contribution to the residual stream.
+        Tiny ratio = the block is effectively the identity.
+      • |∇Q|, |∇K| → is gradient even reaching the Q/K projections? If
+        they are < 1e-10 while |∇V|, |∇mix| are healthy, the score channel
+        is detached from the loss in practice.
+      • gate mean/std → is the L-Act gate killing the sublayer output?
+    """
+    write = (out_stream.write if out_stream is not None else print)
+    if not hasattr(model, "gemhsa_models"):
+        write("[report_attention_state] model has no .gemhsa_models — skipping\n")
+        return
+    first = model.gemhsa_models[0]
+    n_off = first.n_offsets
+    H = first.H
+    offsets = first.offsets
+    log_n_off = math.log(n_off)
+
+    lines = []
+    lines.append(f"\n========= ATTENTION DIAG {label} =========")
+    lines.append(f"  n_offsets={n_off}  n_heads={H}  d_qkv={first.d_qkv}")
+    lines.append(f"  offsets = {offsets}")
+    if hasattr(model, "lift"):
+        lift_w = model.lift.weight
+        lines.append(
+            f"  lift: shape={tuple(lift_w.shape)}  |W|={_param_norm(lift_w):.3e}  "
+            f"|∇W|={_grad_norm(lift_w.grad):.2e}"
+        )
+    if hasattr(model, "mlp"):
+        lines.append(
+            f"  mlp.fc1: |W|={_param_norm(model.mlp.fc1.weight):.3e}  "
+            f"|∇W|={_grad_norm(model.mlp.fc1.weight.grad):.2e}  "
+            f"|b|={_param_norm(model.mlp.fc1.bias):.3e}"
+        )
+        lines.append(
+            f"  mlp.fc2: |W|={_param_norm(model.mlp.fc2.weight):.3e}  "
+            f"|∇W|={_grad_norm(model.mlp.fc2.weight.grad):.2e}  "
+            f"|b|={_param_norm(model.mlp.fc2.bias):.3e}"
+        )
+
+    for i, layer in enumerate(model.gemhsa_models):
+        w = layer.w_QKV
+        w_d = w.detach()
+        wQ_n = w_d[0].abs().pow(2).mean().sqrt().item()
+        wK_n = w_d[1].abs().pow(2).mean().sqrt().item()
+        wV_n = w_d[2].abs().pow(2).mean().sqrt().item()
+        wmix_n = _param_norm(layer.w_mix)
+        bh = layer.b_h.detach()
+        bh_max = bh.abs().max().item()
+        bh_std = bh.std(unbiased=False).item() if bh.numel() > 1 else 0.0
+        rezero_alpha = layer.alpha.item()
+
+        # Grads (last backward). Split on the fused w_QKV by Q/K/V slice.
+        if w.grad is not None:
+            g = w.grad
+            gQ = g[0].abs().pow(2).mean().sqrt().item()
+            gK = g[1].abs().pow(2).mean().sqrt().item()
+            gV = g[2].abs().pow(2).mean().sqrt().item()
+        else:
+            gQ = gK = gV = float("nan")
+        gmix = _grad_norm(layer.w_mix.grad)
+        gbh = _grad_norm(layer.b_h.grad)
+        galpha = _grad_norm(layer.alpha.grad)
+
+        # Activations from last forward (set by attend / forward).
+        Q_n = getattr(layer, "_last_Q_norm", float("nan"))
+        Kt_n = getattr(layer, "_last_K_tilde_norm", float("nan"))
+        Vt_n = getattr(layer, "_last_V_tilde_norm", float("nan"))
+        bilin_n = getattr(layer, "_last_bilin_norm", float("nan"))
+        W_in_n = getattr(layer, "_last_W_in_norm", float("nan"))
+        W_mix_n = getattr(layer, "_last_W_mix_norm", float("nan"))
+        W_act_n = getattr(layer, "_last_W_act_norm", float("nan"))
+        gate_mu = getattr(layer, "_last_gate_mean", float("nan"))
+        gate_sigma = getattr(layer, "_last_gate_std", float("nan"))
+        ratio = W_act_n / W_in_n if (W_in_n and W_in_n > 0) else float("nan")
+
+        # Score / softmax stats. The σ_across_off line is the KEY one:
+        # if it's near zero, the softmax is uniform per site no matter how
+        # large the overall score is.
+        score = getattr(layer, "_last_score", None)
+        alpha_t = getattr(layer, "_last_alpha", None)
+
+        lines.append(f"\n-- Layer {i} --")
+        lines.append(
+            f"  params:  |w_Q|={wQ_n:.3e}  |w_K|={wK_n:.3e}  |w_V|={wV_n:.3e}  "
+            f"|w_mix|={wmix_n:.3e}  α_rezero={rezero_alpha:+.4f}  "
+            f"|b_h|max={bh_max:.2e}  b_h_σ={bh_std:.2e}"
+        )
+        lines.append(
+            f"  grads :  |∇w_Q|={gQ:.2e}  |∇w_K|={gK:.2e}  |∇w_V|={gV:.2e}  "
+            f"|∇w_mix|={gmix:.2e}  |∇b_h|={gbh:.2e}  |∇α|={galpha:.2e}"
+        )
+        lines.append(
+            f"  acts  :  |Q|={Q_n:.3e}  |K̃|={Kt_n:.3e}  |Ṽ|={Vt_n:.3e}  "
+            f"|bilin|={bilin_n:.3e}"
+        )
+        lines.append(
+            f"  resid :  |W_in|={W_in_n:.3e}  |W_mix|={W_mix_n:.3e}  "
+            f"|W_act|={W_act_n:.3e}  |W_act|/|W_in|={ratio:.3e}"
+        )
+        lines.append(
+            f"  gate  :  μ={gate_mu:+.3e}  σ={gate_sigma:.3e}"
+        )
+
+        if score is not None:
+            s = score.float()
+            score_mu = s.mean().item()
+            score_sigma = s.std(unbiased=False).item()
+            # std *across the offset axis* at each (B, H, *Λ), then averaged.
+            score_sigma_off = s.std(dim=2, unbiased=False).mean().item()
+            lines.append(
+                f"  score :  μ={score_mu:+.3e}  σ_global={score_sigma:.3e}  "
+                f"σ_across_off={score_sigma_off:.3e}  "
+                f"[{s.min().item():+.2e}, {s.max().item():+.2e}]"
+            )
+        if alpha_t is not None:
+            a = alpha_t.float()
+            entropy = -(a * a.clamp_min(1e-30).log()).sum(dim=2)
+            ent_norm = (entropy / log_n_off).mean().item()
+            # Average attention per offset (over B, H, *Λ).
+            reduce_dims = (0, 1) + tuple(range(3, a.ndim))
+            alpha_per_off = a.mean(dim=reduce_dims).tolist()
+            per_off_str = "  ".join(
+                f"{off}:{a_v:.3f}" for off, a_v in zip(offsets, alpha_per_off)
+            )
+            argmax_off = int(torch.tensor(alpha_per_off).argmax().item())
+            lines.append(
+                f"  softmx:  entropy/log(n)={ent_norm:.4f}  "
+                f"argmax_off={offsets[argmax_off]}"
+            )
+            lines.append(f"  α̅[n] :  {per_off_str}")
+            if H > 1:
+                # Per-head: max attention offset for each head (interesting
+                # to see whether heads specialize differently).
+                a_per_head = a.mean(dim=(0,) + tuple(range(3, a.ndim)))  # (H, n_off)
+                head_str = []
+                for h in range(H):
+                    a_h = a_per_head[h].tolist()
+                    a_h_max = max(range(n_off), key=lambda k: a_h[k])
+                    head_str.append(
+                        f"H{h}→{offsets[a_h_max]}({a_h[a_h_max]:.2f})"
+                    )
+                lines.append(f"  heads :  {'  '.join(head_str)}")
+
+    lines.append("==========================================\n")
+    write("\n".join(lines) + "\n")
+
+
+def diag_forward_backward(model, batch, criterion, device):
+    """Single forward+backward pass solely to populate gradients and the
+    GEMHSA intermediates, without touching the optimizer state. Returns the
+    loss for convenience.
+    """
+    X, T, y = batch
+    X, T, y = X.to(device), T.to(device), y.to(device)
+    model.zero_grad(set_to_none=False)
+    outputs = model(X, T)
+    loss = criterion(outputs, y)
+    loss.backward()
+    return loss.item(), outputs.detach()
 
 
 def averaged_wilson_loop(config, gaugegroup, R, T, mu, nu):
@@ -67,11 +256,48 @@ def train_model(
     epochs,
     patience=5,
     checkpoint_path: str = "best_model.pth",
+    diag_every: int = 25,
+    diag_log_path: str | None = None,
 ):
     best_val_loss = float("inf")
     train_losses = []
     val_losses = []
     epochs_no_improve = 0
+
+    # Open a log file for the verbose per-layer dumps so the tqdm bar in
+    # stdout stays readable. The compact per-epoch attention signals
+    # (entropy, σ_across_off, max-α offset, |W_act|/|W_in|) still print
+    # alongside the loss in the bar's stream.
+    diag_log = open(diag_log_path, "w") if diag_log_path else None
+    if diag_log is not None:
+        diag_log.write(f"diag log — diag_every={diag_every}\n")
+        diag_log.flush()
+
+    # Initial diagnostic dump: one forward+backward at epoch 0 (untrained
+    # weights) to capture the state we're starting from. Especially useful
+    # for checking whether the score σ_across_off has the O(1) magnitude
+    # the qk_init_scale knob was supposed to give it.
+    init_batch = next(iter(train_loader))
+    init_loss, _ = diag_forward_backward(model, init_batch, criterion, device)
+    report_attention_state(
+        model, label=f"epoch -1 (init, loss={init_loss:.4f})",
+        out_stream=diag_log,
+    )
+    if diag_log is None:
+        # Already printed to stdout above; nothing more to do.
+        pass
+    else:
+        # Mirror a one-line summary to stdout so the user knows it ran.
+        first = model.gemhsa_models[0]
+        s = first._last_score.float()
+        a = first._last_alpha.float()
+        log_n_off = math.log(first.n_offsets)
+        ent = -(a * a.clamp_min(1e-30).log()).sum(dim=2)
+        print(
+            f"[init] L0 score σ_across_off={s.std(dim=2, unbiased=False).mean().item():.3e}  "
+            f"softmax entropy/log(n)={(ent / log_n_off).mean().item():.4f}  "
+            f"loss={init_loss:.4f}"
+        )
 
     epoch_bar = tqdm(range(epochs))
     for epoch in epoch_bar:
@@ -158,16 +384,63 @@ def train_model(
         if hasattr(model, "gemhsa_models"):
             alphas = [f"{layer.alpha.item():+.3f}" for layer in model.gemhsa_models]
             fc2_std = model.mlp.fc2.weight.detach().abs().mean().item()
+            # Compact attention signals per layer for the per-epoch bar:
+            #   ent  = softmax entropy / log(n_off): 1.0 = uniform, 0 = one-hot.
+            #          The single best "is attention picking a direction?"
+            #          number — independent of overall score scale.
+            #   σoff = std of score across the offset axis at fixed (B, H, x).
+            #          If ent ≈ 1.0 because σoff is tiny, the score channel is
+            #          the bottleneck (Q/K init / gradient flow). If σoff is
+            #          large but ent is still near 1, softmax temperature is
+            #          the issue.
+            #   wact = |W_act| / |W_in|: how much the sublayer contributes
+            #          to the residual stream.
+            ent_str = []
+            soff_str = []
+            wact_str = []
+            for layer in model.gemhsa_models:
+                a = layer._last_alpha.float()
+                s = layer._last_score.float()
+                log_n_off = math.log(layer.n_offsets)
+                ent = -(a * a.clamp_min(1e-30).log()).sum(dim=2)
+                ent_str.append(f"{(ent / log_n_off).mean().item():.3f}")
+                soff_str.append(
+                    f"{s.std(dim=2, unbiased=False).mean().item():.2e}"
+                )
+                w_in = layer._last_W_in_norm
+                w_act = layer._last_W_act_norm
+                wact_str.append(
+                    f"{(w_act / w_in if w_in > 0 else float('nan')):.2e}"
+                )
             epoch_bar.write(
                 f"  ep {epoch + 1:>3d}  train={train_loss:.4f}  val={val_loss:.4f}  "
                 f"out μ={out_mean:+.4f} σ={out_std:.4f}  "
                 f"‖grad‖={avg_grad_norm:.2e}  "
-                f"α=[{', '.join(alphas)}]  |fc2|̄={fc2_std:.4f}"
+                f"α=[{', '.join(alphas)}]  |fc2|̄={fc2_std:.4f}\n"
+                f"      ent/log(n)=[{', '.join(ent_str)}]  "
+                f"σ_off=[{', '.join(soff_str)}]  "
+                f"|W_act|/|W_in|=[{', '.join(wact_str)}]"
             )
+
+            # Periodic full dump (parameters, grads, activations, per-offset
+            # attention vectors) to the diag log.
+            if diag_every > 0 and (epoch + 1) % diag_every == 0:
+                report_attention_state(
+                    model, label=f"epoch {epoch + 1}", out_stream=diag_log,
+                )
+                if diag_log is not None:
+                    diag_log.flush()
 
         if epochs_no_improve >= patience:
             epoch_bar.write(f"Early stopping triggered after {epoch + 1} epochs.")
             break
+
+    # Final full dump (post-training weights, with last-batch grads).
+    report_attention_state(
+        model, label=f"epoch {epoch + 1} (FINAL)", out_stream=diag_log,
+    )
+    if diag_log is not None:
+        diag_log.close()
 
     if best_val_loss == float("inf"):
         raise RuntimeError(
@@ -335,6 +608,42 @@ if __name__ == "__main__":
         f"out {tuple(model(X, T).shape)}"
     )
 
+    # Dataset-level sanity: are the inputs/targets even informative? If
+    # |X| is degenerate or y is near-constant we'll spin forever chasing an
+    # attention bug that is actually a data bug.
+    with torch.no_grad():
+        Xn = X.float() if not X.is_complex() else X.abs()
+        print(
+            f"input X   : |X|={Xn.abs().mean().item():.3e}  "
+            f"σ(|X|)={Xn.abs().std(unbiased=False).item():.3e}  "
+            f"Re(Tr X)/nc mean per-chan={X.diagonal(dim1=-2, dim2=-1).sum(-1).real.mean().item():+.4f}"
+        )
+        Tn = T.float() if not T.is_complex() else T.abs()
+        print(
+            f"transport T: |T|={Tn.abs().mean().item():.3e}  shape={tuple(T.shape)}"
+        )
+        print(
+            f"target y  : μ={y.mean().item():+.4f}  σ={y.std(unbiased=False).item():.4f}  "
+            f"min={y.min().item():+.4f}  max={y.max().item():+.4f}  "
+            f"shape={tuple(y.shape)}"
+        )
+        # Per-channel target-input correlation: even one linear-in-X channel
+        # gives a non-trivial signal floor. Useful to see whether a trivial
+        # site-sum predictor would already fit the target.
+        if y.ndim == 1:
+            X_re = X.real if X.is_complex() else X
+            x_summed = X_re.diagonal(dim1=-2, dim2=-1).sum(-1)
+            # Sum/mean over spatial axes to align shape with y.
+            spatial = tuple(range(2, x_summed.ndim))
+            x_per_chan = x_summed.mean(dim=spatial)  # (B, C_in)
+            for c in range(x_per_chan.shape[1]):
+                xc = x_per_chan[:, c]
+                if xc.std() > 0:
+                    corr = (
+                        (xc - xc.mean()) * (y - y.mean())
+                    ).mean() / (xc.std(unbiased=False) * y.std(unbiased=False) + 1e-30)
+                    print(f"  corr(Re Tr ⟨X_{c}⟩, y) = {corr.item():+.4f}")
+
     model = model.to(device)
 
     train_losses, val_losses, full_epochs = train_model(
@@ -348,6 +657,8 @@ if __name__ == "__main__":
         epochs=train_parameters["epochs"],
         patience=train_parameters["patience"],
         checkpoint_path=train_parameters["checkpoint_path"],
+        diag_every=25,
+        diag_log_path="gelt_diag.log",
     )
 
     # Load best model to evaluate on test set

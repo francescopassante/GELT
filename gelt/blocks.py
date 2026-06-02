@@ -151,7 +151,7 @@ class GEMHSA(nn.Module):
         w_qkv = torch.randn(3, self.H, self.d_qkv, self.C_prime, dtype=dtype)
         w_qkv[0] *= sigma_qk  # Q
         w_qkv[1] *= sigma_qk  # K
-        w_qkv[2] *= sigma_v   # V
+        w_qkv[2] *= sigma_v  # V
         self.w_QKV = nn.Parameter(w_qkv)
         # channel mix back to C output channels.
         sigma_mix = 0.02 * init_scale / math.sqrt(self.H * self.d_qkv)
@@ -290,6 +290,19 @@ class GEMHSA(nn.Module):
         # sum of transported V's; Q†·V_weighted multiplies on the left by Q†
         # which transforms with Ω_x on both sides).
         bilin = torch.matmul(Q_dag, V_weighted)  # (B, H, d_qkv, *Λ, nc, nc)
+
+        # Diagnostic intermediates — read by scripts/train_gelt_diagnosis.py
+        # to introspect per-layer attention state. Stored detached / no-grad so
+        # they don't retain the autograd graph. Scalars for activations, full
+        # tensors for score/alpha (cheap: (B, H, n_off, *Λ) reals).
+        with torch.no_grad():
+            self._last_score = score.detach()
+            self._last_alpha = alpha.detach()
+            self._last_Q_norm = Q.detach().abs().pow(2).mean().sqrt().item()
+            self._last_K_tilde_norm = K_tilde.detach().abs().pow(2).mean().sqrt().item()
+            self._last_V_tilde_norm = V_tilde.detach().abs().pow(2).mean().sqrt().item()
+            self._last_bilin_norm = bilin.detach().abs().pow(2).mean().sqrt().item()
+
         return bilin
         # return self.alpha_attn * V_weighted + self.alpha_bilin * bilin
 
@@ -366,6 +379,17 @@ class GEMHSA(nn.Module):
         else:
             g = F.softplus(trace_per_chan)
         W_act = g.unsqueeze(-1).unsqueeze(-1) * W_mix
+
+        # Diagnostic intermediates — residual stream magnitudes. Ratio
+        # |W_act|/|W_in| tells you whether the sublayer is actually
+        # contributing to the residual stream or has collapsed to ≈0.
+        with torch.no_grad():
+            self._last_W_in_norm = W.detach().abs().pow(2).mean().sqrt().item()
+            self._last_W_mix_norm = W_mix.detach().abs().pow(2).mean().sqrt().item()
+            self._last_W_act_norm = W_act.detach().abs().pow(2).mean().sqrt().item()
+            self._last_gate_mean = g.detach().mean().item()
+            self._last_gate_std = g.detach().std(unbiased=False).item()
+
         return W + W_act
         # ReZero: blend toward the L-Act output with a per-block scalar α
         # (zero-init). At α=0 the block is bit-exactly the identity W → W;
