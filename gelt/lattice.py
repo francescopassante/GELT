@@ -398,8 +398,6 @@ def build_transport_average(
 ) -> torch.Tensor:
     """Parallel transports for **every** offset 0 < |Δx|₁ ≤ R.
 
-    Two aggregation modes share the same DP recursion and produce the same
-    output shape/offset ordering — pick one with ``mode``:
 
     ``mode="average"`` (default, the architecture's design choice).
     For each signed lattice offset Δx, the entry is the **average** over all
@@ -506,14 +504,16 @@ def build_transport_average(
         t: Optional[torch.Tensor] = None
         for mu in range(D):
             if dx[mu] > 0:
+                # prev_dx = dx but with dx[mu] = dx[mu] - 1
                 prev_dx = tuple(v - 1 if i == mu else v for i, v in enumerate(dx))
-                # U_μ(x) · T_{Δx−ê_μ}(x+ê_μ): roll by −1 brings x+ê_μ to index x.
+                # U_μ(x) · T_{Δx−ê_μ}(x+ê_μ)
                 contrib = U[:, mu] @ torch.roll(
                     table[prev_dx], shifts=-1, dims=sdim(mu)
                 )
             elif dx[mu] < 0:
+                # prev_dx = dx but with dx[mu] = dx[mu] + 1
                 prev_dx = tuple(v + 1 if i == mu else v for i, v in enumerate(dx))
-                # U†_μ(x−ê_μ) · T_{Δx+ê_μ}(x−ê_μ): roll by +1 brings x−ê_μ to index x.
+                # U†_μ(x−ê_μ) · T_{Δx+ê_μ}(x−ê_μ)
                 contrib = U_back[mu] @ torch.roll(
                     table[prev_dx], shifts=1, dims=sdim(mu)
                 )
@@ -529,9 +529,7 @@ def build_transport_average(
 
     # Stack offsets at axis 1 so the result is (N, n_off, *Λ, nc, nc).
     stacked = torch.stack([table[dx] for dx in offsets], dim=1)
-    del (
-        table
-    )  # release the per-offset references; the stacked tensor owns the data now.
+    del table  # release the per-offset references; the stacked tensor owns the data now.
 
     # Single-path mode: one path per offset, no average to normalise away.
     if mode == "single":

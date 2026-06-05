@@ -95,7 +95,9 @@ def _random_su2_near_identity(
             "produce a non-unitary proposal. Use ε ≤ 1/√3 ≈ 0.577."
         )
     real_dtype = torch.float64 if dtype == torch.complex128 else torch.float32
-    a = (torch.rand(*spatial_shape, 3, dtype=real_dtype, device=device) * 2 - 1) * epsilon
+    a = (
+        torch.rand(*spatial_shape, 3, dtype=real_dtype, device=device) * 2 - 1
+    ) * epsilon
     a0 = torch.sqrt(1.0 - (a * a).sum(dim=-1))
     # V = [[a_0 + i a_3,  i a_1 + a_2],
     #      [i a_1 - a_2,  a_0 - i a_3]]

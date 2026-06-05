@@ -139,6 +139,7 @@ class GEMHSA(nn.Module):
                 f"(note D=2 GELT has d_input = 1, so d_qkv must be set)."
             )
         self.n_pairs = self.d_qkv // 2
+
         # Axial N-d RoPE: each channel-pair p is tied to one lattice axis
         # (round-robin, axis = p % D) and encodes the displacement Δx along that
         # axis. _rope_disp[n, p] = Δx_n[axis(p)] is pure geometry, precomputed.
