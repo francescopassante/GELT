@@ -72,7 +72,6 @@ class GEMHSA(nn.Module):
         d_qkv=None,
         gate="softplus",
         dtype=torch.complex64,
-        alpha_init: float = 0.0,
         init_scale: float = 1.0,
         qk_init_scale: float = 1.0,
     ):
@@ -201,12 +200,6 @@ class GEMHSA(nn.Module):
         self.w_mix = nn.Parameter(
             torch.randn(self.C, self.H, self.d_qkv, dtype=dtype) * sigma_mix
         )
-
-        # ReZero / LayerScale: per-block learnable scalar α. alpha_init=0
-        # gives identity-at-init property, but pairs badly with the MLP zero-init
-        # on hard targets. Init α to a small positive value
-        # (e.g. 0.05) forces the multiplicative path to contribute from the start
-        self.alpha = nn.Parameter(torch.full((1,), float(alpha_init)))
 
     def augment(self, W):
         # Channel augmentation: (B, C, *Λ, nc, nc) -> (B, 2C+1, *Λ, nc, nc).
@@ -469,10 +462,6 @@ class GEMHSA(nn.Module):
             self._last_gate_std = g.detach().std(unbiased=False).item()
 
         return W + W_act
-        # ReZero: blend toward the L-Act output with a per-block scalar α
-        # (zero-init). At α=0 the block is bit-exactly the identity W → W;
-        # during training α grows and the gate/mix path takes over.
-        # return W + self.alpha * (W_act - W)
 
 
 class Trace(nn.Module):
@@ -585,7 +574,6 @@ class GELT(nn.Module):
         mlp_hidden=32,
         mlp_out=1,
         reduction: str = "sum",
-        alpha_init: float = 0.0,
         init_scale: float = 1.0,
         qk_init_scale: float = 1.0,
         mlp_zero_init: bool = True,
@@ -630,7 +618,6 @@ class GELT(nn.Module):
                     d_qkv,
                     gate,
                     dtype,
-                    alpha_init=alpha_init,
                     init_scale=init_scale,
                     qk_init_scale=qk_init_scale,
                 )

@@ -15,19 +15,19 @@ import math
 import matplotlib.pyplot as plt
 import numpy as np
 
-from gelt.lattice import Z2, plaquette_tensor
+from gelt.lattice import Z2, SU, plaquette_tensor
 from gelt.sampler import _re_tr, mcmc_ensemble
 
-gaugegroup = Z2()
+gaugegroup = SU(2)
 
 # ── Tunable ───────────────────────────────────────────────────────────────────
 N_CONFIGS = 100  # configs per (L, β) point — increase for lower noise
-N_THERM = 100  # thermalisation sweeps
+N_THERM = 200  # thermalisation sweeps
 N_SKIP = 5  # sweeps between collected configs (decorrelation)
 LS_2D = [4, 8, 16]
 LS_3D = [4, 6, 8]
-BETAS_2D = np.linspace(0.0, 2.0, 21)
-BETAS_3D = np.linspace(0.0, 1.5, 21)
+BETAS_2D = np.linspace(0.0, 2.0, 7)
+BETAS_3D = np.linspace(0.0, 1.5, 7)
 
 
 def _plaq_stats(configs):

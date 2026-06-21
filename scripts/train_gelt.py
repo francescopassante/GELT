@@ -96,17 +96,13 @@ def train_model(
 
         epoch_bar.set_postfix(train=f"{train_loss:.4f}", val=f"{val_loss:.4f}")
 
-        # Unfreeze-cascade diagnostic. With ReZero α=0 and zero-init mlp.fc2,
-        # only the MLP receives gradient on step 0; α and the GEMHSA params
-        # follow once fc2 grows. If both α and ‖fc2‖ stay near 0 while the loss
-        # is flat, training is stuck at the identity branch — bump LR, warm-
-        # start α, or drop the mlp.fc2 zero-init. See notes/architecture.html §3.8.
+        # Unfreeze-cascade diagnostic. With zero-init mlp.fc2, only the MLP
+        # receives gradient on step 0; the GEMHSA params follow once fc2 grows.
+        # If ‖fc2‖ stays near 0 while the loss is flat, training is stuck —
+        # bump LR or drop the mlp.fc2 zero-init.
         if (epoch + 1) % 10 == 0 and hasattr(model, "gemhsa_models"):
-            alphas = [f"{layer.alpha.item():+.3f}" for layer in model.gemhsa_models]
             fc2_std = model.mlp.fc2.weight.detach().abs().mean().item()
-            epoch_bar.write(
-                f"  ep {epoch + 1:>3d}  α=[{', '.join(alphas)}]  |fc2|̄={fc2_std:.4f}"
-            )
+            epoch_bar.write(f"  ep {epoch + 1:>3d}  |fc2|̄={fc2_std:.4f}")
 
         if epochs_no_improve >= patience:
             epoch_bar.write(f"Early stopping triggered after {epoch + 1} epochs.")
@@ -193,17 +189,10 @@ if __name__ == "__main__":
         # Per-site target → no spatial reduction. Use "sum" for the Wilson
         # action, "mean" for the average ⟨W⟩.
         "reduction": "none",
-        # Warm-start the ReZero α and drop the MLP fc2 zero-init: the default
-        # α=0 + fc2=0 combo traps training at the constant-mean predictor on
-        # a per-site bilinear target like q_x. α=0.5 puts the multiplicative path at
-        # ~half the residual stream (α=0.05 left it at ~4% and the MLP just
-        # kept reading the raw plaquette at site x, never using the multi-
-        # site contribution). init_scale controls σ_V (value path — kept
-        # small so the residual stream is near-identity at init);
-        # qk_init_scale controls σ_QK (score channel) and is decoupled so the
-        # softmax can have real dynamic range from epoch 0 without inflating
-        # the value path.
-        "alpha_init": 0.5,
+        # init_scale controls σ_V (value path — kept small so the residual
+        # stream is near-identity at init); qk_init_scale controls σ_QK (score
+        # channel) and is decoupled so the softmax can have real dynamic range
+        # from epoch 0 without inflating the value path.
         "init_scale": 10,
         "qk_init_scale": 1.0,
         "mlp_zero_init": True,
