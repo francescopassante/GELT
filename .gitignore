@@ -1,6 +1,7 @@
 .venv/
 datasets/
 *.pth
+*.png
 __pycache__/
 *.pyc
 .claude/
