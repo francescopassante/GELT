@@ -5,7 +5,7 @@ The staple interface is designed for extension to heat-bath + overrelaxation
 for U(1)/SU(2)/SU(3) without restructuring the sweep loop.
 """
 
-from typing import List, Optional, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 import torch
 from tqdm import tqdm
@@ -13,7 +13,12 @@ from tqdm import tqdm
 from gelt.lattice import SU, Z2, GaugeGroup, random_links
 
 
-def staple_sum(U: torch.Tensor, mu: int, gaugegroup: GaugeGroup) -> torch.Tensor:
+def staple_sum(
+    U: torch.Tensor,
+    mu: int,
+    gaugegroup: GaugeGroup,
+    nu_dirs: Optional[Sequence[int]] = None,
+) -> torch.Tensor:
     """Sum of staples for every site along direction ``mu``.
 
     The local Wilson action for link U_μ(x) is
@@ -27,14 +32,18 @@ def staple_sum(U: torch.Tensor, mu: int, gaugegroup: GaugeGroup) -> torch.Tensor
     U     : ``(D, *Λ, nc, nc)``
     mu    : direction index
     gaugegroup : gauge group (used for ``dagger``)
+    nu_dirs : directions ν to sum over (defaults to all ν ≠ μ). Pass the
+        spatial directions only to build spatial staples for APE smearing.
 
     Returns
     -------
     Tensor of shape ``(*Λ, nc, nc)``.
     """
     D = U.shape[0]
+    if nu_dirs is None:
+        nu_dirs = range(D)
     A = torch.zeros_like(U[mu])
-    for nu in range(D):
+    for nu in nu_dirs:
         if nu == mu:
             continue
         Umu = U[mu]

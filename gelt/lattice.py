@@ -45,6 +45,11 @@ class GaugeGroup(ABC):
     def dagger(self, U: torch.Tensor) -> torch.Tensor:
         """Hermitian conjugate (= group inverse for unitary groups)."""
 
+    # ``project`` (map an arbitrary matrix back onto the group) is defined only
+    # on the real groups Z₂/SU below, where it is used by APE smearing. It is
+    # not abstract because some test-only subclasses (e.g. a GL(2) toy) have no
+    # well-defined projection and never need it.
+
 
 class Z2(GaugeGroup):
     name = "Z2"
@@ -58,6 +63,11 @@ class Z2(GaugeGroup):
     def dagger(self, U):
         # Identity for real 1×1 matrices, but written explicitly for portability.
         return U.conj().transpose(-1, -2)
+
+    def project(self, M):
+        # Nearest Z₂ element (±1): the sign of the real part, with 0 → +1.
+        sign = torch.where(M.real >= 0, 1.0, -1.0).to(M.real.dtype)
+        return sign.to(M.dtype)
 
 
 class SU(GaugeGroup):
@@ -89,6 +99,15 @@ class SU(GaugeGroup):
 
     def dagger(self, U):
         return U.conj().transpose(-1, -2)
+
+    def project(self, M):
+        # Nearest SU(N) matrix to M: take the unitary (polar) factor via SVD
+        # (M = W Σ Vh ⇒ polar factor W Vh maximises Re Tr[V† M] over U(N)),
+        # then rescale by det^(1/nc) to land on SU(N).
+        W, _, Vh = torch.linalg.svd(M)
+        Q = W @ Vh
+        det = torch.linalg.det(Q)
+        return Q / det.pow(1 / self.nc).unsqueeze(-1).unsqueeze(-1)
 
 
 def random_links(
