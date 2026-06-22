@@ -1,13 +1,13 @@
-"""Validation plots for the Z₂ Metropolis sampler.
+"""Validation plots for the SU(2) Metropolis sampler.
 
 Four panels:
   (0,0) Thermalization  — ⟨P⟩ vs sweep at fixed (D=2, L=8) for several β
-  (0,1) 2D β-scan       — ⟨P⟩ vs β for L=4,8,16 vs exact tanh(β)
-  (1,0) 3D β-scan       — ⟨P⟩ vs β for L=4,6,8; shows 1st-order transition
+  (0,1) 2D β-scan       — ⟨P⟩ vs β for L=4,8,16 vs exact I₂(β)/I₁(β)
+  (1,0) 3D β-scan       — ⟨P⟩ vs β for L=4,6,8; confining crossover (no transition)
   (1,1) Autocorrelation — C(t) of the plaquette time series at one (L, D, β)
 
 Run:
-    python validate_sampler.py
+    python scripts/validate_sampler_su2.py
 """
 
 import math
@@ -15,7 +15,7 @@ import math
 import matplotlib.pyplot as plt
 import numpy as np
 
-from gelt.lattice import Z2, SU, plaquette_tensor
+from gelt.lattice import SU, plaquette_tensor
 from gelt.sampler import _re_tr, mcmc_ensemble
 
 gaugegroup = SU(2)
@@ -36,6 +36,23 @@ def _plaq_stats(configs):
     # Per-config mean Re Tr / nc: flatten all non-batch dims then average.
     vals = (_re_tr(P).flatten(1).mean(1) / gaugegroup.nc).numpy()
     return vals.mean(), vals.std(ddof=1) / math.sqrt(len(vals))
+
+
+def su2_plaquette_exact_2d(beta):
+    """Exact 2D SU(2) mean plaquette ⟨½ Tr P⟩ = I₂(β)/I₁(β).
+
+    In 2D the plaquettes decouple, so ⟨½ Tr P⟩ equals the single-plaquette
+    average ⟨cos θ⟩ under the SU(2) weight sin²θ · exp(β cos θ) (½ Tr P = cos θ,
+    Haar measure ∝ sin²θ dθ). Evaluated by direct quadrature on a uniform θ grid
+    (the dθ cancels in the ratio), so no scipy dependency is needed.
+    """
+    beta = np.atleast_1d(np.asarray(beta, dtype=float))
+    theta = np.linspace(0.0, np.pi, 4000)
+    out = np.empty_like(beta)
+    for i, b in enumerate(beta):
+        w = np.sin(theta) ** 2 * np.exp(b * np.cos(theta))
+        out[i] = (np.cos(theta) * w).sum() / w.sum()
+    return out
 
 
 # ── 1/4  Thermalization histories  (D=2, L=8) ─────────────────────────────────
@@ -73,7 +90,7 @@ for L in LS_2D:
         scan2[L][1].append(e)
     print(f"   L={L} ✓")
 
-# ── 3/4  3D β-scan  (first-order transition near β_c ≈ 0.761) ────────────────
+# ── 3/4  3D β-scan  (confining crossover — SU(2) has no bulk transition) ─────
 print("3/4  3D β-scan …")
 scan3: dict = {L: ([], []) for L in LS_3D}
 for L in LS_3D:
@@ -127,7 +144,7 @@ tau_int = 0.5 + float(C_ac[1:].sum())
 # ── Plotting ──────────────────────────────────────────────────────────────────
 COL = plt.rcParams["axes.prop_cycle"].by_key()["color"]
 fig, axes = plt.subplots(2, 2, figsize=(12, 9))
-fig.suptitle("2D / 3D  Z₂  Metropolis MC  —  Validation", fontsize=13)
+fig.suptitle("2D / 3D  SU(2)  Metropolis MC  —  Validation", fontsize=13)
 
 # ─ (0,0) Thermalization ──────────────────────────────────────────────────────
 ax = axes[0, 0]
@@ -138,16 +155,26 @@ for i, (beta, curve) in enumerate(sorted(therm.items())):
     ax.plot(
         np.arange(w - 1, len(curve)), smooth, color=COL[i], lw=1.8, label=f"β = {beta}"
     )
-    ax.axhline(math.tanh(beta), color=COL[i], ls="--", lw=1.0, alpha=0.7)
+    ax.axhline(
+        su2_plaquette_exact_2d(beta)[0], color=COL[i], ls="--", lw=1.0, alpha=0.7
+    )
 ax.set_xlabel("Sweep")
 ax.set_ylabel("⟨P⟩  (smoothed, w=15)")
-ax.set_title("Thermalization  (D=2, L=8)\nDashed = analytic tanh(β)")
+ax.set_title("Thermalization  (D=2, L=8)\nDashed = exact I₂(β)/I₁(β)")
 ax.legend(fontsize=8, loc="upper left")
 ax.set_ylim(-0.05, 1.05)
 
 # ─ (0,1) 2D β-scan ───────────────────────────────────────────────────────────
 ax = axes[0, 1]
-ax.plot(BETAS_2D, np.tanh(BETAS_2D), "k--", lw=2, label="tanh(β) exact", zorder=5)
+betas_fine = np.linspace(BETAS_2D[0], BETAS_2D[-1], 200)
+ax.plot(
+    betas_fine,
+    su2_plaquette_exact_2d(betas_fine),
+    "k--",
+    lw=2,
+    label="I₂(β)/I₁(β) exact",
+    zorder=5,
+)
 for i, L in enumerate(LS_2D):
     ms, es = np.array(scan2[L][0]), np.array(scan2[L][1])
     ax.errorbar(
@@ -155,17 +182,18 @@ for i, L in enumerate(LS_2D):
     )
 ax.set_xlabel("β")
 ax.set_ylabel("⟨P⟩")
-ax.set_title("Mean plaquette  —  2D Z₂\nvs. exact tanh(β)")
+ax.set_title("Mean plaquette  —  2D SU(2)\nvs. exact I₂(β)/I₁(β)")
 ax.legend(fontsize=8)
 ax.set_xlim(-0.05, 2.05)
 ax.set_ylim(-0.05, 1.05)
 
 # ─ (1,0) 3D β-scan ───────────────────────────────────────────────────────────
 ax = axes[1, 0]
+# Leading strong-coupling expansion ⟨½ Tr P⟩ ≈ β/4 (dimension-independent at
+# leading order); valid at small β, where the data should hug this line.
 ax.plot(
-    BETAS_3D, np.tanh(BETAS_3D), "k--", lw=1.0, alpha=0.35, label="tanh(β)  [2D ref]"
+    BETAS_3D, BETAS_3D / 4.0, "k--", lw=1.0, alpha=0.5, label="β/4  (strong coupling)"
 )
-ax.axvline(0.7613, color="gray", ls=":", lw=1.4, label="β_c ≈ 0.761")
 for i, L in enumerate(LS_3D):
     ms, es = np.array(scan3[L][0]), np.array(scan3[L][1])
     ax.errorbar(
@@ -173,7 +201,7 @@ for i, L in enumerate(LS_3D):
     )
 ax.set_xlabel("β")
 ax.set_ylabel("⟨P⟩")
-ax.set_title("Mean plaquette  —  3D Z₂\n1st-order transition at β_c ≈ 0.761")
+ax.set_title("Mean plaquette  —  3D SU(2)\nconfining crossover (no bulk transition)")
 ax.legend(fontsize=8)
 ax.set_xlim(-0.05, 1.55)
 ax.set_ylim(-0.05, 1.05)
@@ -197,6 +225,6 @@ ax.legend(fontsize=8)
 ax.set_xlim(-0.5, MAX_LAG + 0.5)
 
 fig.tight_layout()
-plt.savefig("sampler_validation.png", dpi=150, bbox_inches="tight")
-print("Saved sampler_validation.png")
+plt.savefig("sampler_validation_su2.png", dpi=150, bbox_inches="tight")
+print("Saved sampler_validation_su2.png")
 plt.show()

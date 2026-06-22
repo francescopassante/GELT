@@ -53,7 +53,8 @@ removed pending rewrites; the spec now lives across the notes below.)
 
 Phase 0 (2D Z₂ implementation validation), extended toward SU(2): the
 Metropolis sampler, the targets, and the GELT block now all support
-`nc = 2`, and `validate_sampler.py` runs on SU(2).
+`nc = 2`, and `validate_sampler_su2.py` / `validate_sampler_z2.py` validate
+the Metropolis sampler for each group.
 
 The codebase was refactored from the original OO scaffolding
 (`Site` / `Link` / `Plaquette` / `Lattice` classes) to **pure tensor
@@ -198,9 +199,12 @@ loop inline (there is no shared `gelt/train.py`). Device order: cuda → mps
   feeds the axis-aligned `build_axis_transports` instead of the L1-ball `T`.
 - **`check_gelt_invariance.py`** — quick gauge-invariance check on the full
   `GELT` (from `blocks_bias`): `forward(W_g, T_g) ≈ forward(W, T)` on SU(2).
-- **`validate_sampler.py`** — four-panel sanity check on the Metropolis
-  sampler (currently SU(2)): thermalisation, 2D β-scan, 3D β-scan,
-  plaquette autocorrelation. Writes `sampler_validation.png`.
+- **`validate_sampler_su2.py`** / **`validate_sampler_z2.py`** — four-panel
+  sanity checks on the Metropolis sampler (one per group): thermalisation,
+  2D β-scan, 3D β-scan, plaquette autocorrelation. The 2D panel compares to
+  the exact mean plaquette — `I₂(β)/I₁(β)` for SU(2), `tanh(β)` for Z₂ — and
+  the 3D panel shows the SU(2) confining crossover vs. the Z₂ transition near
+  `β_c ≈ 0.761`. Write `sampler_validation_su2.png` / `sampler_validation_z2.png`.
 
 ### `tests/`
 
@@ -258,7 +262,8 @@ python scripts/train_cnn.py            # single-(L, β) CNN baseline run
 python scripts/train_gelt.py           # single-(L, β, R) GELT run (blocks_rope)
 python scripts/train_lcnn.py           # single-run Favoni L-CNN baseline
 python scripts/check_gelt_invariance.py  # quick SU(2) gauge-invariance check on GELT
-python scripts/validate_sampler.py     # Metropolis four-panel sanity check (SU(2))
+python scripts/validate_sampler_su2.py # Metropolis four-panel sanity check (SU(2))
+python scripts/validate_sampler_z2.py  # Metropolis four-panel sanity check (Z₂)
 python -m gelt.cnn_baseline            # torchsummary for a 5×5 CNN
 pytest tests                           # unit tests
 ```
