@@ -57,7 +57,7 @@ def test_ape_smear_stays_on_group():
     smeared = ape_smear(U.unsqueeze(0), g, alpha=0.6, n_steps=3)[0]
     # Spatial links must be unitary with unit determinant.
     eye = torch.eye(2, dtype=torch.complex128)
-    for mu in range(1, D):  # time_axis = 0 is untouched
+    for mu in range(1, D):  # axis 0 (time) is left untouched by smearing
         UUd = smeared[mu] @ g.dagger(smeared[mu])
         assert torch.allclose(UUd, eye.expand_as(UUd), atol=1e-8)
         det = torch.linalg.det(smeared[mu])
@@ -80,7 +80,7 @@ def test_zero_momentum_shape():
     L, D = 4, 4
     g = SU(2)
     U = random_links(L, D, g, dtype=torch.complex128, N=3)  # (3, D, *Λ, nc, nc)
-    Obar = zero_momentum(glueball_operator(U, g), time_axis=0)
+    Obar = zero_momentum(glueball_operator(U, g))
     assert Obar.shape == (3, L)
 
 

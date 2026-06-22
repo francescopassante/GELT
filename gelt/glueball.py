@@ -13,9 +13,9 @@ the signal-to-noise still lives.
 Conventions
 -----------
 - Ensembles are batched links ``(B, D, *Λ, nc, nc)`` (as elsewhere).
-- One lattice axis is time, selected by ``time_axis`` (default 0). The operator
-  is built only from spatial-plane Wilson loops, and smearing touches spatial
-  links only — never time, or the transfer-matrix interpretation breaks.
+- Time is lattice axis 0; directions 1..D-1 are spatial. The operator is built
+  only from spatial-plane Wilson loops, and smearing touches spatial links
+  only — never time, or the transfer-matrix interpretation breaks.
 """
 
 from typing import Tuple
@@ -31,9 +31,8 @@ def ape_smear(
     gaugegroup: GaugeGroup,
     alpha: float = 0.5,
     n_steps: int = 1,
-    time_axis: int = 0,
 ) -> torch.Tensor:
-    """Spatial APE smearing of an ensemble.
+    """Spatial APE smearing of an ensemble (time = axis 0).
 
     Each spatial link is replaced by the group projection of
         V_μ(x) = (1 − α) U_μ(x) + (α / n_staples) Σ spatial staples,
@@ -50,14 +49,13 @@ def ape_smear(
     U : ``(B, D, *Λ, nc, nc)`` batched links.
     alpha : staple weight (0 = no smearing).
     n_steps : number of smearing iterations.
-    time_axis : which lattice axis is time.
 
     Returns
     -------
     Smeared links of the same shape.
     """
     D = U.shape[1]
-    spatial = [d for d in range(D) if d != time_axis]
+    spatial = list(range(1, D))  # time is axis 0
     if len(spatial) < 2:
         raise ValueError("Spatial smearing needs at least two spatial directions.")
     n_staples = 2 * (len(spatial) - 1)
@@ -81,9 +79,8 @@ def glueball_operator(
     gaugegroup: GaugeGroup,
     R: int = 1,
     T: int = 1,
-    time_axis: int = 0,
 ) -> torch.Tensor:
-    """Per-site scalar 0⁺⁺ operator: sum of spatial R×T Wilson loops.
+    """Per-site scalar 0⁺⁺ operator: sum of spatial R×T Wilson loops (time = axis 0).
 
     Summing over the spatial planes (μ < ν, both spatial) makes the operator a
     rotational scalar; at R = T = 1 each term is a spatial plaquette.
@@ -97,7 +94,7 @@ def glueball_operator(
     ``(B, *Λ)`` real field O(x).
     """
     D = U.shape[1]
-    spatial = [d for d in range(D) if d != time_axis]
+    spatial = list(range(1, D))  # time is axis 0
     # Start from a scalar 0; the first Wilson loop broadcasts it to (B, *Λ).
     O = 0.0
     for i, mu in enumerate(spatial):
@@ -106,19 +103,17 @@ def glueball_operator(
     return O
 
 
-def zero_momentum(O: torch.Tensor, time_axis: int = 0) -> torch.Tensor:
+def zero_momentum(O: torch.Tensor) -> torch.Tensor:
     """Project the operator field to zero momentum: sum over spatial sites.
 
-    ``O`` has shape ``(B, *Λ)``; the time axis sits at index ``time_axis + 1``.
+    ``O`` has shape ``(B, *Λ)`` with time = lattice axis 0, i.e. tensor index 1
+    (index 0 is the batch). The spatial sites are the remaining indices 2…D.
 
     Returns
     -------
     ``(B, Nt)`` timeslice operator Ō(t) per config.
     """
-    # O.dim() is D + 1 (1 from the batch dimension)
-    D = O.dim() - 1
-    # start from 1 b.c. the 0 one is the batch
-    spatial_axes = [d + 1 for d in range(D) if d + 1 != time_axis + 1]
+    spatial_axes = tuple(range(2, O.dim()))
     return O.sum(dim=spatial_axes)
 
 

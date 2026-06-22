@@ -46,15 +46,14 @@ np.random.seed(0)
 gaugegroup = SU(2)
 
 # ── Tunable ──────────────────────────────────────────────────────────────────
-L = 8            # spatial/temporal extent (cubic L^D lattice)
-D = 4            # 3+1 dimensions; time_axis = 0
-BETA = 2.3       # SU(2), near the scaling window
+L = 8  # spatial/temporal extent (cubic L^D lattice)
+D = 4  # 3+1 dimensions; time is lattice axis 0
+BETA = 2.3  # SU(2), near the scaling window
 N_CONFIGS = 200  # raise for less noise on the bottom row
 N_THERM = 300
 N_SKIP = 5
 SMEAR_ALPHA = 0.5
 SMEAR_STEPS = 6
-TIME_AXIS = 0
 
 # ── (0,0)  Synthetic validation: known mass in, plateau out ───────────────────
 print("1/4  Synthetic correlator validation …")
@@ -74,34 +73,41 @@ meff_syn, err_syn = jackknife_effective_mass(obar_syn)
 # ── (0,1)  Smearing sanity: ⟨O⟩ vs number of APE steps ────────────────────────
 print("2/4  Smearing monotonicity …")
 configs_small, _ = mcmc_ensemble(
-    L=6, D=D, gaugegroup=gaugegroup, beta=BETA,
-    n_configs=20, n_therm=N_THERM, n_skip=N_SKIP, progress=False,
+    L=6,
+    D=D,
+    gaugegroup=gaugegroup,
+    beta=BETA,
+    n_configs=20,
+    n_therm=N_THERM,
+    n_skip=N_SKIP,
+    progress=False,
 )
 mean_O_vs_steps = []
-W = configs_small
 for n in range(0, 9):
-    Wn = configs_small if n == 0 else ape_smear(
-        configs_small, gaugegroup, alpha=SMEAR_ALPHA, n_steps=n, time_axis=TIME_AXIS
-    )
-    O = glueball_operator(Wn, gaugegroup, time_axis=TIME_AXIS)
+    Wn = ape_smear(configs_small, gaugegroup, alpha=SMEAR_ALPHA, n_steps=n)
+    O = glueball_operator(Wn, gaugegroup)
     mean_O_vs_steps.append(O.mean().item())
 
 # ── Real ensemble (bottom row) ────────────────────────────────────────────────
 print(f"3/4  Sampling SU(2) ensemble  L={L} D={D} β={BETA}  N={N_CONFIGS} …")
 configs, acc = mcmc_ensemble(
-    L=L, D=D, gaugegroup=gaugegroup, beta=BETA,
-    n_configs=N_CONFIGS, n_therm=N_THERM, n_skip=N_SKIP, progress=False,
+    L=L,
+    D=D,
+    gaugegroup=gaugegroup,
+    beta=BETA,
+    n_configs=N_CONFIGS,
+    n_therm=N_THERM,
+    n_skip=N_SKIP,
+    progress=False,
 )
 print(f"     acceptance = {acc:.2f}")
 
 print("4/4  Smearing + correlators …")
-configs_sm = ape_smear(configs, gaugegroup, alpha=SMEAR_ALPHA,
-                       n_steps=SMEAR_STEPS, time_axis=TIME_AXIS)
+configs_sm = ape_smear(configs, gaugegroup, alpha=SMEAR_ALPHA, n_steps=SMEAR_STEPS)
 
 
 def measure(W):
-    Obar = zero_momentum(glueball_operator(W, gaugegroup, time_axis=TIME_AXIS),
-                         time_axis=TIME_AXIS)
+    Obar = zero_momentum(glueball_operator(W, gaugegroup))
     C = connected_correlator(Obar)
     meff, err = jackknife_effective_mass(Obar)
     return Obar, C, meff, err
@@ -117,16 +123,25 @@ fig, ax = plt.subplots(2, 2, figsize=(12, 9))
 # (0,0) synthetic validation
 d_syn = np.arange(len(meff_syn))
 ax[0, 0].axhline(M_TRUE, color="k", ls="--", label=f"m_true = {M_TRUE}")
-ax[0, 0].errorbar(d_syn, meff_syn.numpy(), yerr=err_syn.numpy(),
-                  fmt="o-", capsize=3, label="extracted m_eff")
+ax[0, 0].errorbar(
+    d_syn,
+    meff_syn.numpy(),
+    yerr=err_syn.numpy(),
+    fmt="o-",
+    capsize=3,
+    label="extracted m_eff",
+)
 ax[0, 0].set_xlim(0, 10)
 ax[0, 0].set_title("(0,0) code check: synthetic known mass → plateau")
-ax[0, 0].set_xlabel("Δ"); ax[0, 0].set_ylabel("m_eff(Δ)"); ax[0, 0].legend()
+ax[0, 0].set_xlabel("Δ")
+ax[0, 0].set_ylabel("m_eff(Δ)")
+ax[0, 0].legend()
 
 # (0,1) smearing monotonicity
 ax[0, 1].plot(range(len(mean_O_vs_steps)), mean_O_vs_steps, "o-")
 ax[0, 1].set_title("(0,1) smearing sanity: ⟨O⟩ rises toward 1")
-ax[0, 1].set_xlabel("APE steps"); ax[0, 1].set_ylabel("⟨O⟩ (mean spatial plaquette)")
+ax[0, 1].set_xlabel("APE steps")
+ax[0, 1].set_ylabel("⟨O⟩ (mean spatial plaquette)")
 
 # (1,0) real correlator, semilog where positive
 for C, lab, col in [(C_thin, "thin", "C0"), (C_sm, f"smeared ×{SMEAR_STEPS}", "C1")]:
@@ -135,19 +150,26 @@ for C, lab, col in [(C_thin, "thin", "C0"), (C_sm, f"smeared ×{SMEAR_STEPS}", "
     dd = np.arange(len(C))
     ax[1, 0].semilogy(dd[pos], C[pos], "o-", color=col, label=lab)
 ax[1, 0].set_title("(1,0) real ensemble: connected C(Δ)")
-ax[1, 0].set_xlabel("Δ"); ax[1, 0].set_ylabel("C(Δ)  (positive part)"); ax[1, 0].legend()
+ax[1, 0].set_xlabel("Δ")
+ax[1, 0].set_ylabel("C(Δ)  (positive part)")
+ax[1, 0].legend()
 
 # (1,1) real m_eff with jackknife bands (mask non-finite)
 for meff, err, lab, col in [
     (meff_thin, err_thin, "thin", "C0"),
     (meff_sm, err_sm, f"smeared ×{SMEAR_STEPS}", "C1"),
 ]:
-    m = meff.numpy(); e = err.numpy()
+    m = meff.numpy()
+    e = err.numpy()
     ok = np.isfinite(m) & np.isfinite(e)
     dd = np.arange(len(m))
-    ax[1, 1].errorbar(dd[ok], m[ok], yerr=e[ok], fmt="o-", capsize=3, color=col, label=lab)
+    ax[1, 1].errorbar(
+        dd[ok], m[ok], yerr=e[ok], fmt="o-", capsize=3, color=col, label=lab
+    )
 ax[1, 1].set_title("(1,1) real ensemble: m_eff(Δ)  (noisy — ensemble-limited)")
-ax[1, 1].set_xlabel("Δ"); ax[1, 1].set_ylabel("m_eff(Δ)"); ax[1, 1].legend()
+ax[1, 1].set_xlabel("Δ")
+ax[1, 1].set_ylabel("m_eff(Δ)")
+ax[1, 1].legend()
 
 fig.suptitle(
     f"Glueball baseline — SU(2)  L={L} D={D} β={BETA}  N={N_CONFIGS}  (acc {acc:.2f})",
