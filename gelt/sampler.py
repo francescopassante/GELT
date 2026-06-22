@@ -7,6 +7,7 @@ for U(1)/SU(2)/SU(3) without restructuring the sweep loop.
 
 from typing import List, Optional, Sequence, Tuple
 
+import numpy as np
 import torch
 from tqdm import tqdm
 
@@ -577,3 +578,51 @@ def mcmc_ensemble(
             acc_rates.append(acc)
 
     return torch.stack(configs), sum(acc_rates) / len(acc_rates)
+
+
+def integrated_autocorrelation_time(
+    series, c: float = 6.0, max_lag: Optional[int] = None
+) -> Tuple[np.ndarray, float, int]:
+    """Normalised autocorrelation ρ(t) and integrated autocorrelation time τ_int
+    of a scalar Markov-chain observable, with Madras–Sokal automatic windowing.
+
+    For a chain ``x_i`` (one scalar per Monte-Carlo step),
+        ρ(t)  = ⟨(x_i − x̄)(x_{i+t} − x̄)⟩ / ⟨(x_i − x̄)²⟩,
+        τ_int = ½ + Σ_{t=1}^{W} ρ(t),
+    where the window ``W`` is the smallest lag with ``W ≥ c · τ_int(W)`` (Sokal;
+    ``c ≈ 6`` balances the bias of truncating too early against the variance of
+    summing the noisy tail). τ_int counts correlated steps: samples drawn
+    ``n_skip ≳ 2·τ_int`` apart are effectively independent, and the error on the
+    mean scales as ``σ / √(N / 2τ_int)``. A perfectly mixed chain gives
+    ρ(t≥1) ≈ 0 and τ_int → ½ (every step independent).
+
+    Parameters
+    ----------
+    series : 1-D array-like, one scalar per chain step (numpy or a CPU tensor).
+    c : Sokal windowing constant.
+    max_lag : largest lag evaluated (defaults to ``len(series) // 4``).
+
+    Returns
+    -------
+    (rho, tau_int, window) : ρ as a numpy array over lags 0…max_lag, the τ_int
+        estimate, and the chosen window ``W``.
+    """
+    x = np.asarray(series, dtype=float).ravel()
+    n = x.size
+    if max_lag is None:
+        max_lag = n // 4
+    delta = x - x.mean()
+    var = float(np.mean(delta * delta))
+    rho = np.ones(max_lag + 1)
+    if var > 0:
+        for t in range(1, max_lag + 1):
+            rho[t] = np.mean(delta[: n - t] * delta[t:]) / var
+    # Sokal automatic window: stop at the first W with W ≥ c · τ_int(W).
+    tau, window = 0.5, max_lag
+    for t in range(1, max_lag + 1):
+        tau += rho[t]
+        if t >= c * tau:
+            window = t
+            break
+    tau_int = 0.5 + float(rho[1 : window + 1].sum())
+    return rho, tau_int, window

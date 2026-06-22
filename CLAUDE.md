@@ -164,6 +164,12 @@ Library lives in `gelt/`; entry-point scripts in `scripts/`; pytest in
     onto SU(2) with the closed-form `_su2_from_quaternion`-style projector
     `_project_su2` (cheaper than `SU.project`'s SVD/det). SU(2) only — SU(N≥3)
     needs Cabibbo–Marinari.
+  - **`integrated_autocorrelation_time(series, c=6, max_lag=None)`** — generic
+    Markov-chain diagnostic: normalised autocorrelation `ρ(t)` and `τ_int`
+    (Madras–Sokal automatic windowing, the proper version of the inline
+    estimate in `validate_sampler_su2.py`) of any scalar chain observable.
+    Returns `(rho, tau_int, window)`; samples `n_skip ≳ 2·τ_int` apart are
+    effectively independent.
 - **`data.py`** — `build_plaquette_datasets(N, D, L, group, target, ...)`.
   `target` is a callable `target(configs, group) -> Tensor` (use
   `functools.partial` to bind extra args, e.g.
@@ -222,6 +228,17 @@ loop inline (there is no shared `gelt/train.py`). Device order: cuda → mps
   the exact mean plaquette — `I₂(β)/I₁(β)` for SU(2), `tanh(β)` for Z₂ — and
   the 3D panel shows the SU(2) confining crossover vs. the Z₂ transition near
   `β_c ≈ 0.761`. Write `sampler_validation_su2.png` / `sampler_validation_z2.png`.
+- **`measure_glueball.py`** — classical 0⁺⁺ baseline (`gelt.glueball`): four
+  panels validating the correlator/`m_eff` code on a synthetic known mass and
+  smearing monotonicity (top row), then the real-ensemble `C(Δ)` / `m_eff(Δ)`
+  thin vs. smeared (bottom row). Samples via SU(2) heat-bath + overrelaxation.
+  Writes `glueball_validation.png`.
+- **`check_glueball_autocorrelation.py`** — step-1 pre-flight before
+  `measure_glueball.py`: runs a long `n_skip=1` heat-bath+OR chain, builds the
+  plaquette and the thin/smeared glueball operator per config, and reports
+  `τ_int` (via `integrated_autocorrelation_time`) so the production `n_skip` can
+  be set to `≳ 2·τ_int` of the smeared operator. Writes
+  `glueball_autocorrelation.png`.
 
 ### `tests/`
 
@@ -286,6 +303,8 @@ python scripts/train_lcnn.py           # single-run Favoni L-CNN baseline
 python scripts/check_gelt_invariance.py  # quick SU(2) gauge-invariance check on GELT
 python scripts/validate_sampler_su2.py # Metropolis four-panel sanity check (SU(2))
 python scripts/validate_sampler_z2.py  # Metropolis four-panel sanity check (Z₂)
+python scripts/check_glueball_autocorrelation.py  # τ_int of the glueball operator (set n_skip)
+python scripts/measure_glueball.py     # classical 0⁺⁺ glueball baseline (correlator + m_eff)
 python -m gelt.cnn_baseline            # torchsummary for a 5×5 CNN
 pytest tests                           # unit tests
 ```
