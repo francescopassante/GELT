@@ -3,25 +3,25 @@
 The figure answers two *separate* questions, because the answers are different
 right now:
 
-  (0,0) IS THE MEASUREMENT CODE CORRECT?  Feed a synthetic ensemble whose
-        connected correlator is a known single exponential exp(-m_true·Δ); the
-        extracted m_eff(Δ) must plateau onto m_true. This validates the
-        correlator + jackknife arithmetic independently of any lattice physics.
+  Top row — IS THE PIPELINE CORRECT?
+    · synthetic known mass: feed an ensemble whose connected correlator is a
+      known single exponential exp(-m_true·Δ); the extracted m_eff(Δ) must
+      plateau onto m_true. Validates the correlator + jackknife arithmetic
+      independently of any lattice physics.
+    · smearing sanity: ⟨O⟩ (mean spatial-plaquette operator) must rise
+      monotonically toward 1 as APE steps push the links toward smooth.
 
-  (0,1) DOES SMEARING ACT SENSIBLY?  ⟨O⟩ (mean spatial-plaquette operator) must
-        rise monotonically toward 1 as APE steps push the links toward smooth.
+  Bottom row — THE REAL ENSEMBLE (the physics):
+    · connected correlator C(Δ), thin vs APE-smeared (semilog where positive).
+    · effective mass m_eff(Δ) with jackknife bands, thin vs smeared.
 
-  (1,0) REAL ENSEMBLE, C(Δ):  connected correlator on the Metropolis ensemble,
-        thin vs APE-smeared (semilog where positive).
-  (1,1) REAL ENSEMBLE, m_eff(Δ):  with jackknife bands, thin vs smeared.
-
-The bottom row now uses the SU(2) heat-bath + overrelaxation sampler (§8, the
-prerequisite that beats Metropolis critical slowing), so it is no longer
-autocorrelation-limited — what remains is raw statistics (N_CONFIGS) and
-operator overlap (smearing). Expect the SMEARED operator to develop a
-short plateau at small Δ where the thin operator never reaches it; if it is
-still too noisy, the lever is N_CONFIGS (and, for more plateau points, a
-finer lattice / larger β — see notes/glueball_spectroscopy.md §7).
+The ensemble uses the SU(2) heat-bath + overrelaxation sampler (§8), which beats
+Metropolis critical slowing, so the bottom row is no longer autocorrelation-
+limited (check_glueball_autocorrelation.py measures τ_int ≈ 2 for the smeared
+operator, hence N_SKIP = 5). What remains is operator overlap and raw
+statistics: expect the SMEARED operator to develop a short plateau at small Δ
+where the thin operator never reaches it; if it is still too noisy, the lever is
+N_CONFIGS (see notes/glueball_spectroscopy.md §7).
 
 Run:
     python scripts/measure_glueball.py
@@ -50,12 +50,12 @@ np.random.seed(0)
 gaugegroup = SU(2)
 
 # ── Tunable ──────────────────────────────────────────────────────────────────
-L = 8  # spatial/temporal extent (cubic L^D lattice)
+L = 12  # spatial/temporal extent (cubic L^D lattice)
 D = 4  # 3+1 dimensions; time is lattice axis 0
-BETA = 2.3  # SU(2), near the scaling window
-N_CONFIGS = 200  # raise for less noise on the bottom row
+BETA = 2.4  # SU(2); m·a ≈ 1.0 → usable signal at Δ = 0..3 (plateau-friendly)
+N_CONFIGS = 2000  # raise for less noise on the bottom row
 N_THERM = 300
-N_SKIP = 5
+N_SKIP = 5  # ≳ 2·τ_int (smeared-operator τ_int ≈ 2, per check_glueball_autocorrelation)
 SMEAR_ALPHA = 0.5
 SMEAR_STEPS = 6
 N_OR = 4  # overrelaxation sweeps per heat-bath sweep (decorrelation)
@@ -144,14 +144,14 @@ ax[0, 0].errorbar(
     label="extracted m_eff",
 )
 ax[0, 0].set_xlim(0, 10)
-ax[0, 0].set_title("(0,0) code check: synthetic known mass → plateau")
+ax[0, 0].set_title("code check: synthetic known mass → plateau")
 ax[0, 0].set_xlabel("Δ")
 ax[0, 0].set_ylabel("m_eff(Δ)")
 ax[0, 0].legend()
 
 # (0,1) smearing monotonicity
 ax[0, 1].plot(range(len(mean_O_vs_steps)), mean_O_vs_steps, "o-")
-ax[0, 1].set_title("(0,1) smearing sanity: ⟨O⟩ rises toward 1")
+ax[0, 1].set_title("smearing sanity: ⟨O⟩ rises toward 1")
 ax[0, 1].set_xlabel("APE steps")
 ax[0, 1].set_ylabel("⟨O⟩ (mean spatial plaquette)")
 
@@ -161,7 +161,7 @@ for C, lab, col in [(C_thin, "thin", "C0"), (C_sm, f"smeared ×{SMEAR_STEPS}", "
     pos = C > 0
     dd = np.arange(len(C))
     ax[1, 0].semilogy(dd[pos], C[pos], "o-", color=col, label=lab)
-ax[1, 0].set_title("(1,0) real ensemble: connected C(Δ)")
+ax[1, 0].set_title("real ensemble: connected C(Δ)")
 ax[1, 0].set_xlabel("Δ")
 ax[1, 0].set_ylabel("C(Δ)  (positive part)")
 ax[1, 0].legend()
@@ -178,7 +178,7 @@ for meff, err, lab, col in [
     ax[1, 1].errorbar(
         dd[ok], m[ok], yerr=e[ok], fmt="o-", capsize=3, color=col, label=lab
     )
-ax[1, 1].set_title("(1,1) real ensemble: m_eff(Δ)  (noisy — ensemble-limited)")
+ax[1, 1].set_title("real ensemble: m_eff(Δ)  (look for smeared plateau at small Δ)")
 ax[1, 1].set_xlabel("Δ")
 ax[1, 1].set_ylabel("m_eff(Δ)")
 ax[1, 1].legend()
