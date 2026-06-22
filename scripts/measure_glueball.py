@@ -15,15 +15,19 @@ right now:
         thin vs APE-smeared (semilog where positive).
   (1,1) REAL ENSEMBLE, m_eff(Δ):  with jackknife bands, thin vs smeared.
 
-The bottom row will be NOISY: with a small Metropolis ensemble there is no
-resolvable plateau yet (notes/glueball_spectroscopy.md §8 — the heat-bath
-sampler is the prerequisite). That is the point of plotting it: the top row
-shows the code is right; the bottom row shows the ensemble is the gate.
+The bottom row now uses the SU(2) heat-bath + overrelaxation sampler (§8, the
+prerequisite that beats Metropolis critical slowing), so it is no longer
+autocorrelation-limited — what remains is raw statistics (N_CONFIGS) and
+operator overlap (smearing). Expect the SMEARED operator to develop a
+short plateau at small Δ where the thin operator never reaches it; if it is
+still too noisy, the lever is N_CONFIGS (and, for more plateau points, a
+finer lattice / larger β — see notes/glueball_spectroscopy.md §7).
 
 Run:
     python scripts/measure_glueball.py
 """
 
+import functools
 import math
 
 import matplotlib.pyplot as plt
@@ -31,7 +35,7 @@ import numpy as np
 import torch
 
 from gelt.lattice import SU
-from gelt.sampler import mcmc_ensemble
+from gelt.sampler import heatbath_overrelaxation_sweep, mcmc_ensemble
 from gelt.glueball import (
     ape_smear,
     connected_correlator,
@@ -54,6 +58,12 @@ N_THERM = 300
 N_SKIP = 5
 SMEAR_ALPHA = 0.5
 SMEAR_STEPS = 6
+N_OR = 4  # overrelaxation sweeps per heat-bath sweep (decorrelation)
+
+# SU(2) heat-bath + overrelaxation: the exact, no-tuning sampler that beats
+# Metropolis critical slowing. This is the prerequisite (§8) for the bottom
+# row to develop a resolvable plateau instead of being autocorrelation-limited.
+sweep = functools.partial(heatbath_overrelaxation_sweep, n_or=N_OR)
 
 # ── (0,0)  Synthetic validation: known mass in, plateau out ───────────────────
 print("1/4  Synthetic correlator validation …")
@@ -80,6 +90,7 @@ configs_small, _ = mcmc_ensemble(
     n_configs=20,
     n_therm=N_THERM,
     n_skip=N_SKIP,
+    sweep_fn=sweep,
     progress=False,
 )
 mean_O_vs_steps = []
@@ -98,6 +109,7 @@ configs, acc = mcmc_ensemble(
     n_configs=N_CONFIGS,
     n_therm=N_THERM,
     n_skip=N_SKIP,
+    sweep_fn=sweep,
     progress=False,
 )
 print(f"     acceptance = {acc:.2f}")

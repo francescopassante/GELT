@@ -74,6 +74,25 @@ def _site_parity(spatial_shape: Tuple[int, ...], device: torch.device) -> torch.
     return sum(coords) % 2
 
 
+def _su2_from_quaternion(a0: torch.Tensor, a: torch.Tensor) -> torch.Tensor:
+    """Build SU(2) matrices from quaternion components V = a_0·I + i(a·σ).
+
+    ``a0`` is the real scalar part (shape ``(*B)``) and ``a`` the three real
+    vector components (a_1, a_2, a_3) (shape ``(*B, 3)``); no unit-norm
+    constraint is imposed here (callers supply normalised quaternions). The
+    complex dtype follows ``a0``'s precision (float64 → complex128).
+    """
+    dtype = torch.complex128 if a0.dtype == torch.float64 else torch.complex64
+    # V = [[a_0 + i a_3,  i a_1 + a_2],
+    #      [i a_1 - a_2,  a_0 - i a_3]]
+    V = torch.empty(*a0.shape, 2, 2, dtype=dtype, device=a0.device)
+    V[..., 0, 0] = torch.complex(a0, a[..., 2])
+    V[..., 0, 1] = torch.complex(a[..., 1], a[..., 0])
+    V[..., 1, 0] = torch.complex(-a[..., 1], a[..., 0])
+    V[..., 1, 1] = torch.complex(a0, -a[..., 2])
+    return V
+
+
 def _random_su2_near_identity(
     spatial_shape: Tuple[int, ...],
     epsilon: float,
@@ -108,14 +127,7 @@ def _random_su2_near_identity(
         torch.rand(*spatial_shape, 3, dtype=real_dtype, device=device) * 2 - 1
     ) * epsilon
     a0 = torch.sqrt(1.0 - (a * a).sum(dim=-1))
-    # V = [[a_0 + i a_3,  i a_1 + a_2],
-    #      [i a_1 - a_2,  a_0 - i a_3]]
-    V = torch.empty(*spatial_shape, 2, 2, dtype=dtype, device=device)
-    V[..., 0, 0] = torch.complex(a0, a[..., 2])
-    V[..., 0, 1] = torch.complex(a[..., 1], a[..., 0])
-    V[..., 1, 0] = torch.complex(-a[..., 1], a[..., 0])
-    V[..., 1, 1] = torch.complex(a0, -a[..., 2])
-    return V
+    return _su2_from_quaternion(a0, a)
 
 
 def _z2_proposal(
@@ -245,6 +257,206 @@ def metropolis_sweep(
                 U[mu] = torch.where(update_mask[..., None, None], U_proposed, U_mu)
 
     return U, total_accepted / total_proposed
+
+
+def _su2_decompose_staple(
+    A: torch.Tensor, gaugegroup: GaugeGroup, eps: float = 1e-12
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Factor an SU(2) staple sum as ``A = k · V`` with ``V ∈ SU(2)``.
+
+    Any sum of SU(2) matrices keeps the quaternion form c_0·I + i(c·σ) with
+    real c, so it is a non-negative real multiple of an SU(2) element:
+    ``k = √det A`` (real ≥ 0) and ``V = A / k``. Returns ``(k, V†)`` — ``V†``
+    is what both the heat-bath (``U' = W·V†``) and the overrelaxation reflection
+    (``U' = V†·U†·V†``) need. ``k`` is clamped at ``eps`` to keep the division
+    well-defined when the staples cancel (k → 0, the disordered limit).
+
+    Parameters
+    ----------
+    A : ``(*Λ, 2, 2)`` staple sum from :func:`staple_sum`.
+
+    Returns
+    -------
+    (k, V_dag) : ``k`` of shape ``(*Λ)``, ``V_dag`` of shape ``(*Λ, 2, 2)``.
+    """
+    det = A[..., 0, 0] * A[..., 1, 1] - A[..., 0, 1] * A[..., 1, 0]
+    k = det.real.clamp_min(eps).sqrt()  # (*Λ); det is real ≥ 0 for quaternion A
+    V_dag = gaugegroup.dagger(A) / k[..., None, None]
+    return k, V_dag
+
+
+def _project_su2(M: torch.Tensor) -> torch.Tensor:
+    """Nearest SU(2) to ``M``: keep its quaternion part and renormalise.
+
+    Every SU(2) element is ``[[α, β], [−β̄, ᾱ]]`` with ``|α|² + |β|² = 1``; the
+    least-squares projection of a 2×2 ``M`` onto that form is
+    ``α = (M₀₀ + M̄₁₁)/2``, ``β = (M₀₁ − M̄₁₀)/2``, renormalised. This closed
+    form is cheaper than the general SVD/polar in :meth:`SU.project` (and avoids
+    its ``linalg`` ops); overrelaxation calls it every sweep to shed the
+    round-off it would otherwise amplify off the group manifold.
+    """
+    alpha = 0.5 * (M[..., 0, 0] + M[..., 1, 1].conj())
+    beta = 0.5 * (M[..., 0, 1] - M[..., 1, 0].conj())
+    norm = (alpha.abs() ** 2 + beta.abs() ** 2).sqrt().clamp_min(1e-12)
+    alpha, beta = alpha / norm, beta / norm
+    out = torch.empty_like(M)
+    out[..., 0, 0], out[..., 0, 1] = alpha, beta
+    out[..., 1, 0], out[..., 1, 1] = -beta.conj(), alpha.conj()
+    return out
+
+
+def _sample_su2_w0(a: torch.Tensor, max_iter: int = 100) -> torch.Tensor:
+    """Sample the scalar part w_0 ∈ [−1, 1] of the heat-bath SU(2) element.
+
+    The local weight for ``W = U·V`` is ``∝ exp(a·w_0)`` with the SU(2) Haar
+    measure contributing ``√(1−w_0²)``, so w_0 has density
+    ``∝ √(1−w_0²) · exp(a·w_0)``. Creutz (1980): propose ``x ∝ exp(a·x)`` on
+    ``[−1, 1]`` via inverse-CDF (written ``x = 1 + ln[r + (1−r)e^{−2a}] / a``
+    to stay overflow-free at large ``a``) and accept with probability
+    ``√(1−x²)`` (the test ``r'² ≤ 1 − x²``). Unlike Kennedy–Pendleton this is
+    robust at *every* ``a = β·|staple|`` — including the small-staple sites of
+    coarse / low-dimensional lattices — and stays efficient at the large ``a``
+    of thermalised 4D SU(2). The rejection loop is vectorised over the lattice;
+    only not-yet-accepted sites are resampled.
+
+    Parameters
+    ----------
+    a : ``(*Λ)`` non-negative heat-bath parameter, one per site.
+
+    Returns
+    -------
+    ``(*Λ)`` real tensor of w_0 values.
+    """
+    shape = a.shape
+    device = a.device
+    a = a.clamp_min(1e-6)  # guard the 1/a at fully disordered sites
+    e_m2a = torch.exp(-2 * a)
+    w0 = torch.zeros(shape, dtype=a.dtype, device=device)
+    accepted = torch.zeros(shape, dtype=torch.bool, device=device)
+    for _ in range(max_iter):
+        r = torch.rand(shape, dtype=a.dtype, device=device)
+        rp = torch.rand(shape, dtype=a.dtype, device=device)
+        x = 1 + torch.log(r + (1 - r) * e_m2a) / a  # x ∝ exp(a·x) on [−1, 1]
+        hit = (rp * rp <= 1 - x * x) & ~accepted
+        w0 = torch.where(hit, x, w0)
+        accepted = accepted | hit
+        if bool(accepted.all()):
+            break
+    if not bool(accepted.all()):
+        raise RuntimeError(
+            "SU(2) heat-bath w_0 sampling failed to converge in "
+            f"{max_iter} iterations (unexpected — Creutz accepts at every a)."
+        )
+    return w0
+
+
+def _su2_heatbath_links(
+    A: torch.Tensor, beta: float, gaugegroup: GaugeGroup
+) -> torch.Tensor:
+    """Draw a fresh SU(2) link per site from its heat-bath distribution.
+
+    With ``A = k·V`` (see :func:`_su2_decompose_staple`), the new link is
+    ``U' = W·V†`` where ``W ∈ SU(2)`` is drawn with weight ``∝ exp(β·k·w_0)``:
+    w_0 from :func:`_sample_su2_w0` and the 3-vector uniform on the sphere of
+    radius ``√(1−w_0²)``. Computed for *every* site; the caller applies it only
+    to the active checkerboard parity.
+    """
+    k, V_dag = _su2_decompose_staple(A, gaugegroup)
+    w0 = _sample_su2_w0(beta * k)  # (*Λ)
+    norm = (1 - w0 * w0).clamp_min(0).sqrt()  # |w| = √(1−w_0²)
+    g = torch.randn(*w0.shape, 3, dtype=w0.dtype, device=w0.device)
+    g = g / g.norm(dim=-1, keepdim=True).clamp_min(1e-12)  # uniform direction
+    W = _su2_from_quaternion(w0, norm[..., None] * g)
+    return W @ V_dag
+
+
+def _su2_local_sweep(U: torch.Tensor, gaugegroup: GaugeGroup, update) -> torch.Tensor:
+    """One checkerboard sweep applying a per-site SU(2) update to every link.
+
+    ``update(A, U_mu) -> U_new`` maps the staple sum ``A`` and the current links
+    ``U_mu`` of a direction to the proposed links for all sites; only the active
+    checkerboard parity is written. Same-parity links along μ share no staple, so
+    they update independently, and the staple is recomputed once per (μ, parity).
+    The heat-bath and overrelaxation sweeps differ *only* in ``update``.
+
+    SU(2) only — for SU(N≥3) use Cabibbo–Marinari (heat-bath on SU(2) subgroups).
+    """
+    if not (isinstance(gaugegroup, SU) and gaugegroup.nc == 2):
+        raise NotImplementedError(
+            f"SU(2) heat-bath / overrelaxation only, got {gaugegroup}. "
+            "For SU(N≥3) use Cabibbo–Marinari on SU(2) sub-blocks."
+        )
+    D = U.shape[0]
+    parity = _site_parity(U.shape[1:-2], U.device)
+    U = U.clone()
+    for mu in range(D):
+        for par in (0, 1):
+            A = staple_sum(U, mu, gaugegroup)
+            mask = (parity == par)[..., None, None]
+            U[mu] = torch.where(mask, update(A, U[mu]), U[mu])
+    return U
+
+
+def heatbath_sweep(
+    U: torch.Tensor, gaugegroup: GaugeGroup, beta: float
+) -> Tuple[torch.Tensor, float]:
+    """One SU(2) heat-bath sweep — each link drawn from its exact local weight.
+
+    There is no accept/reject (Creutz sampling), so decorrelation is far better
+    than Metropolis with no critical-slowing tuning. Returns acceptance 1.0
+    (heat-bath always "accepts"). SU(2) only.
+    """
+    U = _su2_local_sweep(
+        U, gaugegroup, lambda A, U_mu: _su2_heatbath_links(A, beta, gaugegroup)
+    )
+    return U, 1.0
+
+
+def overrelaxation_sweep(
+    U: torch.Tensor, gaugegroup: GaugeGroup, beta: Optional[float] = None
+) -> Tuple[torch.Tensor, float]:
+    """One SU(2) overrelaxation sweep — a microcanonical, action-preserving move.
+
+    The local action depends on the link only through ``Re Tr(U·A) = k·Re Tr(U·V)``.
+    Reflecting ``W = U·V → W†`` leaves ``Re Tr`` invariant (SU(2) traces are
+    real) but moves the link maximally far, so ``U' = V†·U†·V†`` conserves the
+    action exactly while decorrelating the long-wavelength modes that heat-bath
+    alone leaves slow. Deterministic — no randomness, no rejection — and
+    therefore not ergodic on its own: interleave with :func:`heatbath_sweep`.
+    ``beta`` is accepted for sweep-signature compatibility but unused (the move
+    is independent of β). SU(2) only.
+
+    The reflection is an isometry on the SU(2) manifold but *expansive* off it:
+    it does not damp round-off, so the tiny non-unitarity grows geometrically
+    (≈ ×15 per sweep) and would blow the links up within a handful of sweeps.
+    Each updated link is therefore re-projected onto SU(2) via
+    :func:`_project_su2` — a no-op (to round-off) on an already-on-group link,
+    so the action is still conserved, but it keeps the ensemble on the group.
+    """
+
+    def reflect(A, U_mu):
+        _, V_dag = _su2_decompose_staple(A, gaugegroup)
+        return _project_su2(V_dag @ gaugegroup.dagger(U_mu) @ V_dag)
+
+    return _su2_local_sweep(U, gaugegroup, reflect), 1.0
+
+
+def heatbath_overrelaxation_sweep(
+    U: torch.Tensor, gaugegroup: GaugeGroup, beta: float, n_or: int = 4
+) -> Tuple[torch.Tensor, float]:
+    """One heat-bath sweep followed by ``n_or`` overrelaxation sweeps (SU(2)).
+
+    The standard production recipe: heat-bath supplies ergodicity, the cheap
+    deterministic overrelaxation sweeps accelerate decorrelation of the slow
+    modes. Pin ``n_or`` from a sampler call site with
+    ``functools.partial(heatbath_overrelaxation_sweep, n_or=...)``. Registered
+    nowhere by default — pass it as ``sweep_fn=`` to :func:`mcmc_ensemble` to
+    opt SU(2) ensembles into heat-bath instead of Metropolis.
+    """
+    U, _ = heatbath_sweep(U, gaugegroup, beta)
+    for _ in range(n_or):
+        U, _ = overrelaxation_sweep(U, gaugegroup)
+    return U, 1.0
 
 
 def haar_ensemble(

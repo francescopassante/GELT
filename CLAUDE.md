@@ -42,8 +42,8 @@ removed pending rewrites; the spec now lives across the notes below.)
   Sections 0 (lattice primer) and 1 (L-CNN) are the architecture
   prerequisites.
 - `notes/sampling.md` — strategy notes for the MC sampler (single-site
-  Metropolis for Z₂; extension plan to heat-bath + overrelaxation for
-  U(1)/SU(2)/SU(3)).
+  Metropolis for Z₂; heat-bath + overrelaxation now implemented for SU(2),
+  extension plan to U(1)/SU(3)).
 - `notes/resources.md` — curated textbooks, lecture notes, and ML-for-LGT
   papers with suggested reading order.
 - `notes/tunnel-visualization.md` — exploratory notes on visualising
@@ -143,10 +143,27 @@ Library lives in `gelt/`; entry-point scripts in `scripts/`; pytest in
   `_PROPOSAL_FN[type(group)]` — `_z2_proposal` (`U → −U`) and
   `_su2_proposal` (`U → V·U`, V near identity)); `mcmc_ensemble`
   (thermalise + decorrelate + collect, dispatches the sweep per group via
-  `_SWEEP_FN`, currently Metropolis for both Z₂ and SU(2)); `haar_ensemble`
-  (Haar-uniform, ignores β — shares the sampler interface for sanity
-  checks). To plug in U(1)/SU(N) later, add a proposal (and/or sweep) and
-  register it in `_PROPOSAL_FN` / `_SWEEP_FN`.
+  `_SWEEP_FN`, **Metropolis is the registered default for both Z₂ and
+  SU(2)**); `haar_ensemble` (Haar-uniform, ignores β — shares the sampler
+  interface for sanity checks). To plug in U(1)/SU(N) later, add a proposal
+  (and/or sweep) and register it in `_PROPOSAL_FN` / `_SWEEP_FN`.
+  - **SU(2) heat-bath + overrelaxation** (`heatbath_sweep`,
+    `overrelaxation_sweep`, and the combined `heatbath_overrelaxation_sweep`
+    — 1 heat-bath + `n_or` OR sweeps) is the exact, no-tuning sampler that
+    beats Metropolis critical slowing; it is the prerequisite for resolvable
+    spectroscopy (see `notes/glueball_spectroscopy.md` §8). It is **opt-in,
+    not the registry default** (so `validate_sampler_su2.py` still tests
+    Metropolis): pass it as `sweep_fn=` to `mcmc_ensemble`, e.g.
+    `functools.partial(heatbath_overrelaxation_sweep, n_or=4)`. Both sweeps
+    share one checkerboard skeleton (`_su2_local_sweep`), differing only in
+    the per-site update: heat-bath factors the staple `A = k·V`
+    (`_su2_decompose_staple`), draws the scalar part via Creutz
+    (`_sample_su2_w0`), and sets `U' = W·V†`; overrelaxation reflects
+    `U' = V†·U†·V†`. Overrelaxation is microcanonical (action-preserving) but
+    *expansive* off the group manifold, so each reflected link is re-projected
+    onto SU(2) with the closed-form `_su2_from_quaternion`-style projector
+    `_project_su2` (cheaper than `SU.project`'s SVD/det). SU(2) only — SU(N≥3)
+    needs Cabibbo–Marinari.
 - **`data.py`** — `build_plaquette_datasets(N, D, L, group, target, ...)`.
   `target` is a callable `target(configs, group) -> Tensor` (use
   `functools.partial` to bind extra args, e.g.
@@ -222,6 +239,11 @@ loop inline (there is no shared `gelt/train.py`). Device order: cuda → mps
   and finite-grad backward pass on a batched SU(3) example. **Tests the
   `blocks_bias` variant** (not the trained `blocks_rope`); the full suite
   passes now that the dead parameters are resolved (see Status).
+- **`test_sampler.py`** — SU(2) heat-bath + overrelaxation correctness:
+  overrelaxation conserves the Wilson action to machine precision and stays
+  on the group; heat-bath stays on the group and reproduces the *exact* 2D
+  SU(2) mean plaquette `I₂(β)/I₁(β)` (the automated analogue of
+  `validate_sampler_su2.py`'s 2D panel).
 
 ## Conventions
 
