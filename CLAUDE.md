@@ -44,6 +44,12 @@ removed pending rewrites; the spec now lives across the notes below.)
 - `notes/sampling.md` — strategy notes for the MC sampler (single-site
   Metropolis for Z₂; heat-bath + overrelaxation now implemented for SU(2),
   extension plan to U(1)/SU(3)).
+- `notes/glueball_spectroscopy.md` — the plan for moving GELT from
+  per-configuration regression to **0⁺⁺ glueball spectroscopy**: GELT as a
+  learned variational operator trained on the Rayleigh loss `−C(1)/C(0)`
+  (the converged loss *is* the glueball mass), the classical
+  correlator/`m_eff` baseline it is validated against, the central role of
+  spatial smearing, and the heat-bath sampler as the prerequisite long pole.
 - `notes/resources.md` — curated textbooks, lecture notes, and ML-for-LGT
   papers with suggested reading order.
 - `notes/tunnel-visualization.md` — exploratory notes on visualising
@@ -80,6 +86,30 @@ spatial reduction).
 A second baseline now lives in **`gelt/lcnn.py`**: the Favoni et al. L-CNN
 (`LConv`, `LBilin`, `LCB`, `LAct`, `Trace`, `LCNN` + `build_axis_transports`),
 the matched-parameter comparison target for the GELT.
+
+**Glueball spectroscopy program** (`notes/glueball_spectroscopy.md`): the
+classical 0⁺⁺ baseline *code* (§6.1) is in place — `gelt/glueball.py`
+(operator, APE smearing, connected correlator, `m_eff`, jackknife), validated
+by `tests/test_glueball.py` and visualised by `scripts/measure_glueball.py`,
+with `scripts/check_glueball_autocorrelation.py` fixing the production
+`n_skip` from the smeared-operator `τ_int`. The SU(2) heat-bath +
+overrelaxation sampler (§8, the prerequisite ensemble long pole) and the
+`integrated_autocorrelation_time` diagnostic are also in place.
+
+**Open go/no-go question: is a mass actually discoverable on a real
+ensemble?** Not yet established. The synthetic and smearing-sanity panels
+pass, but the only *physics* run on record (`glueball_validation.png`, the
+old `L=8 β=2.3 N=200` config) is **ensemble-limited with no plateau** — the
+real `m_eff(Δ)` descends through zero into negative values. The
+"plateau-friendly" config now committed in `measure_glueball.py`
+(`L=12 β=2.4 N=2000`, autocorrelation-informed `n_skip=5`) was set in
+response but **has not been run**. *Re-running `measure_glueball.py` and
+confirming a smeared plateau is the gating step before any GELT training* —
+if the ensemble cannot resolve a mass, training GELT on it is premature.
+**Only then** does §6.2 (`scripts/train_glueball.py` —
+`GELT(reduction="none")` on the Rayleigh loss `−C(1)/C(0)`, the converged
+loss *is* the mass, jackknife eval, vs. classical/L-CNN curves) become the
+next deliverable.
 
 Known caveats (see `notes/fable_audit.md` for the full list and the
 prioritized fixes):
@@ -185,6 +215,26 @@ Library lives in `gelt/`; entry-point scripts in `scripts/`; pytest in
 - **`cnn_baseline.py`** — `LatticeCNN(L, D, in_channels, hidden_channels,
   kernel_size=3)`. Non-equivariant CNN baseline; uses `Conv2d`/`Conv3d` for
   D=2/3 and a roll-based `_RollConvND` for D≥4.
+- **`glueball.py`** — classical 0⁺⁺ glueball spectroscopy baseline (the
+  validation target the learned GELT operator will be judged against, per
+  `notes/glueball_spectroscopy.md` §6.1). Time is lattice axis 0; spatial
+  directions are 1..D-1.
+  - `ape_smear(U, group, alpha=0.5, n_steps=1)` — spatial-only APE smearing
+    (each spatial link replaced by the group projection of
+    `(1−α)U + (α/n_staples)·Σ daggered spatial staples`, reusing
+    `staple_sum`); time links untouched so the transfer-matrix interpretation
+    holds. The crucial enabler for a reachable plateau (§7).
+  - `glueball_operator(U, group, R=1, T=1)` → `(B, *Λ)` real scalar field:
+    sum of spatial-plane R×T Wilson loops (a rotational scalar; R=T=1 is the
+    spatial plaquette).
+  - `zero_momentum(O)` → `(B, Nt)` timeslice operator `Ō(t)` (sum over
+    spatial sites).
+  - `connected_correlator(Obar)` → `(Nt,)` vacuum-subtracted `C(Δ)`, averaged
+    over the batch and all time origins (0⁺⁺ has nonzero VEV — subtraction is
+    essential).
+  - `effective_mass(C)` → `m_eff(Δ) = log[C(Δ)/C(Δ+1)]`.
+  - `jackknife_effective_mass(Obar)` → `(mean, err)` leave-one-out jackknife
+    over configs.
 - **`lcnn.py`** — Favoni et al. L-CNN (gauge-equivariant baseline):
   `build_axis_transports` (axis-aligned link products `U^(k)_μ(x)`, the
   L-CNN transport input — distinct from GELT's L1-ball `T`); `LConv`,
@@ -261,6 +311,12 @@ loop inline (there is no shared `gelt/train.py`). Device order: cuda → mps
   on the group; heat-bath stays on the group and reproduces the *exact* 2D
   SU(2) mean plaquette `I₂(β)/I₁(β)` (the automated analogue of
   `validate_sampler_su2.py`'s 2D panel).
+- **`test_glueball.py`** — classical glueball baseline correctness: APE
+  smearing is gauge covariant (`smear(Uᵍ) == (smear U)ᵍ`) and stays on the
+  group (SU(2) + Z₂); the glueball operator is gauge invariant; the
+  correlator / `m_eff` / jackknife arithmetic recovers a known mass from a
+  synthetic single-exponential correlator and gives a finite, positive-error
+  jackknife band.
 
 ## Conventions
 
