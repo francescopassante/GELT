@@ -97,16 +97,15 @@ overrelaxation sampler (§8, the prerequisite ensemble long pole) and the
 `integrated_autocorrelation_time` diagnostic are also in place.
 
 **Open go/no-go question: is a mass actually discoverable on a real
-ensemble?** Not yet established. The synthetic and smearing-sanity panels
-pass, but the only *physics* run on record (`glueball_validation.png`, the
-old `L=8 β=2.3 N=200` config) is **ensemble-limited with no plateau** — the
-real `m_eff(Δ)` descends through zero into negative values. The
-"plateau-friendly" config now committed in `measure_glueball.py`
-(`L=12 β=2.4 N=2000`, autocorrelation-informed `n_skip=5`) was set in
-response but **has not been run**. *Re-running `measure_glueball.py` and
-confirming a smeared plateau is the gating step before any GELT training* —
-if the ensemble cannot resolve a mass, training GELT on it is premature.
-**Only then** does §6.2 (`scripts/train_glueball.py` —
+ensemble?** Still open, now with data. The `L=12 β=2.4 N=2000` heat-bath run
+passes the code checks but the **single smeared operator does not plateau**:
+weak `m·a ≈ 0.8` at Δ = 1–2, drowning into noise by Δ ≈ 3 (the classic 0⁺⁺
+overlap/SNR problem — more statistics barely helps; the lever is operator
+overlap). The fix is now implemented: a **multi-level smearing GEVP**
+(`smearing_operator_basis` → `gevp_*`, overlaid in `measure_glueball.py`,
+which now caches the ensemble under `datasets/`). *The gating step is to
+re-run `measure_glueball.py` and read a credible ground-state `m_G` off the
+GEVP curve.* **Only then** does §6.2 (`scripts/train_glueball.py` —
 `GELT(reduction="none")` on the Rayleigh loss `−C(1)/C(0)`, the converged
 loss *is* the mass, jackknife eval, vs. classical/L-CNN curves) become the
 next deliverable.
@@ -235,6 +234,15 @@ Library lives in `gelt/`; entry-point scripts in `scripts/`; pytest in
   - `effective_mass(C)` → `m_eff(Δ) = log[C(Δ)/C(Δ+1)]`.
   - `jackknife_effective_mass(Obar)` → `(mean, err)` leave-one-out jackknife
     over configs.
+  - **Multi-level GEVP** (the Morningstar–Peardon variational fix for a single
+    operator's poor ground-state overlap): `smearing_operator_basis(configs,
+    group, levels, ...)` → `(n_levels, B, Nt)` stack of zero-momentum operators
+    at cumulative APE levels (incremental smearing); `connected_correlator_matrix(Obar)`
+    → `(Nt, n_ops, n_ops)`; `gevp_eigenvalues(C, t0=1)` solves `C(Δ)v=λC(t0)v`
+    via robust eigh-whitening with an eigenvalue floor (not Cholesky — low
+    statistics can make `C(t0)` indefinite), returning λ descending (col 0 =
+    ground state); `gevp_effective_mass(lams)` and `jackknife_gevp_effective_mass(Obar,
+    t0)`. Masses are read off `Δ ≥ t0`.
 - **`lcnn.py`** — Favoni et al. L-CNN (gauge-equivariant baseline):
   `build_axis_transports` (axis-aligned link products `U^(k)_μ(x)`, the
   L-CNN transport input — distinct from GELT's L1-ball `T`); `LConv`,
@@ -280,9 +288,11 @@ loop inline (there is no shared `gelt/train.py`). Device order: cuda → mps
   `β_c ≈ 0.761`. Write `sampler_validation_su2.png` / `sampler_validation_z2.png`.
 - **`measure_glueball.py`** — classical 0⁺⁺ baseline (`gelt.glueball`): four
   panels validating the correlator/`m_eff` code on a synthetic known mass and
-  smearing monotonicity (top row), then the real-ensemble `C(Δ)` / `m_eff(Δ)`
-  thin vs. smeared (bottom row). Samples via SU(2) heat-bath + overrelaxation.
-  Writes `glueball_validation.png`.
+  smearing monotonicity (top row), then the real-ensemble `C(Δ)` and `m_eff(Δ)`
+  comparing thin, single-smeared, and the **multi-level GEVP ground state**
+  (bottom row). Samples via SU(2) heat-bath + overrelaxation and **caches the
+  ensemble under `datasets/`** so the GEVP analysis can be re-tuned without
+  re-sampling. Writes `glueball_validation.png`.
 - **`check_glueball_autocorrelation.py`** — step-1 pre-flight before
   `measure_glueball.py`: runs a long `n_skip=1` heat-bath+OR chain, builds the
   plaquette and the thin/smeared glueball operator per config, and reports
@@ -316,7 +326,9 @@ loop inline (there is no shared `gelt/train.py`). Device order: cuda → mps
   group (SU(2) + Z₂); the glueball operator is gauge invariant; the
   correlator / `m_eff` / jackknife arithmetic recovers a known mass from a
   synthetic single-exponential correlator and gives a finite, positive-error
-  jackknife band.
+  jackknife band; and the **GEVP** recovers both masses of a synthetic
+  two-state correlator matrix (plus basis shape/invariance and the
+  single-operator matrix↔scalar consistency check).
 
 ## Conventions
 

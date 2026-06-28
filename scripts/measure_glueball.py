@@ -13,22 +13,27 @@ right now:
 
   Bottom row — THE REAL ENSEMBLE (the physics):
     · connected correlator C(Δ), thin vs APE-smeared (semilog where positive).
-    · effective mass m_eff(Δ) with jackknife bands, thin vs smeared.
+    · effective mass m_eff(Δ) with jackknife bands: thin, single smeared, and
+      the multi-level GEVP ground state — the variational basis (§5) that pulls
+      the ground-state plateau to small Δ where a single operator cannot.
 
 The ensemble uses the SU(2) heat-bath + overrelaxation sampler (§8), which beats
 Metropolis critical slowing, so the bottom row is no longer autocorrelation-
 limited (check_glueball_autocorrelation.py measures τ_int ≈ 2 for the smeared
 operator, hence N_SKIP = 5). What remains is operator overlap and raw
-statistics: expect the SMEARED operator to develop a short plateau at small Δ
-where the thin operator never reaches it; if it is still too noisy, the lever is
-N_CONFIGS (see notes/glueball_spectroscopy.md §7).
+statistics. A single smeared operator overlaps the 0⁺⁺ ground state too poorly
+to plateau cleanly before the signal drowns (confirmed on the L=12 β=2.4 N=2000
+run — m_eff slides into noise by Δ≈3 with only a weak ~0.8 signal). The standard
+fix (Morningstar–Peardon, §5) is the multi-level GEVP plotted here. The sampled
+ensemble is cached under datasets/, so the (cheap) GEVP analysis can be re-tuned
+(levels, t0) without re-running the (expensive) sampling.
 
 Run:
     python scripts/measure_glueball.py
 """
 
 import functools
-import math
+import os
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -39,10 +44,10 @@ from gelt.sampler import heatbath_overrelaxation_sweep, mcmc_ensemble
 from gelt.glueball import (
     ape_smear,
     connected_correlator,
-    effective_mass,
     glueball_operator,
     jackknife_effective_mass,
-    zero_momentum,
+    jackknife_gevp_effective_mass,
+    smearing_operator_basis,
 )
 
 torch.manual_seed(0)
@@ -68,8 +73,13 @@ N_CONFIGS = 2000  # raise for less noise on the bottom row
 N_THERM = 300
 N_SKIP = 5  # ≳ 2·τ_int (smeared-operator τ_int ≈ 2, per check_glueball_autocorrelation)
 SMEAR_ALPHA = 0.5
-SMEAR_STEPS = 6
+SMEAR_LEVELS = [0, 2, 4, 6]  # cumulative APE steps forming the GEVP basis (0 = thin)
+GEVP_T0 = 1  # GEVP reference time; masses are read off Δ ≥ t0
 N_OR = 4  # overrelaxation sweeps per heat-bath sweep (decorrelation)
+
+# Cache the (expensive) sampled ensemble so the (cheap) GEVP analysis can be
+# iterated without re-sampling. Delete the file to force a fresh ensemble.
+CACHE = f"datasets/glueball_configs_L{L}_b{BETA}_N{N_CONFIGS}.pt"
 
 # SU(2) heat-bath + overrelaxation: the exact, no-tuning sampler that beats
 # Metropolis critical slowing. This is the prerequisite (§8) for the bottom
@@ -111,35 +121,43 @@ for n in range(0, 9):
     mean_O_vs_steps.append(O.mean().item())
 
 # ── Real ensemble (bottom row) ────────────────────────────────────────────────
-print(f"3/4  Sampling SU(2) ensemble  L={L} D={D} β={BETA}  N={N_CONFIGS} …")
-configs, acc = mcmc_ensemble(
-    L=L,
-    D=D,
-    gaugegroup=gaugegroup,
-    beta=BETA,
-    n_configs=N_CONFIGS,
-    n_therm=N_THERM,
-    n_skip=N_SKIP,
-    sweep_fn=sweep,
-    progress=True,
-)
-print(f"     acceptance = {acc:.2f}")
+if os.path.exists(CACHE):
+    print(f"3/4  Loading cached ensemble {CACHE} …")
+    configs = torch.load(CACHE)
+    acc = float("nan")  # unknown for a cached ensemble
+else:
+    print(f"3/4  Sampling SU(2) ensemble  L={L} D={D} β={BETA}  N={N_CONFIGS} …")
+    configs, acc = mcmc_ensemble(
+        L=L,
+        D=D,
+        gaugegroup=gaugegroup,
+        beta=BETA,
+        n_configs=N_CONFIGS,
+        n_therm=N_THERM,
+        n_skip=N_SKIP,
+        sweep_fn=sweep,
+        progress=True,
+    )
+    print(f"     acceptance = {acc:.2f}")
+    os.makedirs("datasets", exist_ok=True)
+    torch.save(configs, CACHE)
+    print(f"     cached ensemble → {CACHE}")
 
-print("4/4  Smearing + correlators …")
-configs_sm = ape_smear(
-    configs, gaugegroup, alpha=SMEAR_ALPHA, n_steps=SMEAR_STEPS, progress=True
-)
+print("4/4  Smearing basis + correlators …")
+# Build the variational basis once (incremental smearing), then reuse its rows:
+# level 0 = thin, the top level = single smeared operator, all levels = GEVP basis.
+Obar_basis = smearing_operator_basis(
+    configs, gaugegroup, SMEAR_LEVELS, alpha=SMEAR_ALPHA, progress=True
+).double()  # float64 keeps the GEVP Cholesky well-conditioned
 
+obar_thin, obar_sm = Obar_basis[0], Obar_basis[-1]
+C_thin, C_sm = connected_correlator(obar_thin), connected_correlator(obar_sm)
+meff_thin, err_thin = jackknife_effective_mass(obar_thin)
+meff_sm, err_sm = jackknife_effective_mass(obar_sm)
 
-def measure(W):
-    Obar = zero_momentum(glueball_operator(W, gaugegroup))
-    C = connected_correlator(Obar)
-    meff, err = jackknife_effective_mass(Obar)
-    return Obar, C, meff, err
-
-
-obar_thin, C_thin, meff_thin, err_thin = measure(configs)
-obar_sm, C_sm, meff_sm, err_sm = measure(configs_sm)
+# Multi-level GEVP ground state (column 0), with its jackknife band.
+meff_gevp, err_gevp = jackknife_gevp_effective_mass(Obar_basis, t0=GEVP_T0)
+meff_g0, err_g0 = meff_gevp[:, 0], err_gevp[:, 0]
 print(f"     ⟨Ō⟩ thin = {obar_thin.mean():.2f}   C(0) thin = {C_thin[0]:.3e}")
 
 # ── Plot ──────────────────────────────────────────────────────────────────────
@@ -169,7 +187,8 @@ ax[0, 1].set_xlabel("APE steps")
 ax[0, 1].set_ylabel("⟨O⟩ (mean spatial plaquette)")
 
 # (1,0) real correlator, semilog where positive
-for C, lab, col in [(C_thin, "thin", "C0"), (C_sm, f"smeared ×{SMEAR_STEPS}", "C1")]:
+_top = SMEAR_LEVELS[-1]
+for C, lab, col in [(C_thin, "thin", "C0"), (C_sm, f"smeared ×{_top}", "C1")]:
     C = C.numpy()
     pos = C > 0
     dd = np.arange(len(C))
@@ -179,19 +198,28 @@ ax[1, 0].set_xlabel("Δ")
 ax[1, 0].set_ylabel("C(Δ)  (positive part)")
 ax[1, 0].legend()
 
-# (1,1) real m_eff with jackknife bands (mask non-finite)
+# (1,1) real m_eff with jackknife bands (mask non-finite): single operators
+# (thin, top-level smeared) vs the multi-level GEVP ground state.
 for meff, err, lab, col in [
     (meff_thin, err_thin, "thin", "C0"),
-    (meff_sm, err_sm, f"smeared ×{SMEAR_STEPS}", "C1"),
+    (meff_sm, err_sm, f"smeared ×{_top}", "C1"),
 ]:
     m = meff.numpy()
     e = err.numpy()
     ok = np.isfinite(m) & np.isfinite(e)
     dd = np.arange(len(m))
     ax[1, 1].errorbar(
-        dd[ok], m[ok], yerr=e[ok], fmt="o-", capsize=3, color=col, label=lab
+        dd[ok], m[ok], yerr=e[ok], fmt="o-", capsize=3, color=col, label=lab, alpha=0.5
     )
-ax[1, 1].set_title("real ensemble: m_eff(Δ)  (look for smeared plateau at small Δ)")
+# GEVP ground state — only Δ ≥ t0, where the per-Δ eigenvalue ordering is valid.
+mg, eg = meff_g0.numpy(), err_g0.numpy()
+dd = np.arange(len(mg))
+ok = np.isfinite(mg) & np.isfinite(eg) & (dd >= GEVP_T0)
+ax[1, 1].errorbar(
+    dd[ok], mg[ok], yerr=eg[ok], fmt="D-", capsize=3, color="C2", lw=2,
+    label=f"GEVP ground (levels {SMEAR_LEVELS}, t₀={GEVP_T0})",
+)
+ax[1, 1].set_title("real ensemble: m_eff(Δ)  (GEVP should plateau earliest/lowest)")
 ax[1, 1].set_xlabel("Δ")
 ax[1, 1].set_ylabel("m_eff(Δ)")
 ax[1, 1].legend()
