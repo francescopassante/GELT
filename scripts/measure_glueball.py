@@ -49,6 +49,17 @@ torch.manual_seed(0)
 np.random.seed(0)
 gaugegroup = SU(2)
 
+# Report the device mcmc_ensemble will auto-select (cuda → mps → cpu), so a
+# remote run can confirm at a glance that it landed on the GPU.
+_device = (
+    "cuda"
+    if torch.cuda.is_available()
+    else "mps"
+    if torch.backends.mps.is_available()
+    else "cpu"
+)
+print(f"device: {_device}")
+
 # ── Tunable ──────────────────────────────────────────────────────────────────
 L = 12  # spatial/temporal extent (cubic L^D lattice)
 D = 4  # 3+1 dimensions; time is lattice axis 0
@@ -110,12 +121,14 @@ configs, acc = mcmc_ensemble(
     n_therm=N_THERM,
     n_skip=N_SKIP,
     sweep_fn=sweep,
-    progress=False,
+    progress=True,
 )
 print(f"     acceptance = {acc:.2f}")
 
 print("4/4  Smearing + correlators …")
-configs_sm = ape_smear(configs, gaugegroup, alpha=SMEAR_ALPHA, n_steps=SMEAR_STEPS)
+configs_sm = ape_smear(
+    configs, gaugegroup, alpha=SMEAR_ALPHA, n_steps=SMEAR_STEPS, progress=True
+)
 
 
 def measure(W):

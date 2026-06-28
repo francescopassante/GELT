@@ -21,6 +21,7 @@ Conventions
 from typing import Tuple
 
 import torch
+from tqdm import tqdm
 
 from .lattice import GaugeGroup, rectangular_wilson_loop
 from .sampler import staple_sum
@@ -31,6 +32,7 @@ def ape_smear(
     gaugegroup: GaugeGroup,
     alpha: float = 0.5,
     n_steps: int = 1,
+    progress: bool = False,
 ) -> torch.Tensor:
     """Spatial APE smearing of an ensemble (time = axis 0).
 
@@ -49,6 +51,8 @@ def ape_smear(
     U : ``(B, D, *Λ, nc, nc)`` batched links.
     alpha : staple weight (0 = no smearing).
     n_steps : number of smearing iterations.
+    progress : show a tqdm bar over the (n_steps × B) per-config smear updates
+        — the serial batch loop is slow, so a bar is useful on large ensembles.
 
     Returns
     -------
@@ -61,16 +65,23 @@ def ape_smear(
     n_staples = 2 * (len(spatial) - 1)
 
     out = U.clone()
-    for _ in range(n_steps):
-        new = out.clone()
-        for b in range(out.shape[0]):
-            for mu in spatial:
-                staples = gaugegroup.dagger(
-                    staple_sum(out[b], mu, gaugegroup, nu_dirs=spatial)
-                )
-                V = (1 - alpha) * out[b, mu] + (alpha / n_staples) * staples
-                new[b, mu] = gaugegroup.project(V)
-        out = new
+    with tqdm(
+        total=n_steps * out.shape[0],
+        desc="APE smearing",
+        disable=not progress,
+        leave=False,
+    ) as bar:
+        for _ in range(n_steps):
+            new = out.clone()
+            for b in range(out.shape[0]):
+                for mu in spatial:
+                    staples = gaugegroup.dagger(
+                        staple_sum(out[b], mu, gaugegroup, nu_dirs=spatial)
+                    )
+                    V = (1 - alpha) * out[b, mu] + (alpha / n_staples) * staples
+                    new[b, mu] = gaugegroup.project(V)
+                bar.update(1)
+            out = new
     return out
 
 
