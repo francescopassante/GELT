@@ -83,13 +83,18 @@ def sample(xi, L, D, Lt=None, n_configs=N_CONFIGS):
 print("1/3  ξ=1 regression (2D SU(2) mean plaquette) …")
 cfg2d = sample(xi=1.0, L=16, D=2)
 # 2D has a single plaquette plane (0,1), so the temporal/spatial split is moot —
-# average over every plaquette directly.
+# average over every plaquette. Keep the PER-CONFIG mean so we can attach a
+# statistical error bar: ⟨P⟩ at finite N is a random variable, and without its
+# error a ~1σ fluctuation looks like a gross miss on an auto-zoomed axis.
 P = plaquette_tensor(cfg2d, gaugegroup)
-meas2d = (P.diagonal(dim1=-2, dim2=-1).sum(-1).real / gaugegroup.nc).mean().item()
+per_config = (P.diagonal(dim1=-2, dim2=-1).sum(-1).real / gaugegroup.nc).flatten(1).mean(1)
+meas2d = per_config.mean().item()
+err2d = (per_config.std(unbiased=True) / per_config.shape[0] ** 0.5).item()
 b = torch.tensor(BETA, dtype=torch.float64)
 exact2d = (torch.special.i0(b) / torch.special.i1(b) - 2.0 / b).item()
-print(f"     measured ⟨P⟩ = {meas2d:.4f}   exact I₂/I₁ = {exact2d:.4f}   "
-      f"Δ = {abs(meas2d - exact2d):.4f}")
+n_sigma = abs(meas2d - exact2d) / err2d if err2d > 0 else float("inf")
+print(f"     measured ⟨P⟩ = {meas2d:.4f} ± {err2d:.4f}   exact I₂/I₁ = {exact2d:.4f}   "
+      f"Δ = {meas2d - exact2d:+.4f}  ({n_sigma:.1f}σ)")
 
 # ── 2. ξ-scan of ⟨P_ss⟩ vs ⟨P_st⟩ (4D) ────────────────────────────────────────
 print("2/3  ξ-scan of spatial vs temporal plaquette (4D) …")
@@ -114,8 +119,14 @@ print("     (noisy small-lattice estimate; bare ≠ renormalized — no auto-tun
 # ── Plot ──────────────────────────────────────────────────────────────────────
 fig, ax = plt.subplots(1, 2, figsize=(11, 4.5))
 ax[0].axhline(exact2d, color="k", ls="--", label="exact I₂(β)/I₁(β)")
-ax[0].plot([1.0], [meas2d], "o", ms=9, label="ξ=1 anisotropic path")
-ax[0].set_title(f"ξ=1 regression — 2D SU(2)  β={BETA}")
+ax[0].errorbar([1.0], [meas2d], yerr=[err2d], fmt="o", ms=9, capsize=6,
+               label="ξ=1 anisotropic path")
+# Pad the y-range generously around the error bar so a ~1σ statistical wobble is
+# not visually exaggerated by an auto-zoom spanning only a few ×10⁻⁴.
+span = max(5 * err2d, abs(meas2d - exact2d) * 1.5, 0.01)
+ax[0].set_ylim(min(meas2d, exact2d) - span, max(meas2d, exact2d) + span)
+ax[0].set_xlim(0.9, 1.1)
+ax[0].set_title(f"ξ=1 regression — 2D SU(2)  β={BETA}   (Δ={meas2d - exact2d:+.4f}, {n_sigma:.1f}σ)")
 ax[0].set_xlabel("ξ")
 ax[0].set_ylabel("⟨Re Tr P / nc⟩")
 ax[0].legend()
