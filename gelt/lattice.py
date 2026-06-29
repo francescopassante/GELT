@@ -116,13 +116,20 @@ def random_links(
     gaugegroup: GaugeGroup,
     dtype: torch.dtype = torch.float32,
     N: Optional[int] = None,
+    Lt: Optional[int] = None,
 ) -> torch.Tensor:
     """Sample Haar-random link configuration(s).
 
-    Without ``N``: returns shape ``(D, L, ..., L, nc, nc)``.
-    With ``N``:    returns shape ``(N, D, L, ..., L, nc, nc)``.
+    Without ``N``: returns shape ``(D, *Λ, nc, nc)``.
+    With ``N``:    returns shape ``(N, D, *Λ, nc, nc)``.
+
+    ``Λ`` is the cubic ``(L,) * D`` unless ``Lt`` is given, in which case the
+    lattice is non-cubic with the temporal extent on axis 0:
+    ``Λ = (Lt,) + (L,) * (D - 1)`` (matching the time = axis 0 convention used by
+    the sampler and the glueball code).
     """
-    shape = (D,) + (L,) * D
+    spatial = (L,) * D if Lt is None else (Lt,) + (L,) * (D - 1)
+    shape = (D,) + spatial
     if N is not None:
         shape = (N,) + shape
     return gaugegroup.random(shape, dtype=dtype)
@@ -167,8 +174,15 @@ def action(
     gaugegroup: GaugeGroup,
     beta: float = 1.0,
     plaquettes: Optional[torch.Tensor] = None,
+    xi: float = 1.0,
+    time_axis: int = 0,
 ) -> torch.Tensor:
     """Wilson action ``S = β Σ_p (1 − Re Tr P_p / N_c)`` for a batch of configs.
+
+    On an **anisotropic** lattice (anisotropy ``xi = a_s/a_t``) the temporal
+    plaquettes (plane touching ``time_axis``) carry β_t = β·ξ and the spatial
+    plaquettes β_s = β/ξ (tree-level relation). ``xi = 1`` recovers the isotropic
+    action above; that path is kept verbatim so existing behaviour is bit-exact.
 
     Parameters
     ----------
@@ -182,6 +196,10 @@ def action(
     plaquettes
         Pre-computed batched plaquette tensor of shape ``(B, n_pairs, *Λ, nc, nc)``;
         if ``None`` it is computed from ``U``.
+    xi
+        Bare anisotropy a_s/a_t (1.0 = isotropic).
+    time_axis
+        Direction treated as time when classifying temporal plaquettes.
 
     Returns
     -------
@@ -190,9 +208,28 @@ def action(
     P = plaquettes if plaquettes is not None else plaquette_tensor(U, gaugegroup)
     re_tr_over_nc = P.diagonal(dim1=-2, dim2=-1).sum(dim=-1).real / gaugegroup.nc
     # re_tr_over_nc: (B, n_pairs, *Λ) — sum over all plaquettes per config.
-    n_plaq_per_config = re_tr_over_nc[0].numel()
-    # equivalent to beta (sum_p 1 - P_p) per config
-    return beta * (n_plaq_per_config - re_tr_over_nc.flatten(1).sum(1))
+    if xi == 1.0:
+        n_plaq_per_config = re_tr_over_nc[0].numel()
+        # equivalent to beta (sum_p 1 - P_p) per config
+        return beta * (n_plaq_per_config - re_tr_over_nc.flatten(1).sum(1))
+
+    # Anisotropic: weight each (μ, ν) pair by β_t (temporal) or β_s (spatial),
+    # following plaquette_tensor's μ < ν lexicographic order. Recover D from
+    # n_pairs = D(D-1)/2 so this works whether U or precomputed plaquettes was given.
+    n_pairs = re_tr_over_nc.shape[1]
+    D = int((1 + (1 + 8 * n_pairs) ** 0.5) / 2)
+    pairs = [(mu, nu) for mu in range(D) for nu in range(mu + 1, D)]
+    weights = torch.tensor(
+        [beta * xi if (mu == time_axis or nu == time_axis) else beta / xi
+         for mu, nu in pairs],
+        dtype=re_tr_over_nc.dtype,
+        device=re_tr_over_nc.device,
+    )  # (n_pairs,)
+    flat = re_tr_over_nc.flatten(2)  # (B, n_pairs, n_sites)
+    n_sites = flat.shape[-1]
+    # S = Σ_pairs w_pair Σ_x (1 − Re Tr P / nc)
+    per_pair = weights * (n_sites - flat.sum(-1))  # (B, n_pairs)
+    return per_pair.sum(1)
 
 
 def _permutation_sign(perm: Tuple[int, ...]) -> int:

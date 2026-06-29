@@ -38,12 +38,35 @@ late-Δ signal to plateau on. This is the textbook 0⁺⁺ problem (§7): the gl
 is heavy, the signal dies in ~3 slices, and more statistics barely helps
 (Lepage). **The lever is operator overlap, not N** — hence the GEVP basis.
 
-**Next step:** re-run `measure_glueball.py` (it will load the cached ensemble)
-and check whether the multi-level GEVP ground state plateaus earlier/lower than
-the single smeared operator. If it gives a credible `m_G`, that is the
-ground-truth number to validate GELT against (§6.2). If still marginal, widen
-the basis (more/larger smearing levels, R×T loop shapes), try a smaller β / finer
-lattice where m·a is smaller, or add stout-smeared loops. Only then train GELT.
+**Update (anisotropic lattice now implemented).** The GEVP on the *isotropic*
+`L=12 β=2.4 N=2000` ensemble was still only marginal — the heavy 0⁺⁺ signal dies
+in ~3 slices regardless of operator basis. The field's primary fix is an
+**anisotropic lattice** (finer temporal spacing `a_t = a_s/ξ`, so
+`m·a_t = (m·a_s)/ξ` is small and the decay is resolved over many slices). This is
+now in the code:
+
+- `gelt/sampler.py`: `staple_sum` and the heat-bath / overrelaxation / Metropolis
+  sweeps take `xi`, `time_axis`; ξ is folded into the staple (β stays the overall
+  scale), `ξ=1` is bit-exact backward-compatible. Opt in by binding ξ into the
+  sweep, e.g. `functools.partial(heatbath_overrelaxation_sweep, n_or=4, xi=ξ)`.
+- `gelt/lattice.py`: `action(..., xi, time_axis)` weights temporal plaquettes by
+  β_t=β·ξ and spatial by β_s=β/ξ (tree-level); `random_links(..., Lt=)` and
+  `mcmc_ensemble(..., Lt=)` give a non-cubic `Lt × L^(D-1)` lattice (time = axis 0).
+- `scripts/validate_anisotropy.py`: confirms ξ=1 reproduces the exact 2D plaquette,
+  that ⟨P_st⟩>⟨P_ss⟩ for ξ>1, and estimates the **renormalized** anisotropy ξ_R
+  from a Creutz-ratio ratio (ξ_bare=3 → ξ_R≈3.3 — the tree-level mismatch made
+  visible; no auto-tuning).
+- `scripts/measure_glueball.py` defaults to an anisotropic run (`XI=3.0, LT=2·L`),
+  reports `m·a_t` and `m·a_s = ξ·m·a_t`.
+
+**Next step:** run the anisotropic `measure_glueball.py` (fresh sample — the cache
+key now includes ξ, Lt) and check whether the GEVP ground state now plateaus over
+several `Δ` at small `m·a_t`. Convert to `m·a_s = ξ·m·a_t` to compare against the
+isotropic `m·a ≈ 0.8`. **Caveat:** β_s=β/ξ, so the spatial spacing drifts with ξ;
+matching it to the isotropic run is anisotropy *tuning* (raise β with ξ), left as
+future work — the extracted `m·a_t` is still a clean number. If a credible `m_G`
+emerges, that is the ground-truth to validate GELT against (§6.2). Only then train
+GELT.
 
 ## 0. Where we are vs. what spectroscopy needs
 
@@ -262,11 +285,15 @@ keep them separate.
 
 ## 8. Prerequisite long poles (independent of the network)
 
-- **Heat-bath + overrelaxation SU(2) sampler** (`notes/sampling.md`): without
-  it there is no usable 4D ensemble. Biggest single cost.
-- **Spatial APE/stout smearing** (reusing `staple_sum`): the crucial enabler
+- **✅ Heat-bath + overrelaxation SU(2) sampler** (`notes/sampling.md`): without
+  it there is no usable 4D ensemble. Biggest single cost. *Done.*
+- **✅ Spatial APE/stout smearing** (reusing `staple_sum`): the crucial enabler
   for the classical baseline and operator overlap — see §7 for the full role
-  (including why GELT only partly replaces it); also a `fable_audit.md` item.
+  (including why GELT only partly replaces it). *Done (APE).*
+- **✅ Anisotropic lattice** (finer `a_t`): the field's primary tool for resolving
+  the heavy 0⁺⁺ — without it the signal dies in ~3 slices on an isotropic lattice.
+  *Done (tree-level ξ, non-cubic `Lt`, renormalized-ξ diagnostic);* nonperturbative
+  anisotropy *tuning* (β_s-matching) remains future work.
 
 ## 9. Verdict
 

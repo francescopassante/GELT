@@ -19,6 +19,8 @@ def staple_sum(
     mu: int,
     gaugegroup: GaugeGroup,
     nu_dirs: Optional[Sequence[int]] = None,
+    xi: float = 1.0,
+    time_axis: int = 0,
 ) -> torch.Tensor:
     """Sum of staples for every site along direction ``mu``.
 
@@ -28,6 +30,13 @@ def staple_sum(
         Σ_{ν≠μ} [  U_ν(x+μ̂) · U_μ†(x+ν̂) · U_ν†(x)          (forward staple)
                   + U_ν†(x+μ̂-ν̂) · U_μ†(x-ν̂) · U_ν(x-ν̂) ]  (backward staple)
 
+    On an **anisotropic** lattice (anisotropy ``xi = a_s/a_t``), the plane (μ, ν)
+    carries the temporal coupling β_t = β·ξ when it touches the time axis and the
+    spatial coupling β_s = β/ξ otherwise. We fold that ratio ξ^±1 into the staple
+    here (coefficient ``c = ξ`` for temporal planes, ``1/ξ`` for spatial ones), so
+    the heat-bath / Metropolis / overrelaxation math downstream keeps β as the
+    single overall scale. ``xi = 1`` ⇒ c = 1 ⇒ the isotropic staple, unchanged.
+
     Parameters
     ----------
     U     : ``(D, *Λ, nc, nc)``
@@ -35,6 +44,9 @@ def staple_sum(
     gaugegroup : gauge group (used for ``dagger``)
     nu_dirs : directions ν to sum over (defaults to all ν ≠ μ). Pass the
         spatial directions only to build spatial staples for APE smearing.
+    xi    : bare anisotropy a_s/a_t (1.0 = isotropic). Note: APE smearing is not
+        dynamics, so it must call with the default ``xi = 1`` (unweighted).
+    time_axis : direction treated as time when classifying temporal planes.
 
     Returns
     -------
@@ -43,21 +55,30 @@ def staple_sum(
     D = U.shape[0]
     if nu_dirs is None:
         nu_dirs = range(D)
+    weighted = xi != 1.0
     A = torch.zeros_like(U[mu])
     for nu in nu_dirs:
         if nu == mu:
             continue
+        # Per-plane anisotropy weight (c = 1 in the isotropic case).
+        c = (xi if (mu == time_axis or nu == time_axis) else 1.0 / xi) if weighted else 1.0
         Umu = U[mu]
         Unu = U[nu]
         # Forward: U_ν(x+μ̂) · U_μ†(x+ν̂) · U_ν†(x)
         Unu_fwd = torch.roll(Unu, shifts=-1, dims=mu)  # U_ν(x + μ̂)
         Umu_nu = torch.roll(Umu, shifts=-1, dims=nu)  # U_μ(x + ν̂)
-        A = A + Unu_fwd @ gaugegroup.dagger(Umu_nu) @ gaugegroup.dagger(Unu)
+        fwd = Unu_fwd @ gaugegroup.dagger(Umu_nu) @ gaugegroup.dagger(Unu)
         # Backward: U_ν†(x+μ̂-ν̂) · U_μ†(x-ν̂) · U_ν(x-ν̂)
         Unu_bwd = torch.roll(torch.roll(Unu, shifts=-1, dims=mu), shifts=+1, dims=nu)
         Umu_negnu = torch.roll(Umu, shifts=+1, dims=nu)  # U_μ(x - ν̂)
         Unu_negnu = torch.roll(Unu, shifts=+1, dims=nu)  # U_ν(x - ν̂)
-        A = A + gaugegroup.dagger(Unu_bwd) @ gaugegroup.dagger(Umu_negnu) @ Unu_negnu
+        bwd = gaugegroup.dagger(Unu_bwd) @ gaugegroup.dagger(Umu_negnu) @ Unu_negnu
+        if weighted:
+            A = A + c * fwd
+            A = A + c * bwd
+        else:
+            A = A + fwd
+            A = A + bwd
     return A
 
 
@@ -179,6 +200,8 @@ def metropolis_sweep(
     propose_fn=None,
     n_hits: int = 1,
     epsilon: float = 0.3,
+    xi: float = 1.0,
+    time_axis: int = 0,
 ) -> Tuple[torch.Tensor, float]:
     """One full Metropolis sweep (all directions, both checkerboard parities).
 
@@ -207,6 +230,8 @@ def metropolis_sweep(
                  proposal is deterministic.
     epsilon    : width of the proposal neighbourhood for continuous groups;
                  ignored by deterministic proposals (Z₂).
+    xi         : bare anisotropy a_s/a_t (1.0 = isotropic), folded into the staple.
+    time_axis  : direction treated as time when classifying temporal planes.
 
     Returns
     -------
@@ -236,7 +261,7 @@ def metropolis_sweep(
             # Staple depends only on links of the opposite parity in
             # direction μ (plus all links in directions ν ≠ μ); recompute
             # once per (μ, parity) and reuse across the n_hits.
-            A = staple_sum(U, mu, gaugegroup)  # (*Λ, nc, nc)
+            A = staple_sum(U, mu, gaugegroup, xi=xi, time_axis=time_axis)  # (*Λ, nc, nc)
             site_mask = parity == par  # (*Λ)
 
             for _hit in range(n_hits):
@@ -371,7 +396,13 @@ def _su2_heatbath_links(
     return W @ V_dag
 
 
-def _su2_local_sweep(U: torch.Tensor, gaugegroup: GaugeGroup, update) -> torch.Tensor:
+def _su2_local_sweep(
+    U: torch.Tensor,
+    gaugegroup: GaugeGroup,
+    update,
+    xi: float = 1.0,
+    time_axis: int = 0,
+) -> torch.Tensor:
     """One checkerboard sweep applying a per-site SU(2) update to every link.
 
     ``update(A, U_mu) -> U_new`` maps the staple sum ``A`` and the current links
@@ -379,6 +410,9 @@ def _su2_local_sweep(U: torch.Tensor, gaugegroup: GaugeGroup, update) -> torch.T
     checkerboard parity is written. Same-parity links along μ share no staple, so
     they update independently, and the staple is recomputed once per (μ, parity).
     The heat-bath and overrelaxation sweeps differ *only* in ``update``.
+
+    ``xi``/``time_axis`` select an anisotropic staple (see :func:`staple_sum`); the
+    update closure receives the already-weighted staple, so it needs no change.
 
     SU(2) only — for SU(N≥3) use Cabibbo–Marinari (heat-bath on SU(2) subgroups).
     """
@@ -392,29 +426,42 @@ def _su2_local_sweep(U: torch.Tensor, gaugegroup: GaugeGroup, update) -> torch.T
     U = U.clone()
     for mu in range(D):
         for par in (0, 1):
-            A = staple_sum(U, mu, gaugegroup)
+            A = staple_sum(U, mu, gaugegroup, xi=xi, time_axis=time_axis)
             mask = (parity == par)[..., None, None]
             U[mu] = torch.where(mask, update(A, U[mu]), U[mu])
     return U
 
 
 def heatbath_sweep(
-    U: torch.Tensor, gaugegroup: GaugeGroup, beta: float
+    U: torch.Tensor,
+    gaugegroup: GaugeGroup,
+    beta: float,
+    xi: float = 1.0,
+    time_axis: int = 0,
 ) -> Tuple[torch.Tensor, float]:
     """One SU(2) heat-bath sweep — each link drawn from its exact local weight.
 
     There is no accept/reject (Creutz sampling), so decorrelation is far better
     than Metropolis with no critical-slowing tuning. Returns acceptance 1.0
-    (heat-bath always "accepts"). SU(2) only.
+    (heat-bath always "accepts"). ``xi``/``time_axis`` opt into an anisotropic
+    staple (β as the single scale, ξ folded into the staple). SU(2) only.
     """
     U = _su2_local_sweep(
-        U, gaugegroup, lambda A, U_mu: _su2_heatbath_links(A, beta, gaugegroup)
+        U,
+        gaugegroup,
+        lambda A, U_mu: _su2_heatbath_links(A, beta, gaugegroup),
+        xi=xi,
+        time_axis=time_axis,
     )
     return U, 1.0
 
 
 def overrelaxation_sweep(
-    U: torch.Tensor, gaugegroup: GaugeGroup, beta: Optional[float] = None
+    U: torch.Tensor,
+    gaugegroup: GaugeGroup,
+    beta: Optional[float] = None,
+    xi: float = 1.0,
+    time_axis: int = 0,
 ) -> Tuple[torch.Tensor, float]:
     """One SU(2) overrelaxation sweep — a microcanonical, action-preserving move.
 
@@ -425,7 +472,8 @@ def overrelaxation_sweep(
     alone leaves slow. Deterministic — no randomness, no rejection — and
     therefore not ergodic on its own: interleave with :func:`heatbath_sweep`.
     ``beta`` is accepted for sweep-signature compatibility but unused (the move
-    is independent of β). SU(2) only.
+    is independent of β). ``xi``/``time_axis`` select the anisotropic staple, so
+    the move conserves the *anisotropic* action. SU(2) only.
 
     The reflection is an isometry on the SU(2) manifold but *expansive* off it:
     it does not damp round-off, so the tiny non-unitarity grows geometrically
@@ -439,24 +487,30 @@ def overrelaxation_sweep(
         _, V_dag = _su2_decompose_staple(A, gaugegroup)
         return _project_su2(V_dag @ gaugegroup.dagger(U_mu) @ V_dag)
 
-    return _su2_local_sweep(U, gaugegroup, reflect), 1.0
+    return _su2_local_sweep(U, gaugegroup, reflect, xi=xi, time_axis=time_axis), 1.0
 
 
 def heatbath_overrelaxation_sweep(
-    U: torch.Tensor, gaugegroup: GaugeGroup, beta: float, n_or: int = 4
+    U: torch.Tensor,
+    gaugegroup: GaugeGroup,
+    beta: float,
+    n_or: int = 4,
+    xi: float = 1.0,
+    time_axis: int = 0,
 ) -> Tuple[torch.Tensor, float]:
     """One heat-bath sweep followed by ``n_or`` overrelaxation sweeps (SU(2)).
 
     The standard production recipe: heat-bath supplies ergodicity, the cheap
     deterministic overrelaxation sweeps accelerate decorrelation of the slow
-    modes. Pin ``n_or`` from a sampler call site with
-    ``functools.partial(heatbath_overrelaxation_sweep, n_or=...)``. Registered
-    nowhere by default — pass it as ``sweep_fn=`` to :func:`mcmc_ensemble` to
-    opt SU(2) ensembles into heat-bath instead of Metropolis.
+    modes. Pin ``n_or`` (and ``xi`` for anisotropic ensembles) from a sampler
+    call site with ``functools.partial(heatbath_overrelaxation_sweep, n_or=...,
+    xi=...)``. Registered nowhere by default — pass it as ``sweep_fn=`` to
+    :func:`mcmc_ensemble` to opt SU(2) ensembles into heat-bath instead of
+    Metropolis.
     """
-    U, _ = heatbath_sweep(U, gaugegroup, beta)
+    U, _ = heatbath_sweep(U, gaugegroup, beta, xi=xi, time_axis=time_axis)
     for _ in range(n_or):
-        U, _ = overrelaxation_sweep(U, gaugegroup)
+        U, _ = overrelaxation_sweep(U, gaugegroup, xi=xi, time_axis=time_axis)
     return U, 1.0
 
 
@@ -471,14 +525,16 @@ def haar_ensemble(
     sweep_fn=None,
     dtype: torch.dtype = torch.float32,
     device: Optional[torch.device] = None,
+    Lt: Optional[int] = None,
 ) -> Tuple[torch.Tensor, float]:
     """Haar-uniform ensemble — no dynamics, ignores beta.
 
     Shares the sampler interface with ``mcmc_ensemble`` so it can be passed
     as ``sampler=haar_ensemble`` anywhere a sampler callable is expected.
     Useful as a baseline or for architecture sanity-checks before MC is set up.
+    ``Lt`` (temporal extent, time = axis 0) gives a non-cubic lattice.
     """
-    return random_links(L, D, gaugegroup, dtype=dtype, N=n_configs), 1.0
+    return random_links(L, D, gaugegroup, dtype=dtype, N=n_configs, Lt=Lt), 1.0
 
 
 # Registry: maps GaugeGroup subclass → default sweep function (the *algorithm*).
@@ -510,6 +566,7 @@ def mcmc_ensemble(
     dtype: torch.dtype = torch.float32,
     device: Optional[torch.device] = None,
     progress: bool = True,
+    Lt: Optional[int] = None,
 ) -> Tuple[torch.Tensor, float]:
     """Generate a thermalized ensemble of gauge field configurations.
 
@@ -533,7 +590,15 @@ def mcmc_ensemble(
 
                      sampler = functools.partial(mcmc_ensemble, sweep_fn=my_sweep)
                      build_plaquette_datasets(..., sampler=sampler)
+
+                 Anisotropy is opted into the same way — bind ``xi`` (and
+                 ``time_axis``) into the sweep, e.g.
+                 ``functools.partial(heatbath_overrelaxation_sweep, n_or=4, xi=ξ)``
+                 — so the ensemble routine itself stays anisotropy-agnostic.
     dtype, device : passed to ``random_links``
+    Lt         : temporal extent (time = axis 0) for a non-cubic ``Lt × L^(D-1)``
+                 lattice; ``None`` ⇒ cubic ``L^D``. Pair with an anisotropic
+                 ``sweep_fn`` for finer-temporal ensembles.
 
     Returns
     -------
@@ -557,7 +622,7 @@ def mcmc_ensemble(
         else:
             device = torch.device("cpu")
 
-    U = random_links(L, D, gaugegroup, dtype=dtype).to(device)
+    U = random_links(L, D, gaugegroup, dtype=dtype, Lt=Lt).to(device)
 
     for _ in tqdm(
         range(n_therm), desc="thermalising", disable=not progress, leave=False

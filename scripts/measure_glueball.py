@@ -66,9 +66,9 @@ _device = (
 print(f"device: {_device}")
 
 # ── Tunable ──────────────────────────────────────────────────────────────────
-L = 12  # spatial/temporal extent (cubic L^D lattice)
+L = 12  # spatial extent (the lattice is LT × L^(D-1))
 D = 4  # 3+1 dimensions; time is lattice axis 0
-BETA = 2.4  # SU(2); m·a ≈ 1.0 → usable signal at Δ = 0..3 (plateau-friendly)
+BETA = 2.4  # SU(2) coupling; on the anisotropic lattice β_t = β·ξ, β_s = β/ξ
 N_CONFIGS = 2000  # raise for less noise on the bottom row
 N_THERM = 300
 N_SKIP = 5  # ≳ 2·τ_int (smeared-operator τ_int ≈ 2, per check_glueball_autocorrelation)
@@ -77,14 +77,24 @@ SMEAR_LEVELS = [0, 2, 4, 6]  # cumulative APE steps forming the GEVP basis (0 = 
 GEVP_T0 = 1  # GEVP reference time; masses are read off Δ ≥ t0
 N_OR = 4  # overrelaxation sweeps per heat-bath sweep (decorrelation)
 
+# Anisotropy: a finer temporal spacing a_t = a_s/ξ makes m·a_t = (m·a_s)/ξ small,
+# so the heavy 0⁺⁺ correlator is resolved over many time slices (the whole point —
+# the isotropic run drowned by Δ≈3). ξ=1 recovers the isotropic cubic lattice.
+# NOTE: β_s = β/ξ, so matching the *spatial* lattice spacing to an isotropic run
+# would mean raising β with ξ — that is anisotropy tuning, left out here (the
+# extracted m·a_t is still a clean number; see notes/glueball_spectroscopy.md).
+XI = 3.0  # bare anisotropy a_s/a_t (>1 ⇒ finer time)
+LT = 2 * L  # temporal extent (time = axis 0); > L to exploit the finer a_t
+
 # Cache the (expensive) sampled ensemble so the (cheap) GEVP analysis can be
 # iterated without re-sampling. Delete the file to force a fresh ensemble.
-CACHE = f"datasets/glueball_configs_L{L}_b{BETA}_N{N_CONFIGS}.pt"
+CACHE = f"datasets/glueball_configs_L{L}_Lt{LT}_b{BETA}_xi{XI}_N{N_CONFIGS}.pt"
 
 # SU(2) heat-bath + overrelaxation: the exact, no-tuning sampler that beats
 # Metropolis critical slowing. This is the prerequisite (§8) for the bottom
 # row to develop a resolvable plateau instead of being autocorrelation-limited.
-sweep = functools.partial(heatbath_overrelaxation_sweep, n_or=N_OR)
+# ξ is bound into the sweep (the ensemble routine stays anisotropy-agnostic).
+sweep = functools.partial(heatbath_overrelaxation_sweep, n_or=N_OR, xi=XI)
 
 # ── (0,0)  Synthetic validation: known mass in, plateau out ───────────────────
 print("1/4  Synthetic correlator validation …")
@@ -126,7 +136,10 @@ if os.path.exists(CACHE):
     configs = torch.load(CACHE)
     acc = float("nan")  # unknown for a cached ensemble
 else:
-    print(f"3/4  Sampling SU(2) ensemble  L={L} D={D} β={BETA}  N={N_CONFIGS} …")
+    print(
+        f"3/4  Sampling SU(2) ensemble  L={L} Lt={LT} D={D} β={BETA} ξ={XI}  "
+        f"N={N_CONFIGS} …"
+    )
     configs, acc = mcmc_ensemble(
         L=L,
         D=D,
@@ -137,6 +150,7 @@ else:
         n_skip=N_SKIP,
         sweep_fn=sweep,
         progress=True,
+        Lt=LT,
     )
     print(f"     acceptance = {acc:.2f}")
     os.makedirs("datasets", exist_ok=True)
@@ -159,6 +173,16 @@ meff_sm, err_sm = jackknife_effective_mass(obar_sm)
 meff_gevp, err_gevp = jackknife_gevp_effective_mass(Obar_basis, t0=GEVP_T0)
 meff_g0, err_g0 = meff_gevp[:, 0], err_gevp[:, 0]
 print(f"     ⟨Ō⟩ thin = {obar_thin.mean():.2f}   C(0) thin = {C_thin[0]:.3e}")
+
+# Report the GEVP ground state where the signal is cleanest (small Δ ≥ t0): the
+# correlator yields m·a_t; the spatial-unit mass is m·a_s = ξ·m·a_t.
+for dlt in (GEVP_T0, GEVP_T0 + 1):
+    if dlt < len(meff_g0) and bool(torch.isfinite(meff_g0[dlt])):
+        m_at = meff_g0[dlt].item()
+        print(
+            f"     GEVP m_eff(Δ={dlt}):  m·a_t = {m_at:.3f} ± {err_g0[dlt].item():.3f}"
+            f"   →   m·a_s = ξ·m·a_t = {XI * m_at:.3f}"
+        )
 
 # ── Plot ──────────────────────────────────────────────────────────────────────
 fig, ax = plt.subplots(2, 2, figsize=(12, 9))
@@ -219,13 +243,16 @@ ax[1, 1].errorbar(
     dd[ok], mg[ok], yerr=eg[ok], fmt="D-", capsize=3, color="C2", lw=2,
     label=f"GEVP ground (levels {SMEAR_LEVELS}, t₀={GEVP_T0})",
 )
-ax[1, 1].set_title("real ensemble: m_eff(Δ)  (GEVP should plateau earliest/lowest)")
-ax[1, 1].set_xlabel("Δ")
-ax[1, 1].set_ylabel("m_eff(Δ)")
+ax[1, 1].set_title(
+    f"real ensemble: m_eff = m·a_t  (m·a_s = ξ·m·a_t, ξ={XI}; GEVP plateaus earliest)"
+)
+ax[1, 1].set_xlabel("Δ (temporal slices)")
+ax[1, 1].set_ylabel("m_eff(Δ) = m·a_t")
 ax[1, 1].legend()
 
 fig.suptitle(
-    f"Glueball baseline — SU(2)  L={L} D={D} β={BETA}  N={N_CONFIGS}  (acc {acc:.2f})",
+    f"Glueball baseline — SU(2)  L={L} Lt={LT} D={D} β={BETA} ξ={XI}  "
+    f"N={N_CONFIGS}  (acc {acc:.2f})",
     fontsize=13,
 )
 fig.tight_layout()

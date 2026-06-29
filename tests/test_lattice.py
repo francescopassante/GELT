@@ -101,6 +101,58 @@ def test_plaquette_covariance_z2(z2, L, D):
 
 
 # ---------------------------------------------------------------------------
+# Anisotropic action (β_t = β·ξ on temporal planes, β_s = β/ξ on spatial)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("xi", [1.0, 2.0, 3.5])
+def test_action_anisotropic_gauge_invariant_su2(xi):
+    """The anisotropic Wilson action is gauge invariant for any ξ (SU(2))."""
+    L, D = 4, 4
+    su2 = SU(2)
+    torch.manual_seed(0)
+    U = random_links(L, D, su2, dtype=torch.complex128)
+    omega = _random_omega(L, D, su2, torch.complex128, seed=5)
+
+    S_before = action(U.unsqueeze(0), su2, beta=2.0, xi=xi)[0]
+    U_prime = link_gauge_transformation(U, omega, su2)
+    S_after = action(U_prime.unsqueeze(0), su2, beta=2.0, xi=xi)[0]
+    assert torch.allclose(S_before, S_after, atol=1e-10), (S_before, S_after, xi)
+
+
+def test_action_anisotropic_bitexact_invariant_z2(z2):
+    """Z₂: anisotropic action is bit-exact gauge invariant (float64)."""
+    L, D = 4, 4
+    torch.manual_seed(0)
+    U = random_links(L, D, z2, dtype=torch.float64)
+    omega = _random_omega(L, D, z2, torch.float64, seed=6)
+
+    S_before = action(U.unsqueeze(0), z2, beta=2.0, xi=2.5)[0]
+    U_prime = link_gauge_transformation(U, omega, z2)
+    S_after = action(U_prime.unsqueeze(0), z2, beta=2.0, xi=2.5)[0]
+    assert torch.equal(S_before, S_after)
+
+
+def test_action_xi1_matches_isotropic_su2():
+    """ξ=1 reproduces the isotropic action exactly (backward compatibility)."""
+    su2 = SU(2)
+    torch.manual_seed(0)
+    U = random_links(4, 4, su2, dtype=torch.complex128, N=3)
+    assert torch.allclose(
+        action(U, su2, beta=2.0), action(U, su2, beta=2.0, xi=1.0), atol=0.0
+    )
+
+
+def test_random_links_noncubic_shape():
+    """``Lt`` produces a non-cubic lattice with the temporal extent on axis 0."""
+    su2 = SU(2)
+    U = random_links(5, 4, su2, dtype=torch.complex128, Lt=9)
+    assert U.shape == (4, 9, 5, 5, 5, 2, 2)
+    U_batched = random_links(5, 4, su2, dtype=torch.complex128, N=2, Lt=9)
+    assert U_batched.shape == (2, 4, 9, 5, 5, 5, 2, 2)
+
+
+# ---------------------------------------------------------------------------
 # Topological charge density (D=4 only)
 # ---------------------------------------------------------------------------
 

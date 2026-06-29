@@ -141,10 +141,13 @@ Library lives in `gelt/`; entry-point scripts in `scripts/`; pytest in
 
 - **`lattice.py`** — `GaugeGroup` ABC with `Z2` and `SU(N)` implementations;
   pure tensor functions:
-  - `random_links(L, D, group, dtype)` → `(D, *Λ, nc, nc)`.
+  - `random_links(L, D, group, dtype, Lt=None)` → `(D, *Λ, nc, nc)`. `Lt` gives
+    a non-cubic `Λ = (Lt,) + (L,)*(D-1)` lattice (time = axis 0) for anisotropy.
   - `plaquette_tensor(U, group)` → `(D(D-1)/2, *Λ, nc, nc)`.
-  - `action(U, group, beta=1.0, plaquettes=None)` → scalar Wilson action
-    `β Σ_p (1 − Re Tr P / nc)`.
+  - `action(U, group, beta=1.0, plaquettes=None, xi=1.0, time_axis=0)` → scalar
+    Wilson action `β Σ_p (1 − Re Tr P / nc)`. **Anisotropic** when `xi ≠ 1`:
+    temporal plaquettes (plane touching `time_axis`) weighted by `β_t = β·ξ`,
+    spatial by `β_s = β/ξ` (tree-level); `xi = 1` is the bit-exact isotropic path.
   - `topological_charge_density(U, group, plaquettes=None)` → per-site
     naive (plaquette) charge density `q_x` (clover-free,
     `F_{μν} = (P − P†)/2i`).
@@ -176,6 +179,14 @@ Library lives in `gelt/`; entry-point scripts in `scripts/`; pytest in
   SU(2)**); `haar_ensemble` (Haar-uniform, ignores β — shares the sampler
   interface for sanity checks). To plug in U(1)/SU(N) later, add a proposal
   (and/or sweep) and register it in `_PROPOSAL_FN` / `_SWEEP_FN`.
+  - **Anisotropy:** `staple_sum` and all sweeps take `xi=1.0, time_axis=0`; for
+    `xi ≠ 1` the per-plane coupling ratio ξ^±1 is folded into the staple (β stays
+    the single overall scale), so `xi = 1` is bit-exact backward-compatible. Opt
+    in by binding ξ into the sweep, e.g.
+    `functools.partial(heatbath_overrelaxation_sweep, n_or=4, xi=ξ)`;
+    `mcmc_ensemble(..., Lt=…)` gives the matching non-cubic temporal extent. See
+    `notes/glueball_spectroscopy.md` (anisotropy resolves the heavy 0⁺⁺ that an
+    isotropic lattice cannot).
   - **SU(2) heat-bath + overrelaxation** (`heatbath_sweep`,
     `overrelaxation_sweep`, and the combined `heatbath_overrelaxation_sweep`
     — 1 heat-bath + `n_or` OR sweeps) is the exact, no-tuning sampler that
@@ -286,13 +297,21 @@ loop inline (there is no shared `gelt/train.py`). Device order: cuda → mps
   the exact mean plaquette — `I₂(β)/I₁(β)` for SU(2), `tanh(β)` for Z₂ — and
   the 3D panel shows the SU(2) confining crossover vs. the Z₂ transition near
   `β_c ≈ 0.761`. Write `sampler_validation_su2.png` / `sampler_validation_z2.png`.
+- **`validate_anisotropy.py`** — validates the anisotropic SU(2) lattice: ξ=1
+  reproduces the exact 2D mean plaquette (refactor correctness), a ξ-scan shows
+  the plaquette split `⟨P_st⟩ > ⟨P_ss⟩`, and a Creutz-ratio ratio
+  `ξ_R ≈ χ_ss/χ_st` estimates the **renormalized** anisotropy vs the bare ξ (the
+  tree-level mismatch made visible; no auto-tuning). Writes
+  `anisotropy_validation.png`.
 - **`measure_glueball.py`** — classical 0⁺⁺ baseline (`gelt.glueball`): four
   panels validating the correlator/`m_eff` code on a synthetic known mass and
   smearing monotonicity (top row), then the real-ensemble `C(Δ)` and `m_eff(Δ)`
   comparing thin, single-smeared, and the **multi-level GEVP ground state**
-  (bottom row). Samples via SU(2) heat-bath + overrelaxation and **caches the
-  ensemble under `datasets/`** so the GEVP analysis can be re-tuned without
-  re-sampling. Writes `glueball_validation.png`.
+  (bottom row). Defaults to an **anisotropic** run (`XI`, `LT` tunables); samples
+  via SU(2) heat-bath + overrelaxation and **caches the ensemble under
+  `datasets/`** (cache key includes ξ, Lt) so the GEVP analysis can be re-tuned
+  without re-sampling. Reports `m·a_t` and `m·a_s = ξ·m·a_t`. Writes
+  `glueball_validation.png`.
 - **`check_glueball_autocorrelation.py`** — step-1 pre-flight before
   `measure_glueball.py`: runs a long `n_skip=1` heat-bath+OR chain, builds the
   plaquette and the thin/smeared glueball operator per config, and reports
@@ -303,7 +322,9 @@ loop inline (there is no shared `gelt/train.py`). Device order: cuda → mps
 ### `tests/`
 
 - **`test_lattice.py`** — gauge-invariance checks on `plaquette_tensor` /
-  `action` under `link_gauge_transformation` (bit-exact in Z₂ float64).
+  `action` under `link_gauge_transformation` (bit-exact in Z₂ float64), plus
+  **anisotropic-action** gauge invariance (SU(2) + Z₂, `xi ≠ 1`), the `xi = 1`
+  match to the isotropic action, and the non-cubic `random_links(..., Lt=)` shape.
 - **`test_data_model.py`** — split-validation and CNN-baseline shape
   guards.
 - **`test_transport.py`** — coverage for `l1_ball_offsets` and
@@ -320,7 +341,9 @@ loop inline (there is no shared `gelt/train.py`). Device order: cuda → mps
   overrelaxation conserves the Wilson action to machine precision and stays
   on the group; heat-bath stays on the group and reproduces the *exact* 2D
   SU(2) mean plaquette `I₂(β)/I₁(β)` (the automated analogue of
-  `validate_sampler_su2.py`'s 2D panel).
+  `validate_sampler_su2.py`'s 2D panel). Plus **anisotropy**: `xi = 1`
+  reproduces the isotropic sweep bit-for-bit, and overrelaxation conserves the
+  *anisotropic* action (and heat-bath stays on the group) for `xi ≠ 1`.
 - **`test_glueball.py`** — classical glueball baseline correctness: APE
   smearing is gauge covariant (`smear(Uᵍ) == (smear U)ᵍ`) and stays on the
   group (SU(2) + Z₂); the glueball operator is gauge invariant; the
@@ -371,8 +394,9 @@ python scripts/train_lcnn.py           # single-run Favoni L-CNN baseline
 python scripts/check_gelt_invariance.py  # quick SU(2) gauge-invariance check on GELT
 python scripts/validate_sampler_su2.py # Metropolis four-panel sanity check (SU(2))
 python scripts/validate_sampler_z2.py  # Metropolis four-panel sanity check (Z₂)
+python scripts/validate_anisotropy.py  # anisotropic-lattice checks (ξ=1 regression, ⟨P_st⟩>⟨P_ss⟩, ξ_R)
 python scripts/check_glueball_autocorrelation.py  # τ_int of the glueball operator (set n_skip)
-python scripts/measure_glueball.py     # classical 0⁺⁺ glueball baseline (correlator + m_eff)
+python scripts/measure_glueball.py     # anisotropic 0⁺⁺ glueball baseline (correlator + GEVP m_eff)
 python -m gelt.cnn_baseline            # torchsummary for a 5×5 CNN
 pytest tests                           # unit tests
 ```
