@@ -10,63 +10,89 @@ structure that operator uses. It lands directly on the thesis spine in
 `notes/explainability.md` ("the attention map is a measurement"), applied to a
 real, hard observable instead of a toy target.
 
-## Status & findings (updated 2026-06-28)
+## Status & findings (updated 2026-06-29)
 
-**The classical baseline (§6.1) is built and was run; a clean ground-state
-plateau is *not yet* resolved with a single operator.** What exists:
+> **Verdict: a 0⁺⁺ mass IS now resolvable.** On an *anisotropic* lattice the
+> multi-level GEVP gives a clean plateau at **m·a_t ≈ 0.33** (see "Run 3" below).
+> This is the go decision: the classical ground-truth `m_G` that GELT will be
+> validated against now exists, so deliverable §6.2 (`train_glueball.py`) is
+> unblocked. The isotropic lattice could *not* resolve it; the anisotropy was the
+> missing ingredient.
 
-- `gelt/glueball.py`: operator (`glueball_operator`), spatial APE smearing
-  (`ape_smear`), connected vacuum-subtracted correlator (`connected_correlator`),
-  `effective_mass`, and `jackknife_effective_mass` — plus the **multi-level GEVP**
-  added 2026-06-28: `smearing_operator_basis`, `connected_correlator_matrix`,
-  `gevp_eigenvalues` (robust eigh-whitening with an eigenvalue floor, not
-  Cholesky — low statistics can make C(t₀) indefinite), `gevp_effective_mass`,
-  `jackknife_gevp_effective_mass`. All covered by `tests/test_glueball.py`
-  (gauge covariance/invariance, synthetic mass recovery, two-state GEVP recovery).
-- The SU(2) heat-bath + overrelaxation sampler and the `τ_int` diagnostic
-  (`check_glueball_autocorrelation.py`, smeared-operator τ_int ≈ 2 → `n_skip = 5`).
-- `scripts/measure_glueball.py`: four-panel figure, now with the GEVP ground
-  state overlaid; caches the sampled ensemble under `datasets/` so the (cheap)
-  GEVP analysis can be re-tuned without re-running the (expensive) sampling.
+### What is built (code inventory)
 
-**The run (`L=12 D=4 β=2.4 N=2000`, heat-bath+OR, acc 1.00):** code checks pass
-(synthetic mass recovered, ⟨O⟩ rises with smearing). But the *physics* is
-**marginal** — the single smeared operator's `m_eff(Δ)` shows only a weak signal
-around **m·a ≈ 0.8 at Δ = 1–2**, then slides into noise (negative `m_eff`,
-huge bars) by Δ ≈ 3. `C(Δ)` hits its O(1) noise floor by Δ ≈ 3, so there is no
-late-Δ signal to plateau on. This is the textbook 0⁺⁺ problem (§7): the glueball
-is heavy, the signal dies in ~3 slices, and more statistics barely helps
-(Lepage). **The lever is operator overlap, not N** — hence the GEVP basis.
+- `gelt/glueball.py` — classical baseline (§6.1): `glueball_operator`, spatial
+  APE smearing (`ape_smear`), connected vacuum-subtracted `connected_correlator`,
+  `effective_mass`, `jackknife_effective_mass`; and the **multi-level GEVP**:
+  `smearing_operator_basis`, `connected_correlator_matrix`, `gevp_eigenvalues`
+  (robust eigh-whitening with an eigenvalue floor, *not* Cholesky — low statistics
+  can make C(t₀) indefinite), `gevp_effective_mass`, `jackknife_gevp_effective_mass`.
+- `gelt/sampler.py` — SU(2) heat-bath + overrelaxation; `integrated_autocorrelation_time`;
+  **anisotropy**: `staple_sum` and every sweep take `xi`, `time_axis` (ξ folded
+  into the staple, β stays the overall scale, `ξ=1` bit-exact); `mcmc_ensemble`
+  / `haar_ensemble` take `Lt` for a non-cubic lattice.
+- `gelt/lattice.py` — `action(..., xi, time_axis)` (β_t=β·ξ temporal, β_s=β/ξ
+  spatial, tree-level); `random_links(..., Lt=)` non-cubic `Lt × L^(D-1)` (time=axis 0).
+- Scripts: `check_glueball_autocorrelation.py` (τ_int → n_skip), `validate_anisotropy.py`,
+  `measure_glueball.py` (caches the ensemble under `datasets/`; cache key includes ξ, Lt).
+- Tests: `tests/test_glueball.py` (gauge covariance/invariance, synthetic + two-state
+  GEVP mass recovery), `tests/test_sampler.py` + `tests/test_lattice.py` (anisotropy:
+  ξ=1 regression, anisotropic-action conservation/invariance, non-cubic shape).
 
-**Update (anisotropic lattice now implemented).** The GEVP on the *isotropic*
-`L=12 β=2.4 N=2000` ensemble was still only marginal — the heavy 0⁺⁺ signal dies
-in ~3 slices regardless of operator basis. The field's primary fix is an
-**anisotropic lattice** (finer temporal spacing `a_t = a_s/ξ`, so
-`m·a_t = (m·a_s)/ξ` is small and the decay is resolved over many slices). This is
-now in the code:
+### The process, run by run
 
-- `gelt/sampler.py`: `staple_sum` and the heat-bath / overrelaxation / Metropolis
-  sweeps take `xi`, `time_axis`; ξ is folded into the staple (β stays the overall
-  scale), `ξ=1` is bit-exact backward-compatible. Opt in by binding ξ into the
-  sweep, e.g. `functools.partial(heatbath_overrelaxation_sweep, n_or=4, xi=ξ)`.
-- `gelt/lattice.py`: `action(..., xi, time_axis)` weights temporal plaquettes by
-  β_t=β·ξ and spatial by β_s=β/ξ (tree-level); `random_links(..., Lt=)` and
-  `mcmc_ensemble(..., Lt=)` give a non-cubic `Lt × L^(D-1)` lattice (time = axis 0).
-- `scripts/validate_anisotropy.py`: confirms ξ=1 reproduces the exact 2D plaquette,
-  that ⟨P_st⟩>⟨P_ss⟩ for ξ>1, and estimates the **renormalized** anisotropy ξ_R
-  from a Creutz-ratio ratio (ξ_bare=3 → ξ_R≈3.3 — the tree-level mismatch made
-  visible; no auto-tuning).
-- `scripts/measure_glueball.py` defaults to an anisotropic run (`XI=3.0, LT=2·L`),
-  reports `m·a_t` and `m·a_s = ξ·m·a_t`.
+**Run 0 — isotropic, single smeared operator (`L=12 β=2.4 N=2000`, HB+OR).**
+Code checks pass (synthetic mass recovered, ⟨O⟩ rises with smearing). Physics
+**marginal**: the smeared `m_eff(Δ)` shows only a weak `m·a ≈ 0.8` at Δ=1–2 and
+slides into noise (negative `m_eff`, huge bars) by Δ≈3; `C(Δ)` hits its O(1) noise
+floor by Δ≈3. Textbook heavy-0⁺⁺ problem (§7): the signal dies in ~3 slices and
+more statistics barely helps (Lepage). *Lever is operator overlap, not N.*
 
-**Next step:** run the anisotropic `measure_glueball.py` (fresh sample — the cache
-key now includes ξ, Lt) and check whether the GEVP ground state now plateaus over
-several `Δ` at small `m·a_t`. Convert to `m·a_s = ξ·m·a_t` to compare against the
-isotropic `m·a ≈ 0.8`. **Caveat:** β_s=β/ξ, so the spatial spacing drifts with ξ;
-matching it to the isotropic run is anisotropy *tuning* (raise β with ξ), left as
-future work — the extracted `m·a_t` is still a clean number. If a credible `m_G`
-emerges, that is the ground-truth to validate GELT against (§6.2). Only then train
-GELT.
+**Run 1 — isotropic + multi-level GEVP (same ensemble).** The GEVP ground state
+is flatter/lower than the single operators but **still does not plateau** — the
+isotropic lattice simply has no late-Δ signal for any basis to exploit. Conclusion:
+the operator basis is not the bottleneck; the *lattice* is.
+
+**Run 2 — anisotropy validation (`validate_anisotropy.py`).** Confirms the
+anisotropic implementation is faithful and acts as intended:
+- ξ=1 regression: ⟨P⟩ = 0.4329 ± 0.0017 vs exact I₂/I₁ = 0.4331 → **Δ = 0.1σ**
+  (the refactor changed nothing at ξ=1).
+- ξ-scan (4D): plaquette splits cleanly — `⟨P_st⟩` rises and `⟨P_ss⟩` falls with ξ
+  (β_t > β_s), coinciding at ξ=1.
+- Renormalized anisotropy from a Creutz-ratio ratio: **ξ_bare=3 → ξ_R ≈ 3.32**
+  (the tree-level ≠ renormalized mismatch, made visible; no auto-tuning).
+
+**Run 3 — anisotropic glueball (`L=12 Lt=24 D=4 β=2.4 ξ=3.0 N=2000`, HB+OR, acc 1.00).**
+*This resolves the mass.*
+- `C(Δ)` now decays cleanly over **~10–12 time slices** before the periodic
+  turnaround at Δ = Lt/2 = 12 (vs dying by Δ≈3 in the isotropic run).
+- The GEVP ground state (levels [0,2,4,6], t₀=1) **plateaus** with tight bars:
+  - `m_eff(Δ=1): m·a_t = 0.365 ± 0.008`  (→ m·a_s = ξ·m·a_t = 1.096)
+  - `m_eff(Δ=2): m·a_t = 0.333 ± 0.011`  (→ m·a_s = 0.999)
+  a small descent then flattening — the expected approach to the plateau from
+  above (variational upper bound). The GEVP plateaus where the thin/smeared single
+  operators still do not.
+- **Plateau value: m·a_t ≈ 0.33.**
+
+### Caveat on the physical number
+
+`m·a_t ≈ 0.33` (and hence the plateau) is the trustworthy, method-validating
+result. The reported `m·a_s = ξ·m·a_t ≈ 1.0` is **not continuum physics**: with
+β_s = β/ξ = 2.4/3 = 0.8 the *spatial* lattice is deep in strong coupling (coarse
+a_s), so `m·a_s ≈ 1` carries large discretization artifacts. A publishable `m_G`
+would need anisotropy **tuning** (raise β with ξ to keep β_s in the scaling
+window so a_s is fixed/known) and a continuum extrapolation — deliberately left
+as future work. The point established here is that *the pipeline resolves a
+plateau*, which is exactly the go/no-go that was open.
+
+### Next step
+
+Deliverable §6.2: **`train_glueball.py`** — `GELT(reduction="none")` on the
+Rayleigh loss `−C(1)/C(0)`, evaluated by jackknife, **on the cached anisotropic
+ensemble** (`datasets/glueball_configs_L12_Lt24_b2.4_xi3.0_N2000.pt`), with its
+`m_eff(Δ)` compared against this classical GEVP plateau (`m·a_t ≈ 0.33`) and the
+L-CNN baseline. The win to look for: GELT plateaus at least as low, and earlier
+in Δ, than the hand-built GEVP basis (a *learned* variational operator).
 
 ## 0. Where we are vs. what spectroscopy needs
 
@@ -205,18 +231,21 @@ measurement" on a real observable.
 1. **✅ Classical 0⁺⁺ correlator + `m_eff` extraction** — *built* (reuses
    `rectangular_wilson_loop`): timeslice-summed scalar operator, spatial APE
    smearing, connected vacuum-subtracted `C(Δ)`, `m_eff(Δ)` + jackknife on an
-   SU(2) heat-bath ensemble. **Outcome (see Status block):** the single-operator
-   `m_eff` does *not* yet plateau cleanly (weak m·a ≈ 0.8, drowns by Δ ≈ 3).
-1b. **✅ Multi-level smearing GEVP (classical)** — *built* 2026-06-28: a
-   variational basis of operators at several APE levels (`smearing_operator_basis`),
-   correlator matrix (`connected_correlator_matrix`), robust GEVP solver
-   (`gevp_eigenvalues`), per-state `m_eff` + jackknife. This is the standard fix
-   (Morningstar–Peardon) for the §6.1 overlap problem; the immediate task is to
-   **read off a credible ground-state `m_G` from the GEVP** to anchor everything
-   below. (Distinct from deliverable 3, which is the *learned* GEVP inside GELT.)
+   SU(2) heat-bath ensemble. **Outcome:** on the *isotropic* lattice the
+   single-operator `m_eff` did *not* plateau (weak m·a ≈ 0.8, drowns by Δ ≈ 3).
+1b. **✅ Multi-level smearing GEVP (classical)** — *built*: a variational basis of
+   operators at several APE levels (`smearing_operator_basis`), correlator matrix
+   (`connected_correlator_matrix`), robust GEVP solver (`gevp_eigenvalues`),
+   per-state `m_eff` + jackknife (Morningstar–Peardon). Isotropically still
+   marginal — the lattice, not the basis, was the bottleneck.
+1c. **✅ Anisotropic lattice** — *built and validated* (§8): finer `a_t = a_s/ξ`.
+   **This resolved the mass:** on `L=12 Lt=24 β=2.4 ξ=3.0 N=2000` the GEVP ground
+   state **plateaus at m·a_t ≈ 0.33** (Run 3 in the Status block). That is the
+   ground-truth `m_G` (in temporal units) that anchors deliverable 2.
 2. **`train_glueball.py`** — `GELT(reduction="none")` + Rayleigh loss +
-   jackknife eval; compare GELT vs. plaquette vs. L-CNN `m_eff` curves.
-   *Gated on getting a trustworthy classical `m_G` from deliverable 1b.*
+   jackknife eval; compare GELT vs. plaquette vs. L-CNN `m_eff` curves. *Now
+   unblocked* — validate against the classical GEVP plateau `m·a_t ≈ 0.33` on the
+   cached anisotropic ensemble.
 3. **(extension) Multi-operator GEVP inside GELT** — network emits a *vector* of
    operators → generalized eigenproblem → excited states / other J^PC channels
    (needs the cubic-group projection deferred in §1). The learned analogue of

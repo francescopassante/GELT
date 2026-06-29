@@ -96,19 +96,21 @@ with `scripts/check_glueball_autocorrelation.py` fixing the production
 overrelaxation sampler (§8, the prerequisite ensemble long pole) and the
 `integrated_autocorrelation_time` diagnostic are also in place.
 
-**Open go/no-go question: is a mass actually discoverable on a real
-ensemble?** Still open, now with data. The `L=12 β=2.4 N=2000` heat-bath run
-passes the code checks but the **single smeared operator does not plateau**:
-weak `m·a ≈ 0.8` at Δ = 1–2, drowning into noise by Δ ≈ 3 (the classic 0⁺⁺
-overlap/SNR problem — more statistics barely helps; the lever is operator
-overlap). The fix is now implemented: a **multi-level smearing GEVP**
-(`smearing_operator_basis` → `gevp_*`, overlaid in `measure_glueball.py`,
-which now caches the ensemble under `datasets/`). *The gating step is to
-re-run `measure_glueball.py` and read a credible ground-state `m_G` off the
-GEVP curve.* **Only then** does §6.2 (`scripts/train_glueball.py` —
-`GELT(reduction="none")` on the Rayleigh loss `−C(1)/C(0)`, the converged
-loss *is* the mass, jackknife eval, vs. classical/L-CNN curves) become the
-next deliverable.
+**Go/no-go question — is a mass discoverable? RESOLVED: yes, on an
+anisotropic lattice.** The isotropic `L=12 β=2.4 N=2000` run did *not* plateau
+(weak `m·a ≈ 0.8`, drowning by Δ≈3) even with the multi-level GEVP — the lattice,
+not the operator basis, was the bottleneck. Adding **anisotropy** (finer
+`a_t = a_s/ξ`; `staple_sum`/sweeps take `xi`, `action`/`random_links`/
+`mcmc_ensemble` take `xi`/`Lt`) fixed it: on `L=12 Lt=24 β=2.4 ξ=3.0 N=2000` the
+`C(Δ)` decays cleanly over ~10–12 slices and the **GEVP ground state plateaus at
+m·a_t ≈ 0.33** (`m_eff(Δ=1)=0.365±0.008`, `(Δ=2)=0.333±0.011`). Caveat: the
+reported `m·a_s = ξ·m·a_t ≈ 1.0` is *not* continuum physics (β_s=β/ξ=0.8 is
+strong-coupling/coarse a_s); proper anisotropy tuning + continuum extrapolation
+is future work. **§6.2 (`scripts/train_glueball.py` — `GELT(reduction="none")` on
+the Rayleigh loss `−C(1)/C(0)`, jackknife eval, vs. classical/L-CNN curves) is now
+unblocked**, validated against the classical GEVP plateau `m·a_t ≈ 0.33` on the
+cached anisotropic ensemble (`datasets/glueball_configs_L12_Lt24_b2.4_xi3.0_N2000.pt`).
+See `notes/glueball_spectroscopy.md` for the full run-by-run record.
 
 Known caveats (see `notes/fable_audit.md` for the full list and the
 prioritized fixes):
