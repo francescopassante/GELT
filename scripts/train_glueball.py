@@ -297,69 +297,87 @@ def main():
     train_hist, held_hist = [], []
     epoch_bar = tqdm(range(EPOCHS))
     epochs_no_improve = 0
-    for epoch in epoch_bar:
-        model.train()
-        order = torch.randperm(train_configs.shape[0])
-        run_loss, run_C0, run_R, nb = 0.0, 0.0, 0.0, 0
-        # Inner bar over the config minibatches — visible intra-epoch progress
-        # (each epoch is ~N_train/BATCH_CONFIGS steps). leave=False so it clears
-        # when the epoch finishes and the outer epoch_bar stays put.
-        batch_bar = tqdm(
-            range(0, train_configs.shape[0], BATCH_CONFIGS),
-            desc=f"epoch {epoch + 1}",
-            leave=False,
-        )
-        for i in batch_bar:
-            batch = train_configs[order[i : i + BATCH_CONFIGS]]
-            optimizer.zero_grad()
-            Obar = network_obar(model, batch, device)
-            loss, C0, Rq = rayleigh_loss(Obar)
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-            optimizer.step()
-            run_loss += loss.item()
-            run_C0 += C0.item()
-            run_R += Rq.item()
-            nb += 1
-            batch_bar.set_postfix(loss=f"{loss.item():.4f}", C0=f"{C0.item():.2e}")
-        scheduler.step()
-        train_loss = run_loss / nb
-        train_hist.append(train_loss)
-
-        # Held-out Rayleigh (whole held-out set at once, minibatched forward).
-        held = held_out_obar(model, held_configs, device)
-        held_loss, held_C0, held_R = rayleigh_loss(held)
-        held_loss = held_loss.item()
-        held_hist.append(held_loss)
-        # m = −log R; guard the log against a spurious R ≥ 1 (variational bound
-        # violated on a finite sample) or R ≤ 0.
-        held_m = float("nan")
-        if 0.0 < held_R.item() < 1.0:
-            held_m = -np.log(held_R.item())
-
-        if held_loss < best_held_loss:
-            best_held_loss = held_loss
-            torch.save(model.state_dict(), CHECKPOINT)
-            epochs_no_improve = 0
-        else:
-            epochs_no_improve += 1
-
-        epoch_bar.set_postfix(
-            train=f"{train_loss:.4f}",
-            held=f"{held_loss:.4f}",
-            C0=f"{run_C0 / nb:.2e}",
-            m=f"{held_m:.3f}",
-        )
-        if run_C0 / nb < 10 * EPS:
-            epoch_bar.write(
-                f"  ⚠ epoch {epoch + 1}: C(0)={run_C0 / nb:.2e} near the floor — "
-                f"constant-operator collapse; check the loss guard."
+    # Ctrl-C breaks cleanly out of training and falls through to the eval + plot
+    # below, run on the best checkpoint so far — so an interrupted run still
+    # produces the mass numbers and glueball_gelt.png, not just orphaned weights.
+    # The best weights are already on disk (checkpointed every improvement), and
+    # train_hist / held_hist survive because we break rather than raise.
+    try:
+        for epoch in epoch_bar:
+            model.train()
+            order = torch.randperm(train_configs.shape[0])
+            run_loss, run_C0, run_R, nb = 0.0, 0.0, 0.0, 0
+            # Inner bar over the config minibatches — visible intra-epoch progress
+            # (each epoch is ~N_train/BATCH_CONFIGS steps). leave=False so it clears
+            # when the epoch finishes and the outer epoch_bar stays put.
+            batch_bar = tqdm(
+                range(0, train_configs.shape[0], BATCH_CONFIGS),
+                desc=f"epoch {epoch + 1}",
+                leave=False,
             )
-        if epochs_no_improve >= PATIENCE:
-            epoch_bar.write(f"Early stopping after {epoch + 1} epochs.")
-            break
+            for i in batch_bar:
+                batch = train_configs[order[i : i + BATCH_CONFIGS]]
+                optimizer.zero_grad()
+                Obar = network_obar(model, batch, device)
+                loss, C0, Rq = rayleigh_loss(Obar)
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                optimizer.step()
+                run_loss += loss.item()
+                run_C0 += C0.item()
+                run_R += Rq.item()
+                nb += 1
+                batch_bar.set_postfix(loss=f"{loss.item():.4f}", C0=f"{C0.item():.2e}")
+            scheduler.step()
+            train_loss = run_loss / nb
+            train_hist.append(train_loss)
 
-    # ── Load best (lowest held-out loss) checkpoint for evaluation.
+            # Held-out Rayleigh (whole held-out set at once, minibatched forward).
+            held = held_out_obar(model, held_configs, device)
+            held_loss, held_C0, held_R = rayleigh_loss(held)
+            held_loss = held_loss.item()
+            held_hist.append(held_loss)
+            # m = −log R; guard the log against a spurious R ≥ 1 (variational bound
+            # violated on a finite sample) or R ≤ 0.
+            held_m = float("nan")
+            if 0.0 < held_R.item() < 1.0:
+                held_m = -np.log(held_R.item())
+
+            if held_loss < best_held_loss:
+                best_held_loss = held_loss
+                torch.save(model.state_dict(), CHECKPOINT)
+                epochs_no_improve = 0
+            else:
+                epochs_no_improve += 1
+
+            epoch_bar.set_postfix(
+                train=f"{train_loss:.4f}",
+                held=f"{held_loss:.4f}",
+                C0=f"{run_C0 / nb:.2e}",
+                m=f"{held_m:.3f}",
+            )
+            if run_C0 / nb < 10 * EPS:
+                epoch_bar.write(
+                    f"  ⚠ epoch {epoch + 1}: C(0)={run_C0 / nb:.2e} near the floor — "
+                    f"constant-operator collapse; check the loss guard."
+                )
+            if epochs_no_improve >= PATIENCE:
+                epoch_bar.write(f"Early stopping after {epoch + 1} epochs.")
+                break
+    except KeyboardInterrupt:
+        epoch_bar.write(
+            "\nInterrupted — proceeding to evaluation + plot on the best "
+            "checkpoint so far."
+        )
+
+    # ── Load best (lowest held-out loss) checkpoint for evaluation. If the run
+    # was killed before a single epoch finished, there is no checkpoint yet.
+    if not os.path.exists(CHECKPOINT):
+        print(
+            f"No checkpoint at {CHECKPOINT} (stopped before the first epoch "
+            f"completed) — nothing to evaluate."
+        )
+        return
     model.load_state_dict(torch.load(CHECKPOINT, map_location=device, weights_only=True))
     print(f"best held-out Rayleigh loss: {best_held_loss:.4f}")
 
