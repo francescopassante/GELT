@@ -301,7 +301,15 @@ def main():
         model.train()
         order = torch.randperm(train_configs.shape[0])
         run_loss, run_C0, run_R, nb = 0.0, 0.0, 0.0, 0
-        for i in range(0, train_configs.shape[0], BATCH_CONFIGS):
+        # Inner bar over the config minibatches — visible intra-epoch progress
+        # (each epoch is ~N_train/BATCH_CONFIGS steps). leave=False so it clears
+        # when the epoch finishes and the outer epoch_bar stays put.
+        batch_bar = tqdm(
+            range(0, train_configs.shape[0], BATCH_CONFIGS),
+            desc=f"epoch {epoch + 1}",
+            leave=False,
+        )
+        for i in batch_bar:
             batch = train_configs[order[i : i + BATCH_CONFIGS]]
             optimizer.zero_grad()
             Obar = network_obar(model, batch, device)
@@ -313,6 +321,7 @@ def main():
             run_C0 += C0.item()
             run_R += Rq.item()
             nb += 1
+            batch_bar.set_postfix(loss=f"{loss.item():.4f}", C0=f"{C0.item():.2e}")
         scheduler.step()
         train_loss = run_loss / nb
         train_hist.append(train_loss)
