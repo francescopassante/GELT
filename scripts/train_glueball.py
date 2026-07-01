@@ -78,29 +78,40 @@ CACHE = f"datasets/glueball_configs_L{L}_Lt{LT}_b{BETA}_xi{XI}_N{N_CONFIGS}.pt"
 # GELT / training hyperparameters.
 R = 2  # L1-ball radius of the (3D) transport — the "smearing level" budget (§7)
 GEMHSA_LAYERS = 3  # small depth to start
-NHEAD = 1
+NHEAD = 2  # 2 heads: still tiny (~5k params) but feeds head-specialization study
 D_QKV = 6  # even (RoPE) and ≥ 2·D = 6 so every spatial axis gets a real rotation
 #            (caveat 3: pair_axis = p % D leaves axes unrotated when d_qkv < 2D)
-D_MODEL = 8
-MLP_HIDDEN = 16
+D_MODEL = 16
+MLP_HIDDEN = 32
 INIT_SCALE = 10.0
 QK_INIT_SCALE = 1.0
 GATE = "softplus"
 MODEL_DTYPE = torch.complex64
 
 LR = 3e-3
-EPOCHS = 400
-PATIENCE = 40
-BATCH_CONFIGS = 4  # configs per minibatch; each expands to BATCH_CONFIGS·LT 3D
+# This loss converges in tens of steps on a ~5k-param model — 40 epochs at
+# ~175 steps/epoch (batch 8) is ~7k steps, ample. (The earlier 400/40 was tuned
+# for the 160k-step regime the StepLR(150) assumed; both were an order of
+# magnitude oversized.)
+EPOCHS = 40
+PATIENCE = 10
+BATCH_CONFIGS = 8  # configs per minibatch; each expands to BATCH_CONFIGS·LT 3D
 #                    slices through the network. This is the memory knob (T and
 #                    the per-layer K/V scale with it) AND the VEV-estimate knob
 #                    (the batch mean ⟨Ō⟩ in the loss is noisier for small
-#                    batches — the §4 ratio-estimator bias). Raise it as far as
-#                    GPU memory allows.
+#                    batches — the §4 ratio-estimator bias). 8 should fit a
+#                    16 GB V100 (~1–2 GB activations/4 configs/layer); try 16.
 EPS = 1e-8  # C(0) floor guarding the constant-operator collapse (§4 pitfall 3)
 
-TRAIN_FRACTION = 0.8  # hard train/held-out split, made before any training
-JACK_BLOCK = 10  # blocked-jackknife block size (configs) for held-out masses
+# Contiguous three-way split of the *chain-ordered* ensemble (NOT shuffled).
+# The ensemble is MCMC-ordered, so neighbouring configs are autocorrelated;
+# a random split would (a) leak train↔held correlations and (b) defeat the
+# blocked jackknife, which only removes autocorrelation on chain-ordered data.
+# Train fits the operator; VAL selects the checkpoint; TEST is untouched until
+# the final report — so the reported mass is not biased low by model selection.
+TRAIN_FRACTION = 0.7
+VAL_FRACTION = 0.1  # (TEST_FRACTION = 1 − TRAIN − VAL = 0.2)
+JACK_BLOCK = 10  # blocked-jackknife block size (configs) for reported masses
 GEVP_LEVELS = [0, 2, 4, 6]  # classical anchor smearing basis (matches measure_)
 GEVP_T0 = 1
 SMEAR_ALPHA = 0.5
@@ -252,17 +263,23 @@ def main():
     N = configs.shape[0]
     print(f"ensemble: {tuple(configs.shape)}  {configs.dtype}")
 
-    # ── Hard train/held-out split, BEFORE any training. Every reported mass
-    # comes from the held-out split only (audit item 4).
-    perm = torch.randperm(N, generator=torch.Generator().manual_seed(0))
+    # ── Hard, CONTIGUOUS three-way split of the chain-ordered ensemble, BEFORE
+    # any training. No shuffle: the ensemble is MCMC-ordered, so a contiguous cut
+    # keeps train / val / test mutually decorrelated (up to the boundary τ_int)
+    # and keeps each slice chain-ordered so the blocked jackknife actually
+    # removes autocorrelation. VAL selects the checkpoint; TEST is untouched
+    # until the final report, so the reported mass is not biased low by model
+    # selection.
     n_train = int(round(TRAIN_FRACTION * N))
-    train_idx, held_idx = perm[:n_train], perm[n_train:]
-    train_configs = configs[train_idx]
-    held_configs = configs[held_idx]
+    n_val = int(round(VAL_FRACTION * N))
+    train_configs = configs[:n_train]
+    val_configs = configs[n_train : n_train + n_val]
+    test_configs = configs[n_train + n_val :]
     print(
-        f"split: {train_configs.shape[0]} train / {held_configs.shape[0]} held-out "
+        f"split (contiguous, chain-ordered): {train_configs.shape[0]} train / "
+        f"{val_configs.shape[0]} val / {test_configs.shape[0]} test "
         f"(block size {JACK_BLOCK} → "
-        f"{-(-held_configs.shape[0] // JACK_BLOCK)} jackknife blocks)"
+        f"{-(-test_configs.shape[0] // JACK_BLOCK)} jackknife blocks on test)"
     )
 
     # ── Model. reduction="none" → per-site invariant scalar field O(x);
@@ -289,19 +306,23 @@ def main():
     print(f"GELT(D=3, R={R}, layers={GEMHSA_LAYERS}, d_qkv={D_QKV}) | params {n_params:,}")
 
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=150, gamma=0.5)
+    # Cosine anneal over the (now short) run — StepLR(150) never fired at 40
+    # epochs. One smooth decay from LR to ~0 across EPOCHS.
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
 
     # ── Training loop. Minibatch over configs; each config's LT timeslices go
     # through the 3D network together so the temporal correlator can be formed.
-    best_held_loss = float("inf")
-    train_hist, held_hist = [], []
+    # Model selection is on VAL only (never test) so the reported test mass is
+    # not biased low by the checkpoint choice.
+    best_val_loss = float("inf")
+    train_hist, val_hist = [], []
     epoch_bar = tqdm(range(EPOCHS))
     epochs_no_improve = 0
     # Ctrl-C breaks cleanly out of training and falls through to the eval + plot
     # below, run on the best checkpoint so far — so an interrupted run still
     # produces the mass numbers and glueball_gelt.png, not just orphaned weights.
     # The best weights are already on disk (checkpointed every improvement), and
-    # train_hist / held_hist survive because we break rather than raise.
+    # train_hist / val_hist survive because we break rather than raise.
     try:
         for epoch in epoch_bar:
             model.train()
@@ -332,19 +353,20 @@ def main():
             train_loss = run_loss / nb
             train_hist.append(train_loss)
 
-            # Held-out Rayleigh (whole held-out set at once, minibatched forward).
-            held = held_out_obar(model, held_configs, device)
-            held_loss, held_C0, held_R = rayleigh_loss(held)
-            held_loss = held_loss.item()
-            held_hist.append(held_loss)
+            # Validation Rayleigh (whole val set at once, minibatched forward) —
+            # this is the model-selection signal, kept off the reported test set.
+            val = held_out_obar(model, val_configs, device)
+            val_loss, val_C0, val_R = rayleigh_loss(val)
+            val_loss = val_loss.item()
+            val_hist.append(val_loss)
             # m = −log R; guard the log against a spurious R ≥ 1 (variational bound
             # violated on a finite sample) or R ≤ 0.
-            held_m = float("nan")
-            if 0.0 < held_R.item() < 1.0:
-                held_m = -np.log(held_R.item())
+            val_m = float("nan")
+            if 0.0 < val_R.item() < 1.0:
+                val_m = -np.log(val_R.item())
 
-            if held_loss < best_held_loss:
-                best_held_loss = held_loss
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
                 torch.save(model.state_dict(), CHECKPOINT)
                 epochs_no_improve = 0
             else:
@@ -352,9 +374,9 @@ def main():
 
             epoch_bar.set_postfix(
                 train=f"{train_loss:.4f}",
-                held=f"{held_loss:.4f}",
+                val=f"{val_loss:.4f}",
                 C0=f"{run_C0 / nb:.2e}",
-                m=f"{held_m:.3f}",
+                m=f"{val_m:.3f}",
             )
             if run_C0 / nb < 10 * EPS:
                 epoch_bar.write(
@@ -370,8 +392,8 @@ def main():
             "checkpoint so far."
         )
 
-    # ── Load best (lowest held-out loss) checkpoint for evaluation. If the run
-    # was killed before a single epoch finished, there is no checkpoint yet.
+    # ── Load best (lowest val loss) checkpoint for evaluation. If the run was
+    # killed before a single epoch finished, there is no checkpoint yet.
     if not os.path.exists(CHECKPOINT):
         print(
             f"No checkpoint at {CHECKPOINT} (stopped before the first epoch "
@@ -379,21 +401,21 @@ def main():
         )
         return
     model.load_state_dict(torch.load(CHECKPOINT, map_location=device, weights_only=True))
-    print(f"best held-out Rayleigh loss: {best_held_loss:.4f}")
+    print(f"best val Rayleigh loss: {best_val_loss:.4f}")
 
-    # ── Held-out effective-mass curves (blocked jackknife) ─────────────────────
-    # GELT operator on held-out configs.
-    gelt_obar = held_out_obar(model, held_configs, device).double()
+    # ── Test effective-mass curves (blocked jackknife) on the UNTOUCHED test
+    # split — the only numbers reported. GELT operator on test configs.
+    gelt_obar = held_out_obar(model, test_configs, device).double()
     _, _, R_final = rayleigh_loss(gelt_obar)
     m_rayleigh = -np.log(R_final.item()) if 0 < R_final.item() < 1 else float("nan")
-    print(f"GELT held-out Rayleigh mass  m·a_t = −log C(1)/C(0) = {m_rayleigh:.3f}")
+    print(f"GELT test Rayleigh mass  m·a_t = −log C(1)/C(0) = {m_rayleigh:.3f}")
     meff_gelt, err_gelt = blocked_jackknife_meff(gelt_obar, JACK_BLOCK)
 
-    # Classical anchors on the SAME held-out configs: thin, single-smeared, and
+    # Classical anchors on the SAME test configs: thin, single-smeared, and
     # the multi-level GEVP ground state (float64 for GEVP conditioning).
-    print("Building classical smearing basis on held-out configs …")
+    print("Building classical smearing basis on test configs …")
     Obar_basis = smearing_operator_basis(
-        held_configs, gaugegroup, GEVP_LEVELS, alpha=SMEAR_ALPHA, progress=True
+        test_configs, gaugegroup, GEVP_LEVELS, alpha=SMEAR_ALPHA, progress=True
     ).double()
     obar_thin, obar_sm = Obar_basis[0], Obar_basis[-1]
     meff_thin, err_thin = blocked_jackknife_meff(obar_thin, JACK_BLOCK)
@@ -402,14 +424,14 @@ def main():
 
     # Report the anchor at several Δ (audit "Moderate": the Δ=1/Δ=2 plateau is a
     # 2-point descent — confirm with Δ=3–4 points).
-    print("Classical GEVP ground state (blocked jackknife, held-out):")
+    print("Classical GEVP ground state (blocked jackknife, test):")
     for dlt in range(GEVP_T0, min(GEVP_T0 + 4, len(meff_gevp))):
         if bool(torch.isfinite(meff_gevp[dlt])):
             print(
                 f"     m_eff(Δ={dlt}):  m·a_t = {meff_gevp[dlt].item():.3f} "
                 f"± {err_gevp[dlt].item():.3f}"
             )
-    print("GELT learned operator (blocked jackknife, held-out):")
+    print("GELT learned operator (blocked jackknife, test):")
     for dlt in range(1, min(4, len(meff_gelt))):
         if bool(torch.isfinite(meff_gelt[dlt])):
             print(
@@ -422,14 +444,14 @@ def main():
 
     # (0) training curves
     ax[0].plot(train_hist, label="train  −C(1)/C(0)")
-    ax[0].plot(held_hist, label="held-out  −C(1)/C(0)")
+    ax[0].plot(val_hist, label="val  −C(1)/C(0)")
     ax[0].set_xlabel("epoch")
     ax[0].set_ylabel("Rayleigh loss")
     ax[0].set_title("Rayleigh training (loss = −C(1)/C(0); m = −log(−loss))")
     ax[0].legend()
     ax[0].grid(True, alpha=0.3)
 
-    # (1) held-out m_eff(Δ): GELT vs thin/smeared/GEVP, blocked-jackknife bands.
+    # (1) test m_eff(Δ): GELT vs thin/smeared/GEVP, blocked-jackknife bands.
     def _plot(meff, err, lab, col, fmt):
         m, e = meff.numpy(), err.numpy()
         dd = np.arange(len(m))
@@ -454,7 +476,7 @@ def main():
     ax[1].set_xlabel("Δ (temporal slices)")
     ax[1].set_ylabel("m_eff(Δ) = m·a_t")
     ax[1].set_title(
-        "Held-out m_eff: learned vs hand-built operators\n"
+        "Test m_eff: learned vs hand-built operators\n"
         "(win = GELT plateaus ≤ and earlier in Δ than the GEVP)"
     )
     ax[1].set_xlim(0, LT // 2)
@@ -463,7 +485,7 @@ def main():
 
     fig.suptitle(
         f"GELT variational 0⁺⁺ glueball — SU(2) L={L} Lt={LT} β={BETA} ξ={XI} "
-        f"N_held={held_configs.shape[0]}  (R={R}, layers={GEMHSA_LAYERS})",
+        f"N_test={test_configs.shape[0]}  (R={R}, layers={GEMHSA_LAYERS})",
         fontsize=13,
     )
     fig.tight_layout()
