@@ -1,7 +1,9 @@
 """GELT as a learned variational 0⁺⁺ glueball operator (deliverable §6.2).
 
-Trains ``GELT(reduction="none")`` on the **Rayleigh loss** ``−C(1)/C(0)`` so that
-the converged loss *is* the glueball mass and the trained network *is* the
+Trains ``GELT(reduction="none")`` on a **multi-Δ Rayleigh loss**
+``−mean_Δ C(Δ)/C(Δ−1)`` (Δ ∈ ``LOSS_DELTAS``). The per-timeslice transfer matrix
+bounds every consecutive ratio by e^{−m₀}, so each converged ratio *is* a
+glueball-mass estimate and the trained network *is* the
 optimal-overlap interpolating operator (notes/glueball_spectroscopy.md §1). The
 result is validated against the classical multi-level GEVP plateau
 ``m·a_t ≈ 0.33`` measured by ``scripts/measure_glueball.py`` on the same cached
@@ -77,7 +79,11 @@ CACHE = f"datasets/glueball_configs_L{L}_Lt{LT}_b{BETA}_xi{XI}_N{N_CONFIGS}.pt"
 
 # GELT / training hyperparameters.
 R = 2  # L1-ball radius of the (3D) transport — the "smearing level" budget (§7)
-GEMHSA_LAYERS = 3  # small depth to start
+GEMHSA_LAYERS = 4  # the value path is bilinear, so loop degree doubles per
+#                    layer: 4 layers reach degree ≤ 16 in the plaquettes. At 3
+#                    (≤ 8) the operator demonstrably lost to APE ×6, whose
+#                    branched staple content is far deeper within the same
+#                    radius-6 support.
 NHEAD = 2  # 2 heads: still tiny (~5k params) but feeds head-specialization study
 D_QKV = 6  # even (RoPE) and ≥ 2·D = 6 so every spatial axis gets a real rotation
 #            (caveat 3: pair_axis = p % D leaves axes unrotated when d_qkv < 2D)
@@ -89,11 +95,16 @@ GATE = "softplus"
 MODEL_DTYPE = torch.complex64
 
 LR = 3e-3
-# This loss converges in tens of steps on a ~5k-param model — 40 epochs at
-# ~175 steps/epoch (batch 8) is ~7k steps, ample. (The earlier 400/40 was tuned
+WEIGHT_DECAY = 1e-3  # AdamW decoupled decay: the unregularized run's val curve
+#                      turned up at ~epoch 10 while train kept falling (overfit
+#                      on ~1400 configs) — this is the cheap counter before
+#                      sampling a bigger ensemble.
+# This loss converges in tens of steps on a ~5k-param model — 60 epochs at
+# ~175 steps/epoch (batch 8) is ~10k steps, ample. (The earlier 400/40 was tuned
 # for the 160k-step regime the StepLR(150) assumed; both were an order of
-# magnitude oversized.)
-EPOCHS = 40
+# magnitude oversized.) 40 → 60 with AdamW: weight decay shifts the val minimum
+# later than the unregularized run's ~epoch-10 turn-up.
+EPOCHS = 60
 PATIENCE = 10
 BATCH_CONFIGS = 8  # configs per minibatch; each expands to BATCH_CONFIGS·LT 3D
 #                    slices through the network. This is the memory knob (T and
@@ -102,6 +113,12 @@ BATCH_CONFIGS = 8  # configs per minibatch; each expands to BATCH_CONFIGS·LT 3D
 #                    batches — the §4 ratio-estimator bias). 8 should fit a
 #                    16 GB V100 (~1–2 GB activations/4 configs/layer); try 16.
 EPS = 1e-8  # C(0) floor guarding the constant-operator collapse (§4 pitfall 3)
+LOSS_DELTAS = (1, 2)  # Rayleigh ratios C(Δ)/C(Δ−1) entering the loss. The
+#                       per-timeslice operator keeps the transfer matrix
+#                       positive, so EVERY consecutive ratio is bounded by
+#                       e^{−m₀}; the Δ=2 term makes training select for the
+#                       reported m_eff(Δ≥1) plateau instead of only the
+#                       most-contaminated Δ=0 point.
 
 # Contiguous three-way split of the *chain-ordered* ensemble (NOT shuffled).
 # The ensemble is MCMC-ordered, so neighbouring configs are autocorrelated;
@@ -143,18 +160,24 @@ def network_obar(model, U4_batch, device):
     return Obar.view(b, Lt)
 
 
-def rayleigh_loss(Obar):
-    """−C(1)/(C(0)+ε) with batch-estimated VEV subtraction and t₀-averaging.
+def rayleigh_loss(Obar, deltas=LOSS_DELTAS):
+    """−mean_Δ C(Δ)/(C(Δ−1)+ε) with batch-estimated VEV subtraction and
+    t₀-averaging.
 
-    ``Obar`` : ``(b, Lt)``. Returns ``(loss, C0, R)``; at the optimum m = −log R.
-    C(1) is averaged over every time origin (the ``roll``, periodic in time).
+    ``Obar`` : ``(b, Lt)``. Returns ``(loss, C0, R)`` with R = C(1)/(C(0)+ε),
+    the monitoring ratio (m = −log R at the optimum of the Δ=1 term). Each
+    C(Δ) is averaged over every time origin (the ``roll``, periodic in time).
     """
     mu = Obar.mean()  # ⟨Ō⟩ — 0⁺⁺ has a NONZERO VEV; must subtract
     d = Obar - mu
-    C0 = (d * d).mean()  # connected variance
-    C1 = (d.roll(-1, dims=1) * d).mean()  # one-step, summed over all t₀
-    Rq = C1 / (C0 + EPS)
-    return -Rq, C0, Rq
+    # C(Δ) for every separation the ratios touch; roll(0) is C(0), the
+    # connected variance.
+    need = sorted({0, 1} | set(deltas) | {dt - 1 for dt in deltas})
+    C = {dt: (d.roll(-dt, dims=1) * d).mean() for dt in need}
+    ratios = [C[dt] / (C[dt - 1] + EPS) for dt in deltas]
+    loss = -sum(ratios) / len(ratios)
+    Rq = C[1] / (C[0] + EPS)
+    return loss, C[0], Rq
 
 
 # ── Blocked jackknife on held-out configs ─────────────────────────────────────
@@ -305,7 +328,7 @@ def main():
     n_params = sum(p.numel() for p in model.parameters())
     print(f"GELT(D=3, R={R}, layers={GEMHSA_LAYERS}, d_qkv={D_QKV}) | params {n_params:,}")
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=LR)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
     # Cosine anneal over the (now short) run — StepLR(150) never fired at 40
     # epochs. One smooth decay from LR to ~0 across EPOCHS.
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
@@ -443,11 +466,12 @@ def main():
     fig, ax = plt.subplots(1, 2, figsize=(14, 6))
 
     # (0) training curves
-    ax[0].plot(train_hist, label="train  −C(1)/C(0)")
-    ax[0].plot(val_hist, label="val  −C(1)/C(0)")
+    loss_lab = "−mean[" + ", ".join(f"C({d})/C({d - 1})" for d in LOSS_DELTAS) + "]"
+    ax[0].plot(train_hist, label=f"train  {loss_lab}")
+    ax[0].plot(val_hist, label=f"val  {loss_lab}")
     ax[0].set_xlabel("epoch")
     ax[0].set_ylabel("Rayleigh loss")
-    ax[0].set_title("Rayleigh training (loss = −C(1)/C(0); m = −log(−loss))")
+    ax[0].set_title(f"Rayleigh training (loss = {loss_lab}; each ratio → e^(−m))")
     ax[0].legend()
     ax[0].grid(True, alpha=0.3)
 
