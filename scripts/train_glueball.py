@@ -1,8 +1,8 @@
 """GELT as a learned variational 0⁺⁺ glueball operator (deliverable §6.2).
 
 Trains ``GELT(reduction="none")`` on a **multi-Δ Rayleigh loss**
-``−mean_Δ C(Δ)/C(Δ−1)`` (Δ ∈ ``LOSS_DELTAS``). The per-timeslice transfer matrix
-bounds every consecutive ratio by e^{−m₀}, so each converged ratio *is* a
+``−mean_Δ C(Δ)/C(0)`` (Δ ∈ ``LOSS_DELTAS``). The per-timeslice transfer matrix
+bounds every ratio by e^{−m₀·Δ}, so each converged ratio *is* a
 glueball-mass estimate and the trained network *is* the
 optimal-overlap interpolating operator (notes/glueball_spectroscopy.md §1). The
 result is validated against the classical multi-level GEVP plateau
@@ -119,16 +119,21 @@ GRAD_CHECKPOINT = True  # recompute each GEMHSA layer in backward (~×layers cut
 #                         in stored activations for ~one extra forward) — the
 #                         stored K/V neighbourhoods, not the transport build,
 #                         are the memory wall (V100 profile: transport 1.9%).
-EPS = 1e-8  # floor for the Rayleigh denominators C(Δ−1): guards the
-#             constant-operator collapse C(0) → 0 (§4 pitfall 3) AND the signed
-#             C(1) crossing zero mid-training (the Δ=2 ratio would divide by ~0,
-#             go inf, and NaN-poison every parameter through clip_grad_norm_)
-LOSS_DELTAS = (1, 2)  # Rayleigh ratios C(Δ)/C(Δ−1) entering the loss. The
+EPS = 1e-8  # floor for the Rayleigh denominator C(0): guards the
+#             constant-operator collapse C(0) → 0 (§4 pitfall 3). C(0) is the
+#             ONLY denominator — chained ratios C(Δ)/C(Δ−1) put the *signed*
+#             batch estimate C(1) downstairs, and on a 6-config batch its noise
+#             (~C(0)/√(b·Lt)) crosses zero routinely: the clamped ratio
+#             C(2)/EPS ~ ±1e15 stayed finite (so the isfinite guard never
+#             fired) and its 1/EPS-scaled gradient — clipped to norm 1 but pure
+#             garbage in *direction* — pumped the operator scale to C(0)~5e8
+#             (the epoch-14 train=2e14 blowup).
+LOSS_DELTAS = (1, 2)  # Rayleigh ratios C(Δ)/C(0) entering the loss. The
 #                       per-timeslice operator keeps the transfer matrix
-#                       positive, so EVERY consecutive ratio is bounded by
-#                       e^{−m₀}; the Δ=2 term makes training select for the
-#                       reported m_eff(Δ≥1) plateau instead of only the
-#                       most-contaminated Δ=0 point.
+#                       positive, so EVERY ratio is bounded by e^{−m₀·Δ}; the
+#                       Δ=2 term makes training select for the reported
+#                       m_eff(Δ≥1) plateau instead of only the
+#                       most-contaminated Δ=0→1 ratio.
 
 # Contiguous three-way split of the *chain-ordered* ensemble (NOT shuffled).
 # The ensemble is MCMC-ordered, so neighbouring configs are autocorrelated;
@@ -173,24 +178,35 @@ def network_obar(model, U4_batch, device):
 
 
 def rayleigh_loss(Obar, deltas=LOSS_DELTAS):
-    """−mean_Δ C(Δ)/max(C(Δ−1), ε) with batch-estimated VEV subtraction and
+    """−mean_Δ C(Δ)/max(C(0), ε) with batch-estimated VEV subtraction and
     t₀-averaging.
 
     ``Obar`` : ``(b, Lt)``. Returns ``(loss, C0, R)`` with R = C(1)/(C(0)+ε),
     the monitoring ratio (m = −log R at the optimum of the Δ=1 term). Each
     C(Δ) is averaged over every time origin (the ``roll``, periodic in time).
     """
+    # float64: at large operator scale (C(0) grew to ~5e8 mid-run) the VEV
+    # subtraction and the C(Δ) sums cancel catastrophically in float32; Ō is
+    # (b, Lt), so the cast is free and the gradient flows through it.
+    Obar = Obar.double()
     mu = Obar.mean()  # ⟨Ō⟩ — 0⁺⁺ has a NONZERO VEV; must subtract
     d = Obar - mu
     # C(Δ) for every separation the ratios touch; roll(0) is C(0), the
     # connected variance.
-    need = sorted({0, 1} | set(deltas) | {dt - 1 for dt in deltas})
+    need = sorted({0, 1} | set(deltas))
     C = {dt: (d.roll(-dt, dims=1) * d).mean() for dt in need}
-    # clamp_min, not +EPS: C(0) is a variance (≥ 0) but C(Δ≥1) is a *signed*
-    # sample estimate, and an additive ε cannot stop it passing through zero —
-    # exactly what NaN'd the first run at ~epoch 11. The clamp also zeroes the
-    # explosive −C(Δ)/C(Δ−1)² quotient-rule gradient term while clamped.
-    ratios = [C[dt] / C[dt - 1].clamp_min(EPS) for dt in deltas]
+    # Every ratio is C(Δ)/C(0): the denominator is a variance (≥ 0, and large
+    # whenever the operator is nontrivial), so it cannot cross zero the way
+    # the signed C(1) did under the old chained C(Δ)/C(Δ−1) form — whose
+    # clamped 1/EPS ratios stayed finite but trained on garbage gradients
+    # (see the EPS tunable note). Cauchy–Schwarz gives |C(Δ)| ≤ C(0), so the
+    # loss is bounded in [−1, 1] by construction, and the transfer matrix
+    # still bounds C(Δ)/C(0) ≤ e^{−m₀·Δ}: the ground-state operator remains
+    # the joint optimum, so nothing changes variationally. clamp_min guards
+    # only the constant-operator collapse C(0) → 0 (and zeroes the explosive
+    # quotient-rule gradient while clamped).
+    C0c = C[0].clamp_min(EPS)
+    ratios = [C[dt] / C0c for dt in deltas]
     loss = -sum(ratios) / len(ratios)
     Rq = C[1] / (C[0] + EPS)
     return loss, C[0], Rq
@@ -515,12 +531,12 @@ def main():
     fig, ax = plt.subplots(1, 2, figsize=(14, 6))
 
     # (0) training curves
-    loss_lab = "−mean[" + ", ".join(f"C({d})/C({d - 1})" for d in LOSS_DELTAS) + "]"
+    loss_lab = "−mean[" + ", ".join(f"C({d})/C(0)" for d in LOSS_DELTAS) + "]"
     ax[0].plot(train_hist, label=f"train  {loss_lab}")
     ax[0].plot(val_hist, label=f"val  {loss_lab}")
     ax[0].set_xlabel("epoch")
     ax[0].set_ylabel("Rayleigh loss")
-    ax[0].set_title(f"Rayleigh training (loss = {loss_lab}; each ratio → e^(−m))")
+    ax[0].set_title(f"Rayleigh training (loss = {loss_lab}; each ratio → e^(−m·Δ))")
     ax[0].legend()
     ax[0].grid(True, alpha=0.3)
 
