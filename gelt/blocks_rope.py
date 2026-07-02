@@ -9,6 +9,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 
 from gelt.lattice import l1_ball_offsets
 
@@ -579,6 +580,7 @@ class GELT(nn.Module):
         mlp_zero_init: bool = True,
         d_model: int | None = None,
         mlp_dropout: float = 0.0,
+        grad_checkpoint: bool = False,
     ):
         # Plaquette input -> D(D-1)/2 plaquettes per site.
         d_input = D * (D - 1) // 2
@@ -599,6 +601,12 @@ class GELT(nn.Module):
                 f"reduction must be 'sum', 'mean', or 'none', got {reduction!r}"
             )
         self.reduction = reduction
+        # Recompute each GEMHSA layer in backward instead of storing its
+        # activations. The gathered K/V neighbourhoods are
+        # (B, H, d, n_off, *Λ, nc, nc)-sized, so stored activations — not
+        # weights or transports — are the training memory wall (V100 profile:
+        # ~7 GiB/config at 4 layers without this). Costs ~one extra forward.
+        self.grad_checkpoint = grad_checkpoint
         # Channel lift to widen the small plaquette input to d_model. When
         # d_model == d_input the lift is the identity matrix and is a no-op
         # at init (still trainable — the model can learn to mix plaquette
@@ -641,7 +649,14 @@ class GELT(nn.Module):
 
     def attn(self, W, T, T_dag):
         for layer in self.gemhsa_models:
-            W = layer(W, T, T_dag)
+            if self.grad_checkpoint and self.training and torch.is_grad_enabled():
+                # use_reentrant=False: T/T_dag carry no grad (only W and the
+                # layer parameters do), which the non-reentrant variant
+                # handles correctly. The _last_score/_last_alpha stashes are
+                # rewritten during the backward recompute — same values.
+                W = checkpoint(layer, W, T, T_dag, use_reentrant=False)
+            else:
+                W = layer(W, T, T_dag)
         return W
 
     def forward(self, W, T):

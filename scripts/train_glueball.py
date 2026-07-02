@@ -110,8 +110,14 @@ BATCH_CONFIGS = 8  # configs per minibatch; each expands to BATCH_CONFIGS·LT 3D
 #                    slices through the network. This is the memory knob (T and
 #                    the per-layer K/V scale with it) AND the VEV-estimate knob
 #                    (the batch mean ⟨Ō⟩ in the loss is noisier for small
-#                    batches — the §4 ratio-estimator bias). 8 should fit a
-#                    16 GB V100 (~1–2 GB activations/4 configs/layer); try 16.
+#                    batches — the §4 ratio-estimator bias). V100 profile at
+#                    4 layers: ~7.4 GiB activations/config WITHOUT grad
+#                    checkpointing (batch 4 OOMs a 32 GiB V100); 8 needs
+#                    GRAD_CHECKPOINT on. Check with profile_glueball_step.py.
+GRAD_CHECKPOINT = True  # recompute each GEMHSA layer in backward (~×layers cut
+#                         in stored activations for ~one extra forward) — the
+#                         stored K/V neighbourhoods, not the transport build,
+#                         are the memory wall (V100 profile: transport 1.9%).
 EPS = 1e-8  # C(0) floor guarding the constant-operator collapse (§4 pitfall 3)
 LOSS_DELTAS = (1, 2)  # Rayleigh ratios C(Δ)/C(Δ−1) entering the loss. The
 #                       per-timeslice operator keeps the transfer matrix
@@ -324,6 +330,7 @@ def main():
         qk_init_scale=QK_INIT_SCALE,
         mlp_zero_init=False,
         d_model=D_MODEL,
+        grad_checkpoint=GRAD_CHECKPOINT,
     ).to(device)
     n_params = sum(p.numel() for p in model.parameters())
     print(f"GELT(D=3, R={R}, layers={GEMHSA_LAYERS}, d_qkv={D_QKV}) | params {n_params:,}")

@@ -67,6 +67,7 @@ def main():
         dtype=tg.MODEL_DTYPE, mlp_hidden=tg.MLP_HIDDEN, mlp_out=1,
         reduction="none", init_scale=tg.INIT_SCALE, qk_init_scale=tg.QK_INIT_SCALE,
         mlp_zero_init=False, d_model=tg.D_MODEL,
+        grad_checkpoint=tg.GRAD_CHECKPOINT,
     ).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=tg.LR, weight_decay=tg.WEIGHT_DECAY)
 
