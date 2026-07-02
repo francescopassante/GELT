@@ -119,7 +119,10 @@ GRAD_CHECKPOINT = True  # recompute each GEMHSA layer in backward (~×layers cut
 #                         in stored activations for ~one extra forward) — the
 #                         stored K/V neighbourhoods, not the transport build,
 #                         are the memory wall (V100 profile: transport 1.9%).
-EPS = 1e-8  # C(0) floor guarding the constant-operator collapse (§4 pitfall 3)
+EPS = 1e-8  # floor for the Rayleigh denominators C(Δ−1): guards the
+#             constant-operator collapse C(0) → 0 (§4 pitfall 3) AND the signed
+#             C(1) crossing zero mid-training (the Δ=2 ratio would divide by ~0,
+#             go inf, and NaN-poison every parameter through clip_grad_norm_)
 LOSS_DELTAS = (1, 2)  # Rayleigh ratios C(Δ)/C(Δ−1) entering the loss. The
 #                       per-timeslice operator keeps the transfer matrix
 #                       positive, so EVERY consecutive ratio is bounded by
@@ -140,6 +143,8 @@ GEVP_LEVELS = [0, 2, 4, 6]  # classical anchor smearing basis (matches measure_)
 GEVP_T0 = 1
 SMEAR_ALPHA = 0.5
 CHECKPOINT = "best_glueball_gelt.pth"
+RESUME = True  # warm-start from CHECKPOINT if it exists (optimizer state and the
+#                cosine schedule restart fresh); set False to train from scratch
 
 
 # ── Rayleigh loss & per-batch operator ────────────────────────────────────────
@@ -168,7 +173,7 @@ def network_obar(model, U4_batch, device):
 
 
 def rayleigh_loss(Obar, deltas=LOSS_DELTAS):
-    """−mean_Δ C(Δ)/(C(Δ−1)+ε) with batch-estimated VEV subtraction and
+    """−mean_Δ C(Δ)/max(C(Δ−1), ε) with batch-estimated VEV subtraction and
     t₀-averaging.
 
     ``Obar`` : ``(b, Lt)``. Returns ``(loss, C0, R)`` with R = C(1)/(C(0)+ε),
@@ -181,7 +186,11 @@ def rayleigh_loss(Obar, deltas=LOSS_DELTAS):
     # connected variance.
     need = sorted({0, 1} | set(deltas) | {dt - 1 for dt in deltas})
     C = {dt: (d.roll(-dt, dims=1) * d).mean() for dt in need}
-    ratios = [C[dt] / (C[dt - 1] + EPS) for dt in deltas]
+    # clamp_min, not +EPS: C(0) is a variance (≥ 0) but C(Δ≥1) is a *signed*
+    # sample estimate, and an additive ε cannot stop it passing through zero —
+    # exactly what NaN'd the first run at ~epoch 11. The clamp also zeroes the
+    # explosive −C(Δ)/C(Δ−1)² quotient-rule gradient term while clamped.
+    ratios = [C[dt] / C[dt - 1].clamp_min(EPS) for dt in deltas]
     loss = -sum(ratios) / len(ratios)
     Rq = C[1] / (C[0] + EPS)
     return loss, C[0], Rq
@@ -341,11 +350,25 @@ def main():
     # epochs. One smooth decay from LR to ~0 across EPOCHS.
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
 
+    # ── Optional warm start: reload the best checkpoint of a previous run and
+    # keep training. best_val_loss is seeded with the checkpoint's own val loss
+    # so a worse first epoch cannot overwrite better weights already on disk.
+    best_val_loss = float("inf")
+    if RESUME and os.path.exists(CHECKPOINT):
+        model.load_state_dict(
+            torch.load(CHECKPOINT, map_location=device, weights_only=True)
+        )
+        val0 = held_out_obar(model, val_configs, device)
+        best_val_loss = rayleigh_loss(val0)[0].item()
+        print(
+            f"Resumed weights from {CHECKPOINT} — starting val Rayleigh loss "
+            f"{best_val_loss:.4f} (optimizer/schedule start fresh)."
+        )
+
     # ── Training loop. Minibatch over configs; each config's LT timeslices go
     # through the 3D network together so the temporal correlator can be formed.
     # Model selection is on VAL only (never test) so the reported test mass is
     # not biased low by the checkpoint choice.
-    best_val_loss = float("inf")
     train_hist, val_hist = [], []
     epoch_bar = tqdm(range(EPOCHS))
     epochs_no_improve = 0
@@ -367,13 +390,26 @@ def main():
                 desc=f"epoch {epoch + 1}",
                 leave=False,
             )
+            skipped = 0
             for i in batch_bar:
                 batch = train_configs[order[i : i + BATCH_CONFIGS]]
                 optimizer.zero_grad()
                 Obar = network_obar(model, batch, device)
                 loss, C0, Rq = rayleigh_loss(Obar)
+                # Non-finite guard: one pathological batch must cost one skipped
+                # step, not the run. A NaN/inf anywhere here makes
+                # clip_grad_norm_'s total norm NaN, which rescales EVERY grad to
+                # NaN and bricks the parameters permanently (the epoch-13 NaNs).
+                if not torch.isfinite(loss):
+                    skipped += 1
+                    continue
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                grad_norm = torch.nn.utils.clip_grad_norm_(
+                    model.parameters(), max_norm=1.0
+                )
+                if not torch.isfinite(grad_norm):
+                    skipped += 1
+                    continue
                 optimizer.step()
                 run_loss += loss.item()
                 run_C0 += C0.item()
@@ -381,7 +417,12 @@ def main():
                 nb += 1
                 batch_bar.set_postfix(loss=f"{loss.item():.4f}", C0=f"{C0.item():.2e}")
             scheduler.step()
-            train_loss = run_loss / nb
+            if skipped:
+                epoch_bar.write(
+                    f"  ⚠ epoch {epoch + 1}: skipped {skipped} non-finite "
+                    f"batch(es) — loss/grad blew up there; investigate if frequent."
+                )
+            train_loss = run_loss / max(nb, 1)
             train_hist.append(train_loss)
 
             # Validation Rayleigh (whole val set at once, minibatched forward) —
