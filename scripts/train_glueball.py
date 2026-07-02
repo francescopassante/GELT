@@ -106,14 +106,15 @@ WEIGHT_DECAY = 1e-3  # AdamW decoupled decay: the unregularized run's val curve
 # later than the unregularized run's ~epoch-10 turn-up.
 EPOCHS = 60
 PATIENCE = 10
-BATCH_CONFIGS = 8  # configs per minibatch; each expands to BATCH_CONFIGS·LT 3D
+BATCH_CONFIGS = 6  # configs per minibatch; each expands to BATCH_CONFIGS·LT 3D
 #                    slices through the network. This is the memory knob (T and
 #                    the per-layer K/V scale with it) AND the VEV-estimate knob
 #                    (the batch mean ⟨Ō⟩ in the loss is noisier for small
 #                    batches — the §4 ratio-estimator bias). V100 profile at
-#                    4 layers: ~7.4 GiB activations/config WITHOUT grad
-#                    checkpointing (batch 4 OOMs a 32 GiB V100); 8 needs
-#                    GRAD_CHECKPOINT on. Check with profile_glueball_step.py.
+#                    4 layers WITH grad checkpointing: batch 4 = 17 GiB,
+#                    batch 6 ≈ 25 GiB (fits 32 GiB), batch 8 OOMs. Without
+#                    checkpointing even batch 4 OOMs (~7.4 GiB acts/config).
+#                    Check with profile_glueball_step.py.
 GRAD_CHECKPOINT = True  # recompute each GEMHSA layer in backward (~×layers cut
 #                         in stored activations for ~one extra forward) — the
 #                         stored K/V neighbourhoods, not the transport build,
