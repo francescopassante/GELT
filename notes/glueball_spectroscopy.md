@@ -363,6 +363,32 @@ relevant figure: glueball_gelt_from_raw_plaquettes.png
    width). Depth 5–6 is plausible (checkpointing makes it mostly compute) but
    strictly worse ROI than step 1, which buys degree-~3⁶ content for free.
 
+### Run 4b (2026-07-03) — step 2 executed (eval-only, thin-input checkpoint)
+
+Eval-only rerun (`EPOCHS=0`, `RESUME=True`, `INPUT_SMEAR_LEVELS=(0,)`) of the
+Run 4 checkpoint with the new diagnostics:
+
+- **Ladder correlation — GELT ≈ APE×2.** `|corr(GELT Ō, APE×k Ō)|` on test:
+  0.681 (thin), **0.867 (×2)**, 0.713 (×4), 0.589 (×6). (Signs are all
+  negative — irrelevant: the readout's overall sign is arbitrary and the
+  correlator is quadratic in Ō.) The depth-4 network trained on thin links
+  learned ~two APE steps' worth of staple content — the depth-budget diagnosis,
+  now quantitative.
+- **Enlarged GEVP — null.** Classical + GELT 5-op basis:
+  0.393 ± 0.017 / 0.355 ± 0.029 / 0.335 ± 0.035 / 0.286 ± 0.059 at Δ=1–4,
+  identical to the classical 4-op basis within a fraction of the error bars
+  (the purple and red curves overlap in `glueball_gelt.png` — that overlap *is*
+  the result). The ~25% of GELT's fluctuation variance that is linearly
+  independent of the ladder carries **no additional ground-state overlap**:
+  it is excited-state admixture and noise, so the thin-input GELT is
+  variationally redundant with the hand-built smearing basis.
+
+Consequence: the "learned basis" reframe does not rescue the *thin-input*
+operator — next step 1 (smeared-input channels) now carries the full weight.
+This null is the clean baseline for it: if the [0,2,4,6]-input GELT's enlarged
+GEVP separates from the classical curve, the gain is attributable to what the
+network computes *on top of* the smearing, not to the smearing itself.
+
 ## 0. Where we are vs. what spectroscopy needs
 
 Everything built so far is **per-configuration regression toward a known

@@ -135,6 +135,18 @@ LOSS_DELTAS = (1, 2)  # Rayleigh ratios C(Δ)/C(0) entering the loss. The
 #                       Δ=2 term makes training select for the reported
 #                       m_eff(Δ≥1) plateau instead of only the
 #                       most-contaminated Δ=0→1 ratio.
+SCALE_REG = 1e-2  # coefficient of the (log C(0))² scale pin. The ratios
+#                   C(Δ)/C(0) are invariant under Ō → λŌ, so the loss has a
+#                   scale-flat direction and nothing stops the operator scale
+#                   from drifting. With thin inputs the drift stayed benign;
+#                   the smeared-input channels are smooth and site-coherent,
+#                   the attention sums add constructively, and the bilinear
+#                   value path squares that gain per layer — the first
+#                   [0,2,4,6] run hit C(0) ~ 1e73 (Ō ~ 1e36, float32 edge) by
+#                   epoch 2: non-finite grads, val=nan, and since nan never
+#                   improves best_val_loss, NO checkpoint was ever saved. The
+#                   (log C(0))² term is variationally neutral (ratios
+#                   untouched) and restores C(0) → 1.
 
 # Contiguous three-way split of the *chain-ordered* ensemble (NOT shuffled).
 # The ensemble is MCMC-ordered, so neighbouring configs are autocorrelated;
@@ -239,7 +251,9 @@ def rayleigh_loss(Obar, deltas=LOSS_DELTAS):
     # quotient-rule gradient while clamped).
     C0c = C[0].clamp_min(EPS)
     ratios = [C[dt] / C0c for dt in deltas]
-    loss = -sum(ratios) / len(ratios)
+    # Scale pin (see SCALE_REG): lifts the Ō → λŌ flat direction toward
+    # C(0) = 1 without touching the scale-invariant Rayleigh ratios.
+    loss = -sum(ratios) / len(ratios) + SCALE_REG * C0c.log().pow(2)
     Rq = C[1] / (C[0] + EPS)
     return loss, C[0], Rq
 
@@ -490,6 +504,12 @@ def main():
             if 0.0 < val_R.item() < 1.0:
                 val_m = -np.log(val_R.item())
 
+            if not np.isfinite(val_loss):
+                epoch_bar.write(
+                    f"  ⚠ epoch {epoch + 1}: val loss is non-finite — no checkpoint "
+                    f"can be saved this epoch; if this persists the run produces "
+                    f"nothing (nan never improves best_val_loss)."
+                )
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
                 torch.save(model.state_dict(), CHECKPOINT)
