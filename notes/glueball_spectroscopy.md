@@ -389,6 +389,48 @@ This null is the clean baseline for it: if the [0,2,4,6]-input GELT's enlarged
 GEVP separates from the classical curve, the gain is attributable to what the
 network computes *on top of* the smearing, not to the smearing itself.
 
+### Run 5 (2026-07-03, preliminary) — smeared-input GELT: the win criterion, in one epoch
+
+First run with `INPUT_SMEAR_LEVELS = (0, 2, 4, 6)`. The run itself crashed
+into a *new* pathology — the smeared channels are smooth and site-coherent, the
+attention sums add constructively, the bilinear value path squares that gain per
+layer, and the Rayleigh loss's scale-flat direction (C(Δ)/C(0) is invariant
+under Ō → λŌ) let the operator scale run to C(0) ~ 1e73 by epoch 2 (float32
+overflow → val = nan → **no checkpoint can ever be saved**, since nan never
+improves best_val_loss). Fixed by a variationally neutral **(log C(0))² scale
+pin** in the loss (`SCALE_REG`) plus a loud non-finite-val warning. But epoch 1
+completed cleanly with **val Rayleigh −0.6015** — within ~0.008 of the
+single-mass loss floor at m ≈ 0.35 — and its checkpoint evaluates to:
+
+| operator | m_eff(Δ=1) | m_eff(Δ=2) | m_eff(Δ=3) | m_eff(Δ=4) |
+|---|---|---|---|---|
+| GELT (smeared input, 1 epoch) | **0.379 ± 0.017** | 0.343 ± 0.023 | 0.362 ± 0.034 | — |
+| classical GEVP | 0.398 ± 0.016 | 0.357 ± 0.025 | 0.333 ± 0.036 | 0.284 ± 0.050 |
+| GEVP + GELT (5-op) | 0.379 ± 0.017 | 0.343 ± 0.023 | 0.362 ± 0.034 | 0.341 ± 0.046 |
+
+- **The §5 win criterion is met (preliminarily):** GELT is flat from Δ=1
+  (plateau ≈ 0.35) and sits *below* the GEVP at Δ=1–2 — less excited-state
+  contamination, earlier plateau onset. (Rayleigh Δ=0→1 mass: 0.411, vs 0.705
+  for the thin-input operator.)
+- **The enlarged GEVP collapses onto GELT:** its ground state at Δ=1–3 equals
+  GELT's own m_eff to all printed digits — offered the classical ladder plus
+  GELT, the variational solver picks essentially pure GELT; the hand-built
+  basis adds nothing beyond the learned operator. Against the Run 4b null this
+  is cleanly attributable to the network (both methods see the same smearing
+  levels; GELT mixes them nonlinearly and site-by-site, the GEVP only
+  globally/linearly).
+- **Ladder correlations:** r = 0.342 / 0.754 / 0.927 / 0.957 for ×0/×2/×4/×6 —
+  the operator lives at the deep end of the ladder; the ~8% unexplained
+  variance is what buys the improvement.
+
+Caveats before this is a thesis claim: (i) one epoch, pre-scale-pin checkpoint
+— the warm-started retrain must reproduce/refine it; (ii) the Δ=1 GELT−GEVP
+difference is ~1σ under *independent* errors, but both are measured on the
+same test configs — add a blocked jackknife of the **difference**
+m_GELT − m_GEVP (correlated errors cancel) to state the significance honestly;
+(iii) on-the-fly smearing costs ~55% step time (1863 s/epoch vs ~1200) — cache
+smeared links if this direction gets iterated heavily.
+
 ## 0. Where we are vs. what spectroscopy needs
 
 Everything built so far is **per-configuration regression toward a known

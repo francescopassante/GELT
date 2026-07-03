@@ -307,6 +307,32 @@ def blocked_jackknife_gevp_meff(Obar_basis, block_size, t0):
     return mean[:, 0], err[:, 0]  # ground state
 
 
+def blocked_jackknife_meff_diff(Obar_single, Obar_basis, block_size, t0):
+    """Delete-block jackknife of m_eff(single) − m_eff(GEVP ground state).
+
+    Both operators are measured on the SAME configs, so their separate error
+    bars are strongly correlated and comparing them as if independent
+    overstates the uncertainty of the difference. Jackknifing the difference
+    itself lets the correlated fluctuations cancel — this is the number that
+    decides whether "GELT sits below the GEVP" is significant.
+    """
+    B = Obar_single.shape[0]
+    blocks = _blocks(B, block_size)
+    samples = []
+    for bl in blocks:
+        mask = torch.ones(B, dtype=torch.bool)
+        mask[bl] = False
+        m_single = effective_mass(connected_correlator(Obar_single[mask]))
+        C = connected_correlator_matrix(Obar_basis[:, mask])
+        m_gevp = gevp_effective_mass(gevp_eigenvalues(C, t0=t0))[:, 0]
+        samples.append(m_single - m_gevp)
+    samples = torch.stack(samples)
+    n = len(blocks)
+    mean = samples.mean(dim=0)
+    err = ((n - 1) / n * ((samples - mean) ** 2).sum(dim=0)).sqrt()
+    return mean, err
+
+
 # ── Held-out network operator (no grad, minibatched for memory) ───────────────
 @torch.no_grad()
 def held_out_obar(model, configs, device):
@@ -611,6 +637,21 @@ def main():
             print(
                 f"     m_eff(Δ={dlt}):  m·a_t = {meff_gevp_plus[dlt].item():.3f} "
                 f"± {err_gevp_plus[dlt].item():.3f}"
+            )
+
+    # (c) Significance of the GELT-vs-GEVP comparison: jackknife the
+    # *difference* on the shared configs (see blocked_jackknife_meff_diff) —
+    # negative = GELT below the GEVP (less contamination) at that Δ.
+    dmean, derr = blocked_jackknife_meff_diff(
+        gelt_obar, Obar_basis, JACK_BLOCK, GEVP_T0
+    )
+    print("m_eff(GELT) − m_eff(GEVP), blocked jackknife of the difference (test):")
+    for dlt in range(GEVP_T0, min(GEVP_T0 + 4, len(dmean))):
+        if bool(torch.isfinite(dmean[dlt])):
+            sig = abs(dmean[dlt].item()) / max(derr[dlt].item(), 1e-12)
+            print(
+                f"     Δ={dlt}:  {dmean[dlt].item():+.3f} ± {derr[dlt].item():.3f} "
+                f"({sig:.1f}σ)"
             )
 
     # ── Plots ──────────────────────────────────────────────────────────────────
