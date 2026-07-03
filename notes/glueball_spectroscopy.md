@@ -424,12 +424,57 @@ single-mass loss floor at m ≈ 0.35 — and its checkpoint evaluates to:
   variance is what buys the improvement.
 
 Caveats before this is a thesis claim: (i) one epoch, pre-scale-pin checkpoint
-— the warm-started retrain must reproduce/refine it; (ii) the Δ=1 GELT−GEVP
-difference is ~1σ under *independent* errors, but both are measured on the
-same test configs — add a blocked jackknife of the **difference**
-m_GELT − m_GEVP (correlated errors cancel) to state the significance honestly;
-(iii) on-the-fly smearing costs ~55% step time (1863 s/epoch vs ~1200) — cache
-smeared links if this direction gets iterated heavily.
+— the warm-started retrain must reproduce/refine it *(resolved: see final
+results below)*; (ii) the Δ=1 GELT−GEVP difference is ~1σ under *independent*
+errors, but both are measured on the same test configs — add a blocked
+jackknife of the **difference** m_GELT − m_GEVP (correlated errors cancel) to
+state the significance honestly *(added; see below)*; (iii) on-the-fly
+smearing costs ~55% step time (1863 s/epoch vs ~1200) — cache smeared links if
+this direction gets iterated heavily.
+
+### Run 5 final (2026-07-03) — §6.2 delivered: the learned operator beats the GEVP
+
+Warm-started retrain with the scale pin: stable throughout (C(0) held at O(1),
+no skipped batches, no overfit turn-up — val flat on the floor the whole run),
+best val Rayleigh **−0.6185** at ~epoch 13, Ctrl-C'd at ~epoch 18 after 5
+no-improve epochs. Decoding the loss: −0.6185 ↔ **m ≈ 0.329** — the Rayleigh
+quotient *saturates the transfer-matrix bound at the anchor mass*. "The
+converged loss is the glueball mass" (§1) is realized. On test:
+
+| operator | m_eff(Δ=1) | m_eff(Δ=2) | m_eff(Δ=3) | m_eff(Δ=4) |
+|---|---|---|---|---|
+| GELT (learned) | **0.370 ± 0.016** | **0.333 ± 0.020** | 0.345 ± 0.029 | — |
+| classical GEVP | 0.398 ± 0.016 | 0.357 ± 0.025 | 0.333 ± 0.036 | 0.284 ± 0.050 |
+| GEVP + GELT (5-op) | 0.366 ± 0.017 | 0.333 ± 0.020 | 0.347 ± 0.030 | 0.319 ± 0.048 |
+
+**Correlated-difference jackknife (the significance test), m_GELT − m_GEVP:**
+Δ=1: **−0.028 ± 0.007 (3.9σ)**; Δ=2: −0.024 ± 0.014 (1.8σ); Δ=3: +0.012 ±
+0.021; Δ=4: +0.051 ± 0.038 — GELT is *significantly below* the classical GEVP
+where contamination lives (small Δ) and identical on the plateau, i.e. a
+better operator measuring the same physics.
+
+- **The §5 win criterion is met with significance.** GELT is flat at ≈
+  0.33–0.37 from Δ=1 (in the figure it hugs the anchor through Δ≈6) while the
+  GEVP is still descending at Δ=1–2. Even GELT's most-contaminated Δ=0→1
+  Rayleigh mass (0.392) sits below the GEVP's m_eff(Δ=1).
+- **The enlarged GEVP still collapses onto (essentially pure) GELT** — the
+  classical ladder adds ~0.004 at Δ=1, within noise: one learned operator
+  variationally subsumes the hand-built 4-level basis.
+- **Ladder correlations:** |r| = 0.446 / 0.758 / 0.870 / 0.905 for ×0/×2/×4/×6.
+  Training grew the ladder-independent variance from ~8% (epoch 1) to ~18%
+  *while improving* — the network's own content, not residual noise, drives
+  the win. What that content looks like is now the interpretability chapter's
+  first real question (`_last_alpha` on this checkpoint).
+- Curiosity, not a bug: val < train in the training curves — the 6-config
+  batch Rayleigh estimator is noise-biased toward 0 (batch-estimated VEV and
+  C(Δ) over 144 slices), the 200-config val estimate is cleaner.
+
+Remaining honesty caveats for the write-up: one ensemble, one (β, ξ), coarse
+a_s (no continuum claim — as for the classical result); the 3.9σ statement is
+about *operator quality* (excited-state contamination at Δ=1), not about the
+mass value, on which the two methods agree. Still to do from the §6.2 list:
+the matched-parameter **L-CNN baseline** on the same per-timeslice task, and
+ideally a replication on a freshly sampled ensemble.
 
 ## 0. Where we are vs. what spectroscopy needs
 

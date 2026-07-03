@@ -132,6 +132,23 @@ anisotropic re-run of the τ_int pre-flight. The 4D program (q(x),
 time-spanning Wilson loops) is untouched — the 3D restriction is a per-task
 input-domain choice, not an architecture change.
 
+**§6.2 DELIVERED (Runs 4–5, 2026-07-03, recorded in
+`notes/glueball_spectroscopy.md` § "Run 4"/"Run 5"):** with thin-plaquette
+input GELT learned only ≈ APE×2's staple content (depth-4 loop degree can't
+rebuild iterated smearing) and was variationally redundant with the classical
+basis. Feeding **multi-level smeared input channels**
+(`INPUT_SMEAR_LEVELS = (0, 2, 4, 6)`, `GELT(..., in_channels=3·n_levels)`)
+fixed it: the trained operator's Rayleigh loss saturates the transfer-matrix
+bound at the anchor (`val −0.6185 ↔ m·a_t ≈ 0.33`), its `m_eff` plateaus from
+Δ=1, and it **beats the classical GEVP at Δ=1 by 3.9σ** (blocked jackknife of
+the *difference* on shared test configs: −0.028 ± 0.007) while agreeing on the
+plateau mass — the enlarged 5-op GEVP collapses onto pure GELT. Two loss
+pathologies were fixed en route: chained-ratio denominators → `C(0)`, and a
+`(log C(0))²` scale pin (`SCALE_REG`) for the Ō → λŌ flat direction, which the
+site-coherent smeared inputs otherwise pump to float32 overflow. Still open
+from the §6.2 list: the matched-parameter L-CNN baseline on the same
+per-timeslice task, and a replication on a fresh ensemble.
+
 Known caveats (see `notes/fable_audit.md` for the full list and the
 prioritized fixes):
 
