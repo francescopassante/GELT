@@ -47,6 +47,7 @@ from tqdm import tqdm
 
 from gelt.blocks_rope import GELT
 from gelt.glueball import (
+    ape_smear,
     connected_correlator,
     effective_mass,
     smearing_operator_basis,
@@ -147,7 +148,23 @@ JACK_BLOCK = 10  # blocked-jackknife block size (configs) for reported masses
 GEVP_LEVELS = [0, 2, 4, 6]  # classical anchor smearing basis (matches measure_)
 GEVP_T0 = 1
 SMEAR_ALPHA = 0.5
-CHECKPOINT = "best_glueball_gelt.pth"
+INPUT_SMEAR_LEVELS = (0, 2, 4, 6)  # cumulative APE levels of the plaquette
+#   channels fed to GELT; (0,) is the original thin-link input. Stacking several
+#   levels on the channel axis (in_channels = 3·n_levels) hands the network the
+#   deep branched staple content it cannot rebuild from thin links at depth 4
+#   (Run 4 in the notes: loop degree ≤ 16 vs APE×6's ~3⁶ — the overlap gap).
+#   Smearing is spatial-only (ape_smear), so the per-timeslice transfer-matrix
+#   bound is untouched; GELT becomes a spatially-resolved nonlinear
+#   generalization of the GEVP over the same smearing ladder. The transport T
+#   is built from the FIRST (least smeared) level.
+CHECKPOINT = "best_glueball_gelt" + (
+    ""
+    if tuple(INPUT_SMEAR_LEVELS) == (0,)
+    else "_sm" + "-".join(str(lv) for lv in INPUT_SMEAR_LEVELS)
+) + ".pth"
+# The checkpoint name encodes the input smearing levels: changing them changes
+# the ChannelLift shape, so checkpoints at different levels are incompatible
+# and must never RESUME into (or overwrite) each other.
 RESUME = True  # warm-start from CHECKPOINT if it exists (optimizer state and the
 #                cosine schedule restart fresh); set False to train from scratch
 
@@ -163,15 +180,30 @@ def network_obar(model, U4_batch, device):
     time axis is *folded into the batch*, so the network only ever sees a single
     timeslice's spatial links — a legitimate single-timeslice operator (audit
     item 1). ``W`` (spatial plaquettes) and ``T`` (3D L1-ball transport) are
-    built on the fly per batch (audit item 4).
+    built on the fly per batch (audit item 4). ``W`` stacks one 3-channel
+    plaquette block per ``INPUT_SMEAR_LEVELS`` entry (in_channels = 3·n_levels);
+    ``T`` comes from the first (least smeared) level.
     """
     b, _, Lt = U4_batch.shape[0], U4_batch.shape[1], U4_batch.shape[2]
-    # (b, 3, Lt, L, L, L, nc, nc) → move the lattice time axis in front of the
-    # spatial-lattice axes so (config, timeslice) fold contiguously into batch.
-    Usp = U4_batch[:, 1:].movedim(2, 1).contiguous()  # (b, Lt, 3, L,L,L, nc,nc)
-    U3 = Usp.reshape(b * Lt, 3, L, L, L, NC, NC).to(device)  # 3D slices, batch=b·Lt
-    W = plaquette_tensor(U3, gaugegroup)  # (b·Lt, 3, L,L,L, nc,nc) spatial planes
-    T = build_transport_average(U3, R, gaugegroup)  # (b·Lt, n_off, L,L,L, nc,nc)
+    U = U4_batch.to(device)
+    # One plaquette-channel block per cumulative APE level (incremental, as in
+    # smearing_operator_basis). ape_smear is spatial-only with time = axis 0, so
+    # each timeslice's smeared links depend on that timeslice alone — the
+    # single-timeslice operator property survives the smearing.
+    Ws, U3_first, done = [], None, 0
+    for lvl in sorted(INPUT_SMEAR_LEVELS):
+        if lvl > done:
+            U = ape_smear(U, gaugegroup, alpha=SMEAR_ALPHA, n_steps=lvl - done)
+            done = lvl
+        # (b, 3, Lt, L, L, L, nc, nc) → move the lattice time axis in front of the
+        # spatial-lattice axes so (config, timeslice) fold contiguously into batch.
+        Usp = U[:, 1:].movedim(2, 1).contiguous()  # (b, Lt, 3, L,L,L, nc,nc)
+        U3 = Usp.reshape(b * Lt, 3, L, L, L, NC, NC)  # 3D slices, batch=b·Lt
+        if U3_first is None:
+            U3_first = U3  # least-smeared level — supplies the transport below
+        Ws.append(plaquette_tensor(U3, gaugegroup))  # (b·Lt, 3, L,L,L, nc,nc) spatial planes
+    W = torch.cat(Ws, dim=1)  # (b·Lt, 3·n_levels, L,L,L, nc,nc)
+    T = build_transport_average(U3_first, R, gaugegroup)  # (b·Lt, n_off, L,L,L, nc,nc)
     O = model(W, T)  # (b·Lt, L, L, L) per-site invariant scalar
     Obar = O.sum(dim=(1, 2, 3))  # zero-momentum projection → (b·Lt,)
     return Obar.view(b, Lt)
@@ -357,9 +389,14 @@ def main():
         mlp_zero_init=False,
         d_model=D_MODEL,
         grad_checkpoint=GRAD_CHECKPOINT,
+        # 3 spatial-plaquette channels per smearing level (see INPUT_SMEAR_LEVELS).
+        in_channels=3 * len(INPUT_SMEAR_LEVELS),
     ).to(device)
     n_params = sum(p.numel() for p in model.parameters())
-    print(f"GELT(D=3, R={R}, layers={GEMHSA_LAYERS}, d_qkv={D_QKV}) | params {n_params:,}")
+    print(
+        f"GELT(D=3, R={R}, layers={GEMHSA_LAYERS}, d_qkv={D_QKV}) | "
+        f"input smear levels {list(INPUT_SMEAR_LEVELS)} | params {n_params:,}"
+    )
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
     # Cosine anneal over the (now short) run — StepLR(150) never fired at 40
@@ -527,6 +564,35 @@ def main():
                 f"± {err_gelt[dlt].item():.3f}"
             )
 
+    # ── GELT ↔ classical-ladder diagnostics (Run 4 next steps) ─────────────────
+    # (a) Where does the learned operator sit on the smearing ladder? Pearson
+    # correlation of the VEV-subtracted Ō fluctuations on test: tracking APE×k
+    # means GELT carries ~k smearing steps' worth of staple content.
+    d_g = gelt_obar - gelt_obar.mean()
+    print("corr(GELT, APE level) of Ō fluctuations on test:")
+    for k, lvl in enumerate(GEVP_LEVELS):
+        d_c = Obar_basis[k] - Obar_basis[k].mean()
+        r = (d_g * d_c).mean() / (d_g.pow(2).mean() * d_c.pow(2).mean()).sqrt()
+        print(f"     APE×{lvl}:  r = {r.item():+.3f}")
+
+    # (b) GELT as an extra GEVP operator: the learned operator need not beat the
+    # classical basis alone — if it carries overlap the smearing ladder lacks,
+    # the enlarged GEVP plateaus lower/earlier than the classical one (the
+    # "learned basis" win). Per-operator scale doesn't matter (the GEVP is
+    # scale-invariant operator by operator); near-collinearity with a smearing
+    # level is handled by the eigenvalue floor in gevp_eigenvalues.
+    basis_plus = torch.cat([Obar_basis, gelt_obar.unsqueeze(0)], dim=0)
+    meff_gevp_plus, err_gevp_plus = blocked_jackknife_gevp_meff(
+        basis_plus, JACK_BLOCK, GEVP_T0
+    )
+    print("GEVP ground state, basis = classical + GELT (blocked jackknife, test):")
+    for dlt in range(GEVP_T0, min(GEVP_T0 + 4, len(meff_gevp_plus))):
+        if bool(torch.isfinite(meff_gevp_plus[dlt])):
+            print(
+                f"     m_eff(Δ={dlt}):  m·a_t = {meff_gevp_plus[dlt].item():.3f} "
+                f"± {err_gevp_plus[dlt].item():.3f}"
+            )
+
     # ── Plots ──────────────────────────────────────────────────────────────────
     fig, ax = plt.subplots(1, 2, figsize=(14, 6))
 
@@ -561,6 +627,13 @@ def main():
         label=f"classical GEVP ground (levels {GEVP_LEVELS})",
     )
     _plot(meff_gelt, err_gelt, "GELT (learned)", "C2", "^-")
+    # Enlarged (classical + GELT) GEVP ground state — same Δ ≥ t0 rule.
+    mgp, egp = meff_gevp_plus.numpy(), err_gevp_plus.numpy()
+    okp = np.isfinite(mgp) & np.isfinite(egp) & (dd >= GEVP_T0)
+    ax[1].errorbar(
+        dd[okp], mgp[okp], yerr=egp[okp], fmt="v-", capsize=3, color="C4",
+        label="GEVP + GELT (enlarged basis)", alpha=0.85,
+    )
     ax[1].axhline(0.33, color="k", ls="--", alpha=0.6, label="anchor m·a_t ≈ 0.33")
     ax[1].set_xlabel("Δ (temporal slices)")
     ax[1].set_ylabel("m_eff(Δ) = m·a_t")
@@ -574,7 +647,8 @@ def main():
 
     fig.suptitle(
         f"GELT variational 0⁺⁺ glueball — SU(2) L={L} Lt={LT} β={BETA} ξ={XI} "
-        f"N_test={test_configs.shape[0]}  (R={R}, layers={GEMHSA_LAYERS})",
+        f"N_test={test_configs.shape[0]}  (R={R}, layers={GEMHSA_LAYERS}, "
+        f"in-smear {list(INPUT_SMEAR_LEVELS)})",
         fontsize=13,
     )
     fig.tight_layout()

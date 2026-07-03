@@ -581,9 +581,14 @@ class GELT(nn.Module):
         d_model: int | None = None,
         mlp_dropout: float = 0.0,
         grad_checkpoint: bool = False,
+        in_channels: int | None = None,
     ):
-        # Plaquette input -> D(D-1)/2 plaquettes per site.
-        d_input = D * (D - 1) // 2
+        # Plaquette input -> D(D-1)/2 plaquettes per site. Callers stacking
+        # extra adjoint channels (e.g. plaquettes at several APE smearing
+        # levels) pass the widened count via ``in_channels``; every channel
+        # must still transform in the adjoint for the ChannelLift/GEMHSA
+        # equivariance to hold.
+        d_input = in_channels if in_channels is not None else D * (D - 1) // 2
         # Internal residual-stream width. Defaults to d_input (no lift) for
         # backward compatibility; pass d_model > d_input to widen the
         # intermediate channels via the front-end ChannelLift.
