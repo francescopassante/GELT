@@ -50,6 +50,9 @@ removed pending rewrites; the spec now lives across the notes below.)
   (the converged loss *is* the glueball mass), the classical
   correlator/`m_eff` baseline it is validated against, the central role of
   spatial smearing, and the heat-bath sampler as the prerequisite long pole.
+  Contains the **2026-07-01 audit** amending the §6.2 plan (per-timeslice 3D
+  operator, code blockers, revised checklist — the source of truth for
+  `train_glueball.py`).
 - `notes/resources.md` — curated textbooks, lecture notes, and ML-for-LGT
   papers with suggested reading order.
 - `notes/tunnel-visualization.md` — exploratory notes on visualising
@@ -109,8 +112,25 @@ strong-coupling/coarse a_s); proper anisotropy tuning + continuum extrapolation
 is future work. **§6.2 (`scripts/train_glueball.py` — `GELT(reduction="none")` on
 the Rayleigh loss `−C(1)/C(0)`, jackknife eval, vs. classical/L-CNN curves) is now
 unblocked**, validated against the classical GEVP plateau `m·a_t ≈ 0.33` on the
-cached anisotropic ensemble (`datasets/glueball_configs_L12_Lt24_b2.4_xi3.0_N2000.pt`).
+cached anisotropic ensemble (`datasets/glueball_configs_L12_Lt24_b2.4_xi3.0_N2000.pt`;
+re-sample via `measure_glueball.py` if the cache is absent).
 See `notes/glueball_spectroscopy.md` for the full run-by-run record.
+
+**§6.2 constraints (audit 2026-07-01, recorded in
+`notes/glueball_spectroscopy.md` § "Audit"):** the variational operator must be
+**per-timeslice 3D** — `GELT(D=3, L=12)` on each timeslice's *spatial* links
+(batch = config × timeslice), because any temporal receptive field voids the
+transfer-matrix bound and makes the Rayleigh loss gameable toward m → 0 (the
+§7 "never smear in time" rule applied to the network itself). This also
+sidesteps GEMHSA's cubic-only `_nbr_idx` (which cannot ingest 24 × 12³) and the
+4D transport memory wall. Further musts: `mlp_zero_init=False` (zero init ⇒
+exactly zero Rayleigh gradient — training never starts), on-the-fly 3D
+transport per batch, hard train/held-out split with (blocked) jackknife on
+held-out configs only, and a strengthened classical anchor (GEVP at Δ=3–4 —
+the Δ=1/Δ=2 points differ by ~2σ, so the plateau needs confirming) with an
+anisotropic re-run of the τ_int pre-flight. The 4D program (q(x),
+time-spanning Wilson loops) is untouched — the 3D restriction is a per-task
+input-domain choice, not an architecture change.
 
 Known caveats (see `notes/fable_audit.md` for the full list and the
 prioritized fixes):

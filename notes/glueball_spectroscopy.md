@@ -94,6 +94,275 @@ ensemble** (`datasets/glueball_configs_L12_Lt24_b2.4_xi3.0_N2000.pt`), with its
 L-CNN baseline. The win to look for: GELT plateaus at least as low, and earlier
 in Δ, than the hand-built GEVP basis (a *learned* variational operator).
 
+> **Amended by the audit below (2026-07-01):** the plan as stated in §2/§3 has
+> a flaw — GELT must be run **per-timeslice in 3D** (spatial links only), not on
+> the full 4D config, or the variational principle is void and the loss is
+> gameable. See "Audit" for the full list of blockers and fixes.
+
+> **Executed (2026-07-03):** the first training run is done — GELT learns a
+> genuine 0⁺⁺ operator (m_eff(Δ=3) = 0.310 ± 0.045, consistent with the 0.33
+> anchor) but loses to the classical GEVP on overlap. See "Run 4" below for
+> the full diagnosis and the revised next steps (smeared-input channels,
+> GELT-in-the-GEVP-basis).
+
+## Audit (2026-07-01) — what's broken, what to change, thesis-worth
+
+A code + plan audit of this document and everything it touches
+(`gelt/glueball.py`, `gelt/sampler.py`, `gelt/blocks_rope.py`,
+`scripts/measure_glueball.py`, `scripts/check_glueball_autocorrelation.py`).
+Bottom line: the classical baseline code is sound, but §6.2 as written in §2/§3
+has one conceptual flaw that would silently invalidate the result, plus two
+concrete code blockers. All are fixed by the same move: **run GELT as a 3D
+network on the spatial links of each timeslice.**
+
+### Critical — will prevent (or silently invalidate) §6.2 as planned
+
+1. **Temporal receptive field breaks the variational principle** *(supersedes
+   §2's "no architecture change needed" and the §3 loop as written).* The
+   Rayleigh argument in §1 requires Ō(t) to be a functional of the fields on
+   **timeslice t only** — the transfer-matrix condition, which §7 already
+   states for smearing ("never in time") but never applies to the network
+   itself. As designed, GELT ingests the full 4D config: 3 of its 6 plaquette
+   input channels are temporal, and the L1-ball transport + attention step in
+   time, so O(t) depends on links at t ± R·depth. Then C(1) is not a
+   transfer-matrix element, the upper bound is void, and the loss is
+   *gameable*: the optimizer's easiest way to push C(1)/C(0) → 1 is an output
+   slowly varying in t (limit: per-config constant ⇒ C(Δ) = C(0) ∀Δ ⇒ "m" → 0).
+   The network would spuriously "beat" the classical GEVP and §5's win
+   criterion would be satisfied for an unphysical reason.
+   **Fix:** feed each timeslice's spatial links as a `D=3` config
+   (`GELT(D=3, L=12)`, input channels = the 3 spatial plaquette planes, 3D
+   L1-ball transport), batch over (config × timeslice), reshape to `(B, Nt)`
+   for the correlator. This makes O(t) a legitimate single-timeslice operator —
+   exactly the domain the classical operator uses. (Equivalent alternative if a
+   single 4D codepath is ever wanted: mask the offset list to Δt = 0 and drop
+   temporal plaquettes from the input — same physics as masking, but the
+   per-timeslice batching is simpler and far cheaper.)
+   *Within* the 3D operator, spatial loop-building persists in full — the
+   multiplicative value path grows arbitrarily large spatial loops with depth,
+   and hand-tuned smearing is likewise purely spatial, so the "learned
+   smearing" analogy of §7 gets cleaner, not weaker. The *absence* of temporal
+   loop content is not a limitation; it is the definition of a valid
+   interpolating operator.
+2. **GEMHSA is cubic-only.** `blocks_rope.py` builds `_nbr_idx` with a single
+   `torch.arange(L)` and `% L` on *every* axis — the model literally cannot
+   ingest the 24 × 12³ anisotropic ensemble (wrong neighbor wrap on the time
+   axis). Moot under fix 1: each timeslice is a cubic 12³ lattice, and Lt only
+   ever appears as a batch dimension. (Caveat for the future: running the *4D*
+   network on non-cubic configs — masked-offset variant, or regression targets
+   on anisotropic ensembles — needs per-axis extents in `_nbr_idx`.)
+3. **Zero gradient at initialization.** `GELT` defaults to
+   `mlp_zero_init=True`, so the output is identically 0 at init. C(0) and C(1)
+   are both quadratic in the output, so the gradient of −C(1)/(C(0)+ε) at
+   O ≡ 0 is **exactly zero** — training never leaves the saddle.
+   `train_glueball.py` must pass `mlp_zero_init=False`.
+4. **Memory at 4D scale.** At R=2, D=4 on 24 × 12³ the transport alone is
+   ~40 offsets × 41k sites × nc² complex64 ≈ 53 MB *per config* (≈ 100 GB to
+   precompute the ensemble the `data.py` way), before the much larger
+   per-layer K/V intermediates — the `fable_audit.md` offset-chunking gate
+   hitting §6.2 head-on. The 3D per-timeslice restriction shrinks it ~70×
+   (24 offsets × 1728 sites); computing T per batch on the fly becomes cheap.
+
+### Moderate — weaknesses in the baseline GELT will be judged against
+
+- **The "plateau at m·a_t ≈ 0.33" rests on two points that disagree.**
+  0.365 ± 0.008 (Δ=1) vs 0.333 ± 0.011 (Δ=2) differ by ~2σ — a *descent*, not
+  a plateau; the asymptotic mass could sit below 0.33. Before using it as the
+  validation anchor, add GEVP points at Δ=3–4 (or a two-state fit). Note also
+  that jackknife bands at neighboring Δ are strongly correlated, so eyeballing
+  overlap overstates consistency.
+- **N_SKIP=5 was calibrated on the wrong ensemble.**
+  `check_glueball_autocorrelation.py` measures τ_int on an *isotropic* L=8
+  lattice; production runs at ξ=3 (β_t=7.2 / β_s=0.8), Lt=24 — different
+  dynamics on both axes. Residual autocorrelation makes the leave-one-out
+  jackknife (which assumes independent configs) underestimate every error bar.
+  Fixes: re-run the pre-flight with `xi=XI, Lt=LT`, and/or a blocked jackknife.
+- **The GEVP eigenvalue floor amplifies noise instead of removing it.**
+  `gevp_eigenvalues` floors near-zero modes of C(t₀) at `eps·s_max` then
+  whitens — a floored direction gets weight 1/√(1e-12), i.e. pure noise blown
+  up ×10⁶ inside the whitened matrix. Standard treatment: *truncate* (project
+  out) those directions. Probably harmless for 4 well-separated smearing
+  levels; a landmine for the larger learned bases of deliverable 3.
+- **Train/held-out split is mandatory, not optional.** A network optimizing the
+  *empirical* C(1)/C(0) on 2000 configs overfits the noise; the variational
+  bound holds in expectation, not on the training sample, so a trained
+  operator can spuriously violate it on its own training set. §4.1's passing
+  mention of "an independent ensemble" must become structural in
+  `train_glueball.py`: hard split, all reported masses jackknifed on held-out
+  configs only.
+- Smaller items: `measure_glueball.py` prints `m·a_s = ξ·m·a_t` with the
+  *bare* ξ=3 although Run 2 measured ξ_R ≈ 3.32 (the physics caveat above
+  covers it, but the printed conversion is the wrong one);
+  `effective_mass` ignores time periodicity (fine at Δ=1–2, biased near Lt/2 —
+  a cosh mass would clean the plot's tail); `glueball_operator` with R ≠ T is
+  not a rotational scalar (only the (μ,ν) orientation is summed, not (ν,μ)) —
+  latent, since only R=T=1 is used; and the cached ensemble this document
+  points to is absent from `datasets/` locally, so §6.2 starts with an
+  expensive re-sample.
+
+### Checked and sound (no action)
+
+The anisotropic staple weighting is consistent with the anisotropic action
+(ξ / 1/ξ per plane, β the single scale); the weighted staple stays quaternionic
+(real coefficients), so the heat-bath decomposition `A = k·V` remains valid at
+ξ ≠ 1. The APE dagger convention is right, the update genuinely simultaneous
+(staples from the previous iteration), spatial-only and correctly unweighted
+(`xi=1`). The Creutz w₀ sampler, the overrelaxation reflection + closed-form
+reprojection, the correlator normalizations, and the incremental smearing basis
+are all correct, and the test suite covers the right invariances.
+
+### What survives from the 4D program
+
+Everything. The regression results (topological charge density, time-spanning
+R×T Wilson loops) keep the **4D** network: those are supervised tasks with no
+transfer matrix in sight, an operator with temporal support is fine (for q(x),
+necessary — 3 of the 6 F_{μν} planes are temporal), and the loop-building
+argument — successive layers composing transported values through
+`α · Q_v† · Ṽ`, including temporal loops — stands exactly as demonstrated. The
+3D restriction is a per-task choice of input domain, not a change to GELT. Two
+regimes of one architecture: 4D where the task is "represent this known
+observable", 3D-per-slice where the task is "be a variational operator" and
+the transfer-matrix formalism dictates the domain. Stating explicitly *why*
+the receptive field must be spatial there (the §7 smearing rule applied to the
+network itself) is a physics-aware design decision, not a retreat.
+
+### Is this thesis-worth?
+
+**Yes — comfortably, provided fix 1 is made.** The framing is unusually clean
+for an ML-for-LGT thesis: the loss is a variational principle, so the converged
+number is falsifiable against an independent classical measurement built
+in-house, and "the trained network *is* the interpolating operator" gives the
+interpretability chapter (attention as measurement, `notes/explainability.md`)
+a real observable instead of a toy regression. Nothing in the published
+gauge-equivariant-network line (L-CNN, the covariant ResNet, CASK's
+attention-for-smearing) does Rayleigh-quotient-trained glueball operators, so
+the combination appears novel; even if a similar preprint exists, the
+matched-baseline shootout + interpretability program stands on its own at the
+master's level.
+
+Two honest risks, to manage in the writing rather than the code:
+
+- **The classical multi-level GEVP is a strong, nearly free baseline** — a
+  well-smeared 4-operator basis is close to optimal for the ground state, so
+  GELT's single-operator margin ("plateaus a bit earlier/lower") may be thin.
+  The defensible wins: (a) the learned operator needs no hand-tuned smearing
+  schedule; (b) the deliverable-3 extension (network emits a basis → learned
+  GEVP), where a hand-built basis can't compete and the novelty is strongest.
+- **No continuum physics** (β_s = 0.8 is deep strong coupling). The thesis
+  claim must stay "the method resolves the variational ground state and
+  matches the classical answer on the same ensemble" — which the caveat above
+  already states; keep it that disciplined and the coarse lattice is a
+  non-issue.
+
+### Revised §6.2 checklist for `train_glueball.py`
+
+1. `GELT(D=3, L=12, reduction="none", mlp_zero_init=False)` on per-timeslice
+   spatial links (3 spatial-plaquette input channels), batched over
+   (config × timeslice), reshaped to `(B, Nt)`.
+2. 3D L1-ball transport computed on the fly per batch (no precomputed-T
+   dataset; it is cheap at 12³).
+3. Rayleigh loss `−C(1)/(C(0)+ε)` with batch-estimated VEV subtraction (§3),
+   large batches, C(0) monitored against collapse (§4).
+4. Hard train/held-out split; every reported mass from a (blocked) jackknife
+   on held-out configs only.
+5. Validate against a *strengthened* classical anchor: GEVP with Δ=3–4 points
+   (or a two-state fit) and an anisotropic re-run of the τ_int pre-flight.
+6. Comparison curves: GELT vs thin/smeared single operators vs classical GEVP
+   vs L-CNN (matched parameters, same 3D per-timeslice domain).
+
+## Run 4 (2026-07-03) — first §6.2 training run: diagnosis & next steps
+
+First execution of `scripts/train_glueball.py` as specified by the audit
+checklist above (V100, cached anisotropic ensemble `L=12 Lt=24 β=2.4 ξ=3.0
+N=2000`). Setup: per-timeslice `GELT(D=3, R=2, layers=4, nhead=2, d_qkv=6,
+d_model=16)` (~5k params), multi-Δ Rayleigh loss `−mean[C(1)/C(0), C(2)/C(0)]`,
+AdamW (lr 3e-3, wd 1e-3, cosine), batch 6 configs (= 144 timeslices),
+per-layer grad checkpointing, contiguous 70/10/20 split, blocked jackknife
+(block 10) on the untouched test split.
+
+**Result: GELT learns a genuine 0⁺⁺ interpolating operator but loses to the
+classical GEVP on overlap.** Early stop at epoch 22 (val minimum ≈ epoch 12);
+best val Rayleigh loss **−0.433** vs the variational optimum
+`−(e^{−0.33} + e^{−0.66})/2 ≈ −0.62`. On test:
+
+| operator | m_eff(Δ=1) | m_eff(Δ=2) | m_eff(Δ=3) | m_eff(Δ=4) |
+|---|---|---|---|---|
+| GELT (learned) | 0.527 ± 0.028 | 0.441 ± 0.042 | **0.310 ± 0.045** | ~0.5, large bars |
+| classical GEVP | 0.398 ± 0.016 | 0.357 ± 0.025 | 0.333 ± 0.036 | 0.284 ± 0.050 |
+
+(GELT's Δ=0→1 Rayleigh mass: 0.705. Thin operator at Δ=1: ≈ 0.8.)
+relevant figure: glueball_gelt_from_raw_plaquettes.png
+
+### What worked
+
+- **The pipeline is sound end-to-end.** Training is stable (no
+  constant-operator collapse; the C(0) floor never approached), the val-selected
+  checkpoint + test-only reporting worked as designed, and the Ctrl-C/early-stop
+  → eval → `glueball_gelt.png` path delivered the full comparison.
+- **The learned operator couples to the true ground state.** Its `m_eff(Δ)`
+  descends 0.705 → 0.527 → 0.441 → 0.310, and the Δ=3 point is fully consistent
+  with the GEVP plateau — trained from *thin* spatial plaquettes, no hand-built
+  smearing. It clearly beats the thin classical operator (≈ 0.8 at Δ=1).
+- **The classical anchor is strengthened** (audit "Moderate" item): the GEVP now
+  shows Δ=3 = 0.333 ± 0.036 confirming the plateau at **m·a_t ≈ 0.33** (the Δ=4
+  point drifts low but with ~2× the error — noise, not a contradiction).
+
+### What failed, and why
+
+- **Overlap gap.** At Δ=1 GELT sits at 0.527 vs the GEVP's 0.398 (and APE×6's
+  ≈ 0.40): the learned operator carries excited-state contamination the smeared
+  basis has projected out. It also has **no convincing plateau of its own** —
+  after the Δ=3 dip the points bounce back to ~0.5 with growing bars, so the
+  Δ=3 agreement is "consistent with the anchor", not yet a demonstrated plateau.
+- **Overfitting.** Val loss bottoms at ≈ epoch 12 and rises while train keeps
+  falling (−0.55 at stop): the network optimizes the *empirical* correlator
+  noise of ~1400 train configs. AdamW wd=1e-3 delayed but did not stop it.
+- **Diagnosis: depth budget, again.** Four bilinear layers reach loop degree
+  ≤ 16 in the plaquettes (~64 links); APE×6's iterated, branched staple content
+  has degree ~3⁶ in the links within the same radius-6 support. GELT cannot
+  rebuild an iterated smearing schedule from thin links at affordable depth —
+  the same lesson as depth 3 (which lost outright), now at depth 4 with a
+  smaller margin. Capacity along *depth* is the binding constraint, not width.
+- *(En-route failures, already fixed in code, recorded for the thesis write-up:
+  batch 8 OOMs on the 32 GiB V100 even with checkpointing → batch 6; the
+  chained-ratio loss `C(Δ)/C(Δ−1)` put the signed, noisy C(1) in a denominator —
+  clamped ratios stayed finite but their gradients were garbage in direction,
+  pumping the operator scale to C(0) ~ 5e8 → all denominators moved to C(0),
+  loss in float64, non-finite-batch skip guards.)*
+
+### Next steps (ranked)
+
+1. **Smeared-input channels — the physics fix for the overlap gap.** Feed
+   plaquettes at several cumulative APE levels (e.g. [0, 2, 4, 6], matching the
+   GEVP basis) stacked on the channel axis, transport built from the
+   least-smeared level. Smearing is spatial-only, so the per-timeslice
+   transfer-matrix bound is untouched; GELT stops having to *re-derive* deep
+   staple content and instead learns a spatially-resolved, nonlinear
+   generalization of the GEVP (which can only take one global linear
+   combination of the levels). Needs an `in_channels` override in `GELT` (the
+   input width is currently hardcoded to `D(D−1)/2`), and a per-levels
+   checkpoint name (the ChannelLift shape changes, so old checkpoints are
+   incompatible with `RESUME`).
+2. **GELT as a 5th GEVP operator — eval-only, uses the existing checkpoint.**
+   Append the learned Ō(t) to the classical 4-operator basis and redo the
+   blocked-jackknife GEVP on test. GELT doesn't need to beat the GEVP alone: if
+   the enlarged basis plateaus lower/earlier, the learned operator contributes
+   overlap the smearing ladder lacks — a positive result with no retraining
+   (this is exactly the "learned basis" defensible win of the audit's
+   thesis-worth section). Add alongside it the ladder diagnostic
+   `corr(GELT Ō, APE×k Ō)` on test fluctuations, to locate how much effective
+   smearing was learned (also feeds the interpretability chapter). Note
+   `EPOCHS = 0` with `RESUME = True` already acts as an eval-only mode.
+3. **Against the overfit:** more configs — sampling is cheap next to a training
+   run, and the val turn-up at ~1400 train configs says statistics, not just
+   regularization, is short; alternatively/additionally raise weight decay. The
+   val-selected checkpoint already keeps the *reported* numbers honest.
+4. **Deprioritized:** R = 3 (offset count 24 → 62, transport and K/V memory
+   ~2.6×, forces batch 2–3 and worsens the batch-VEV estimate in the loss);
+   more width/heads (the depth-3 → 4 experiment showed loop *degree* binds, not
+   width). Depth 5–6 is plausible (checkpointing makes it mostly compute) but
+   strictly worse ROI than step 1, which buys degree-~3⁶ content for free.
+
 ## 0. Where we are vs. what spectroscopy needs
 
 Everything built so far is **per-configuration regression toward a known
