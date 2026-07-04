@@ -59,6 +59,19 @@ from gelt.lattice import SU, build_transport_average, plaquette_tensor
 from gelt.sampler import heatbath_overrelaxation_sweep, mcmc_ensemble
 
 
+# ── Environment overrides (for unattended batch drivers) ─────────────────────
+# The tunables stay plain constants for interactive use; the overnight driver
+# (scripts/overnight_replication.sh) must vary a handful of them per phase
+# without editing this file, so those few read an optional env var.
+def _env_int(name, default):
+    return int(os.environ.get(name, default))
+
+
+def _env_flag(name, default):
+    v = os.environ.get(name)
+    return default if v is None else v not in ("0", "false", "False", "")
+
+
 # ── Tunables ──────────────────────────────────────────────────────────────────
 # Ensemble parameters — these MUST match scripts/measure_glueball.py exactly so
 # the cache key resolves to the same file and the classical GEVP anchor (measured
@@ -75,8 +88,27 @@ LT = 2 * L  # temporal extent (time = axis 0)
 gaugegroup = SU(2)
 NC = gaugegroup.nc
 
+# Replication seeds (audit "still open": replication on a fresh ensemble).
+# ENSEMBLE_SEED seeds the sampler when the cache is absent; ≠ 0 gets its own
+# cache file, so seed 0 still resolves to the original anchored ensemble.
+# INIT_SEED seeds the model init and the batch order INDEPENDENTLY of the
+# ensemble, so "same ensemble, different init" and "fresh ensemble" are
+# separate robustness axes. Both default to the Run-5 values.
+ENSEMBLE_SEED = _env_int("GLUEBALL_ENSEMBLE_SEED", 0)
+INIT_SEED = _env_int("GLUEBALL_INIT_SEED", 0)
+# Artifact tag: non-default seeds get their own checkpoint / dump / plot names
+# so replication runs never clobber the Run-5 artifacts (default names are
+# unchanged).
+RUN_TAG = ("" if ENSEMBLE_SEED == 0 else f"_ens{ENSEMBLE_SEED}") + (
+    "" if INIT_SEED == 0 else f"_init{INIT_SEED}"
+)
+
 # Same cache key as measure_glueball.py — resolves to the identical file.
-CACHE = f"datasets/glueball_configs_L{L}_Lt{LT}_b{BETA}_xi{XI}_N{N_CONFIGS}.pt"
+CACHE = (
+    f"datasets/glueball_configs_L{L}_Lt{LT}_b{BETA}_xi{XI}_N{N_CONFIGS}"
+    + ("" if ENSEMBLE_SEED == 0 else f"_seed{ENSEMBLE_SEED}")
+    + ".pt"
+)
 
 # GELT / training hyperparameters.
 R = 2  # L1-ball radius of the (3D) transport — the "smearing level" budget (§7)
@@ -173,17 +205,19 @@ CHECKPOINT = "best_glueball_gelt" + (
     ""
     if tuple(INPUT_SMEAR_LEVELS) == (0,)
     else "_sm" + "-".join(str(lv) for lv in INPUT_SMEAR_LEVELS)
-) + ".pth"
+) + RUN_TAG + ".pth"
 # The checkpoint name encodes the input smearing levels: changing them changes
 # the ChannelLift shape, so checkpoints at different levels are incompatible
 # and must never RESUME into (or overwrite) each other.
-RESUME = True  # warm-start from CHECKPOINT if it exists (optimizer state and the
-#                cosine schedule restart fresh); set False to train from scratch
-EVAL_ONLY = False  # skip training entirely: load CHECKPOINT and run only the
-#                    test-split eval, the Ō-array dump, and the plots — one
-#                    forward pass over val (if RESUME) + test. The cheap way to
-#                    (re)produce the offline-analysis dump consumed by
-#                    scripts/fit_glueball_overlap.py from an existing run.
+RESUME = _env_flag("GLUEBALL_RESUME", True)
+# RESUME: warm-start from CHECKPOINT if it exists (optimizer state and the
+# cosine schedule restart fresh); set False to train from scratch. The
+# replication driver forces it off so each phase is an independent training.
+EVAL_ONLY = _env_flag("GLUEBALL_EVAL_ONLY", False)
+# EVAL_ONLY: skip training entirely: load CHECKPOINT and run only the
+# test-split eval, the Ō-array dump, and the plots — one forward pass over
+# val (if RESUME) + test. The cheap way to (re)produce the offline-analysis
+# dump consumed by scripts/fit_glueball_overlap.py from an existing run.
 
 
 # ── Rayleigh loss & per-batch operator ────────────────────────────────────────
@@ -351,8 +385,14 @@ def held_out_obar(model, configs, device):
 
 
 def main():
-    torch.manual_seed(0)
-    np.random.seed(0)
+    # Ensemble seed first: it governs the sampling below when the cache is
+    # absent (the cache name carries the seed, so mixups are impossible).
+    torch.manual_seed(ENSEMBLE_SEED)
+    np.random.seed(ENSEMBLE_SEED)
+    print(
+        f"seeds: ensemble={ENSEMBLE_SEED} init={INIT_SEED}"
+        + (f"  (run tag {RUN_TAG!r})" if RUN_TAG else "")
+    )
     device = torch.device(
         "cuda"
         if torch.cuda.is_available()
@@ -416,6 +456,10 @@ def main():
 
     # ── Model. reduction="none" → per-site invariant scalar field O(x);
     # mlp_zero_init=False is MANDATORY (audit item 3).
+    # Re-seed for the model init and the epoch batch orders: decoupled from
+    # the ensemble seed so init robustness and ensemble replication vary
+    # independently.
+    torch.manual_seed(INIT_SEED)
     model = GELT(
         gaugegroup=gaugegroup,
         L=L,
@@ -615,6 +659,8 @@ def main():
                 "input_smear_levels": list(INPUT_SMEAR_LEVELS),
                 "checkpoint": CHECKPOINT,
                 "best_val_loss": best_val_loss,
+                "ensemble_seed": ENSEMBLE_SEED,
+                "init_seed": INIT_SEED,
             },
         },
         obar_dump,
@@ -746,7 +792,7 @@ def main():
         fontsize=13,
     )
     fig.tight_layout()
-    out = "glueball_gelt.png"
+    out = "glueball_gelt" + RUN_TAG + ".png"
     fig.savefig(out, dpi=130, bbox_inches="tight")
     print(f"Saved {out}")
 

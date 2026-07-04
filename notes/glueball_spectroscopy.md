@@ -514,9 +514,45 @@ Status: code + tests in place; validated end-to-end on a synthetic
 two-state ensemble (periodic Gaussian fields with known couplings: recovers
 m = 0.322 ± 0.025 vs true 0.33, A₀ = 0.955 ± 0.050 vs true 0.99 for the
 GELT-like operator, 0.826 ± 0.053 vs 0.764 for the APE×6-like one, and
-Δm = 0.000 ± 0.002 where the GEVP can reach the exact optimum). Awaiting one
-`EVAL_ONLY` pass on the V100 to dump the Run-5 test Ō arrays and produce the
-real numbers.
+Δm = 0.000 ± 0.002 where the GEVP can reach the exact optimum).
+
+**Real numbers (2026-07-04, Run-5 checkpoint, 400 test configs, window
+Δ ∈ [2,7]):** GELT m·a_t = 0.332 ± 0.027, **A₀ = 0.903 ± 0.047** (χ²/dof
+0.05); GEVP-projected 0.340 ± 0.030, A₀ = 0.837 ± 0.056; APE×6
+A₀ = 0.805 ± 0.052. Correlated differences: Δm = −0.008 ± 0.014 (0.6σ, same
+physics), **ΔA₀ = +0.066 ± 0.031 (2.1σ)**. The GEVP gains only ~0.03 of
+overlap over its best member; GELT gains ~0.10 over the whole basis. The
+2.1σ is complementary to (not weaker than) the 3.9σ: the shared fit window
+starts at Δ = 2, so ΔA₀ never uses the Δ = 1 point where GELT's advantage is
+sharpest. Written up in `glueball_report/glueball_spectroscopy.tex` §
+"Quoting the result like a lattice paper" (Table 3 / Figure 5).
+
+### Replication batch (2026-07-04, queued) — fresh ensemble + init robustness
+
+`scripts/overnight_replication.sh` (~24 h unattended on the V100) closes the
+remaining robustness caveats via three independent from-scratch phases,
+driven by the new env overrides in `train_glueball.py`
+(`GLUEBALL_ENSEMBLE_SEED` seeds the sampler and gets its own cache file;
+`GLUEBALL_INIT_SEED` seeds init/batch order independently;
+`GLUEBALL_RESUME` / `GLUEBALL_EVAL_ONLY` toggle the flags; non-default seeds
+get a `RUN_TAG` suffix on checkpoint / dump / plot so Run-5 artifacts are
+never clobbered):
+
+1. **`replication_ens1`** — sample a fresh seed-1 ensemble (same L, β, ξ, N;
+   the long pole) and train GELT from scratch on it: an independent
+   replication of both the m_eff and A₀ statements. Two independent ~2σ ΔA₀
+   measurements combine to ~3σ.
+2. **`init_seed1` / `init_seed2`** — from-scratch retrains on the *original*
+   ensemble with different init/batch-order seeds: Run 5 was not a lucky
+   initialization if the converged Rayleigh loss and the test m_eff/A₀
+   agree across inits.
+
+Each phase logs to `logs/<phase>.log` and leaves a test-Ō dump in
+`datasets/*_test_obars.pt`; analyse each with
+`scripts/fit_glueball_overlap.py <dump>` (CPU, offline). Note the seed-1
+ensemble's classical anchor is recomputed on its own test split
+automatically — check the GEVP mass lands near 0.33 there too before
+comparing the learned numbers.
 
 ## 0. Where we are vs. what spectroscopy needs
 

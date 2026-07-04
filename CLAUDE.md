@@ -158,9 +158,15 @@ and operator quality quoted as the **ground-state overlap fraction A₀**
 `EVAL_ONLY` and dumps the test-split Ō arrays to `datasets/…_test_obars.pt`;
 `scripts/fit_glueball_overlap.py` runs the jackknifed fits, the correlated
 (Δm, ΔA₀) differences, and the `glueball_overlap.png` figure offline on CPU.
-Validated on a synthetic two-state ensemble; awaiting one `EVAL_ONLY` V100
-pass to produce the real Run-5 numbers (see
-`notes/glueball_spectroscopy.md` § "Presentation layer").
+**Real numbers (window Δ ∈ [2,7], 400 test configs):** GELT
+m·a_t = 0.332 ± 0.027 with **A₀ = 0.903 ± 0.047**, GEVP-projected
+0.340 ± 0.030 with A₀ = 0.837 ± 0.056; correlated ΔA₀ = +0.066 ± 0.031
+(2.1σ), Δm consistent with 0 — same mass, more ground-state weight. Written
+up in `glueball_report/glueball_spectroscopy.tex` § "Quoting the result".
+Robustness (fresh-ensemble replication + init seeds) runs via
+`scripts/overnight_replication.sh` (see
+`notes/glueball_spectroscopy.md` § "Presentation layer" / "Replication
+batch").
 
 Known caveats (see `notes/fable_audit.md` for the full list and the
 prioritized fixes):
@@ -387,6 +393,16 @@ loop inline (there is no shared `gelt/train.py`). Device order: cuda → mps
   passed as `argv[1]`). Writes `glueball_overlap.png` (m_eff + fitted-mass
   bands; ρ(Δ) = [C(Δ)/C(0)]/cosh_ref overlap panel — flat at A₀ ⇔ pure
   ground state).
+- **`overnight_replication.sh`** — ~24 h unattended V100 batch closing the
+  Run-5 robustness caveats: a fresh seed-1 ensemble + from-scratch GELT
+  training (replication), plus two from-scratch retrains on the original
+  ensemble with different init seeds (init robustness). Uses
+  `train_glueball.py`'s env overrides (`GLUEBALL_ENSEMBLE_SEED`,
+  `GLUEBALL_INIT_SEED`, `GLUEBALL_RESUME`, `GLUEBALL_EVAL_ONLY`); non-default
+  seeds get a `RUN_TAG` suffix on cache / checkpoint / dump / plot names so
+  Run-5 artifacts are never overwritten. Phases are failure-isolated, log to
+  `logs/`, and each leaves a `datasets/*_test_obars.pt` dump for
+  `fit_glueball_overlap.py`.
 - **`check_glueball_autocorrelation.py`** — step-1 pre-flight before
   `measure_glueball.py`: runs a long `n_skip=1` heat-bath+OR chain, builds the
   plaquette and the thin/smeared glueball operator per config, and reports
