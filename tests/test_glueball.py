@@ -19,8 +19,10 @@ from gelt.glueball import (
     connected_correlator,
     connected_correlator_matrix,
     effective_mass,
+    fit_cosh_correlator,
     gevp_effective_mass,
     gevp_eigenvalues,
+    gevp_ground_vector,
     glueball_operator,
     jackknife_effective_mass,
     smearing_operator_basis,
@@ -129,6 +131,42 @@ def test_gevp_recovers_two_masses():
     n = Nt - 1 - t0
     assert torch.allclose(meff[t0:, 0], torch.full((n,), 0.3, dtype=torch.float64), atol=1e-8)
     assert torch.allclose(meff[t0:, 1], torch.full((n,), 0.9, dtype=torch.float64), atol=1e-8)
+
+
+def test_gevp_ground_vector_kills_excited_state():
+    # Same synthetic two-state model as test_gevp_recovers_two_masses. With a
+    # 2-operator basis and 2 states the fixed-vector projection is exact: the
+    # generalized ground eigenvector is C-orthogonal to the excited state's
+    # couplings, so the projected correlator v₀ᵀ C(Δ) v₀ is a pure e^{−m₀Δ}
+    # (flat m_eff at the ground mass, no excited contamination at any Δ).
+    masses = torch.tensor([0.3, 0.9], dtype=torch.float64)
+    Nt = 10
+    Z = torch.tensor([[1.0, 0.6], [0.4, 1.0]], dtype=torch.float64)
+    t = torch.arange(Nt, dtype=torch.float64)
+    E = torch.exp(-masses[None, :] * t[:, None])  # (Nt, 2)
+    C = torch.einsum("in,tn,jn->tij", Z, E, Z)  # (Nt, 2, 2)
+
+    v0 = gevp_ground_vector(C, t0=1, td=2)
+    Cp = torch.einsum("i,tij,j->t", v0, C, v0)
+    meff = effective_mass(Cp)
+    assert torch.allclose(meff, torch.full_like(meff, 0.3), atol=1e-8)
+
+
+def test_fit_cosh_correlator_recovers_synthetic():
+    # Exact periodic single-state correlator: the profiled-A grid fit must
+    # recover (m, A) and leave ~zero residual χ².
+    m, A, Nt = 0.42, 1.7, 24
+    dd = torch.arange(Nt, dtype=torch.float64)
+    C = A * (torch.exp(-m * dd) + torch.exp(-m * (Nt - dd)))
+    m_fit, A_fit, chi2 = fit_cosh_correlator(C, 2, 9)
+    assert abs(m_fit - m) < 1e-3
+    assert abs(A_fit - A) < 1e-2
+    assert chi2 < 1e-6
+    # σ weighting must not move the optimum on exact data.
+    sigma = 0.05 * C
+    m_w, A_w, chi2_w = fit_cosh_correlator(C, 2, 9, sigma=sigma)
+    assert abs(m_w - m) < 1e-3
+    assert abs(A_w - A) < 1e-2
 
 
 def test_smearing_operator_basis_shape_and_invariance():

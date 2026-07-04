@@ -179,6 +179,11 @@ CHECKPOINT = "best_glueball_gelt" + (
 # and must never RESUME into (or overwrite) each other.
 RESUME = True  # warm-start from CHECKPOINT if it exists (optimizer state and the
 #                cosine schedule restart fresh); set False to train from scratch
+EVAL_ONLY = False  # skip training entirely: load CHECKPOINT and run only the
+#                    test-split eval, the Ō-array dump, and the plots — one
+#                    forward pass over val (if RESUME) + test. The cheap way to
+#                    (re)produce the offline-analysis dump consumed by
+#                    scripts/fit_glueball_overlap.py from an existing run.
 
 
 # ── Rayleigh loss & per-batch operator ────────────────────────────────────────
@@ -463,7 +468,7 @@ def main():
     # Model selection is on VAL only (never test) so the reported test mass is
     # not biased low by the checkpoint choice.
     train_hist, val_hist = [], []
-    epoch_bar = tqdm(range(EPOCHS))
+    epoch_bar = tqdm(range(0 if EVAL_ONLY else EPOCHS))
     epochs_no_improve = 0
     # Ctrl-C breaks cleanly out of training and falls through to the eval + plot
     # below, run on the best checkpoint so far — so an interrupted run still
@@ -588,6 +593,34 @@ def main():
     Obar_basis = smearing_operator_basis(
         test_configs, gaugegroup, GEVP_LEVELS, alpha=SMEAR_ALPHA, progress=True
     ).double()
+    # Persist the test-split operator time series for offline analysis: the
+    # cosh-fit / ground-state-overlap study (scripts/fit_glueball_overlap.py)
+    # re-tunes fit windows and figures on these tiny (B, Nt) arrays without
+    # another GPU eval pass. Same stem as the checkpoint, so smear-level
+    # variants never overwrite each other's dumps.
+    obar_dump = os.path.join("datasets", CHECKPOINT.replace(".pth", "_test_obars.pt"))
+    os.makedirs("datasets", exist_ok=True)
+    torch.save(
+        {
+            "gelt_obar": gelt_obar,
+            "Obar_basis": Obar_basis,
+            "meta": {
+                "L": L,
+                "Lt": LT,
+                "beta": BETA,
+                "xi": XI,
+                "gevp_levels": list(GEVP_LEVELS),
+                "gevp_t0": GEVP_T0,
+                "jack_block": JACK_BLOCK,
+                "input_smear_levels": list(INPUT_SMEAR_LEVELS),
+                "checkpoint": CHECKPOINT,
+                "best_val_loss": best_val_loss,
+            },
+        },
+        obar_dump,
+    )
+    print(f"Saved test Ō arrays → {obar_dump}")
+
     obar_thin, obar_sm = Obar_basis[0], Obar_basis[-1]
     meff_thin, err_thin = blocked_jackknife_meff(obar_thin, JACK_BLOCK)
     meff_sm, err_sm = blocked_jackknife_meff(obar_sm, JACK_BLOCK)

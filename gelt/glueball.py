@@ -18,7 +18,7 @@ Conventions
   only — never time, or the transfer-matrix interpretation breaks.
 """
 
-from typing import Tuple
+from typing import Optional, Tuple
 
 import torch
 from tqdm import tqdm
@@ -267,6 +267,43 @@ def gevp_eigenvalues(C: torch.Tensor, t0: int = 1, eps: float = 1e-12) -> torch.
     return torch.stack(lams)
 
 
+def gevp_ground_vector(
+    C: torch.Tensor, t0: int = 1, td: int = 2, eps: float = 1e-12
+) -> torch.Tensor:
+    """Ground-state generalized eigenvector v₀ of  C(td) v = λ C(t0) v.
+
+    The eigenvalue route (:func:`gevp_eigenvalues`) discards the eigenvectors;
+    this returns the ground-state one, which defines the **projected operator**
+
+        Ō_proj(t) = Σ_i v₀ᵢ Ō_i(t),
+
+    the optimal single interpolating operator in the span of the basis
+    (fixed-vector GEVP à la Blossier et al.). Its scalar correlator can be
+    fitted / overlap-analysed exactly like any single operator's — the
+    apples-to-apples way to compare a variational *basis* against a single
+    (e.g. learned) operator.
+
+    Same whitening as :func:`gevp_eigenvalues` (eigh with an eigenvalue floor,
+    so a noisy indefinite C(t0) cannot crash a Cholesky). ``td`` is the
+    diagonalisation time; the default t0 + 1 is the standard choice — far
+    enough from t0 for excited states to have decayed relative to it, small
+    enough that the signal is still clean. Normalised to v₀ᵀ C(t0) v₀ = 1,
+    with the overall sign fixed by the largest-|·| component (the projected
+    operator's correlator is sign-blind anyway).
+
+    ``C`` : ``(Nt, n_ops, n_ops)``. Returns ``(n_ops,)``.
+    """
+    C = 0.5 * (C + C.transpose(-1, -2))  # symmetrise the noisy estimator
+    s, Q = torch.linalg.eigh(C[t0])  # ascending; C[t0] = Q diag(s) Qᵀ
+    s = s.clamp_min(eps * s[-1].clamp_min(eps))  # floor near-zero / negative modes
+    W = Q * s.rsqrt()  # Wᵀ C[t0] W = I
+    M = W.transpose(-1, -2) @ C[td] @ W
+    M = 0.5 * (M + M.transpose(-1, -2))
+    _, V = torch.linalg.eigh(M)  # ascending → last column = ground state
+    v0 = W @ V[:, -1]
+    return v0 * torch.sign(v0[v0.abs().argmax()])
+
+
 def gevp_effective_mass(lams: torch.Tensor) -> torch.Tensor:
     """Per-state effective mass m_n(Δ) = log[λ_n(Δ)/λ_n(Δ+1)] from GEVP eigenvalues.
 
@@ -300,3 +337,67 @@ def jackknife_gevp_effective_mass(
     mean = samples.mean(dim=0)
     err = ((B - 1) / B * ((samples - mean) ** 2).sum(dim=0)).sqrt()
     return mean, err
+
+
+# ── Single-state correlator fit (the quoted-mass / overlap layer) ─────────────
+# LGT results are *plotted* as m_eff(Δ) but *quoted* from a fit of C(Δ) to the
+# periodic single-state (cosh) form. The fitted amplitude also gives the
+# ground-state overlap fraction A₀ = A·(1 + e^{−m·Nt})/C(0) — the standard
+# operator-quality metric (Morningstar–Peardon rank their operators by exactly
+# this), and precisely what the §6.2 Rayleigh loss maximises.
+
+
+def fit_cosh_correlator(
+    C: torch.Tensor,
+    dmin: int,
+    dmax: int,
+    sigma: Optional[torch.Tensor] = None,
+    m_range: Tuple[float, float] = (1e-3, 3.0),
+    n_grid: int = 2000,
+) -> Tuple[float, float, float]:
+    """Least-squares fit  C(Δ) ≈ A·[e^{−mΔ} + e^{−m(Nt−Δ)}]  on Δ ∈ [dmin, dmax].
+
+    For fixed m the model is linear in A, so A is profiled out in closed form
+    and χ²(m) is minimised by a grid scan over ``m_range`` plus one parabolic
+    refinement — dependency-free (no scipy) and with no convergence failures,
+    which matters because the fit is re-run inside every jackknife sample.
+
+    ``sigma`` : per-Δ standard errors of C over the FULL time extent (e.g.
+    from a blocked jackknife), used as diagonal χ² weights; None → equal
+    weights. Diagonal deliberately: with ~tens of jackknife blocks the full
+    covariance over the window is too noisy to invert stably. Parameter
+    *errors* must come from jackknifing the whole fit (which propagates the
+    correlations); the returned χ² is a fit-quality heuristic, not a
+    correlated goodness-of-fit test.
+
+    Returns ``(m, A, chi2)`` as floats.
+    """
+    Nt = C.shape[0]
+    dd = torch.arange(dmin, dmax + 1, dtype=torch.float64)
+    y = C[dmin : dmax + 1].to(torch.float64)
+    if sigma is None:
+        w = torch.ones_like(y)
+    else:
+        w = 1.0 / sigma[dmin : dmax + 1].to(torch.float64).clamp_min(1e-300) ** 2
+
+    def chi2_profile(ms):
+        # (n_m, n_pts) model shapes; profiled A minimises the weighted residual.
+        f = torch.exp(-ms[:, None] * dd) + torch.exp(-ms[:, None] * (Nt - dd))
+        A = (w * y * f).sum(-1) / (w * f * f).sum(-1)
+        r = y[None, :] - A[:, None] * f
+        return (w * r * r).sum(-1), A
+
+    ms = torch.linspace(m_range[0], m_range[1], n_grid, dtype=torch.float64)
+    chi2, A = chi2_profile(ms)
+    k = int(chi2.argmin())
+    # One parabolic refinement through (k−1, k, k+1) — plenty at this grid
+    # resolution; skipped at the grid edge or if the parabola is degenerate.
+    if 0 < k < n_grid - 1:
+        c0, c1, c2 = chi2[k - 1], chi2[k], chi2[k + 1]
+        denom = (c0 - 2 * c1 + c2).item()
+        if denom > 0:
+            m_star = (ms[k] + 0.5 * (c0 - c2) / denom * (ms[1] - ms[0])).view(1)
+            chi2_s, A_s = chi2_profile(m_star)
+            if chi2_s[0] <= c1:
+                return float(m_star[0]), float(A_s[0]), float(chi2_s[0])
+    return float(ms[k]), float(A[k]), float(chi2[k])

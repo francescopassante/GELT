@@ -149,6 +149,19 @@ site-coherent smeared inputs otherwise pump to float32 overflow. Still open
 from the §6.2 list: the matched-parameter L-CNN baseline on the same
 per-timeslice task, and a replication on a fresh ensemble.
 
+**Presentation layer (2026-07-04):** how the Run-5 result is *reported* in
+LGT-standard form — masses quoted from a cosh fit (not single m_eff points)
+and operator quality quoted as the **ground-state overlap fraction A₀**
+(Morningstar–Peardon's metric, and exactly what the Rayleigh loss maximises).
+`gelt/glueball.py` gained `gevp_ground_vector` (projected GEVP operator) and
+`fit_cosh_correlator` (profiled-A grid fit); `train_glueball.py` gained
+`EVAL_ONLY` and dumps the test-split Ō arrays to `datasets/…_test_obars.pt`;
+`scripts/fit_glueball_overlap.py` runs the jackknifed fits, the correlated
+(Δm, ΔA₀) differences, and the `glueball_overlap.png` figure offline on CPU.
+Validated on a synthetic two-state ensemble; awaiting one `EVAL_ONLY` V100
+pass to produce the real Run-5 numbers (see
+`notes/glueball_spectroscopy.md` § "Presentation layer").
+
 Known caveats (see `notes/fable_audit.md` for the full list and the
 prioritized fixes):
 
@@ -293,6 +306,17 @@ Library lives in `gelt/`; entry-point scripts in `scripts/`; pytest in
     statistics can make `C(t0)` indefinite), returning λ descending (col 0 =
     ground state); `gevp_effective_mass(lams)` and `jackknife_gevp_effective_mass(Obar,
     t0)`. Masses are read off `Δ ≥ t0`.
+  - **Fit / overlap layer** (how masses are *quoted*, vs. the m_eff plots they
+    are *shown* on): `gevp_ground_vector(C, t0, td)` → the ground-state
+    generalized eigenvector v₀ (same eigh-whitening), defining the *projected
+    operator* `Σᵢ v₀ᵢ Ōᵢ(t)` — the optimal single operator in a basis's span
+    (fixed-vector GEVP), the apples-to-apples comparator for a single learned
+    operator; `fit_cosh_correlator(C, dmin, dmax, sigma)` → `(m, A, χ²)`
+    least-squares fit to the periodic single-state form
+    `A·[e^(−mΔ) + e^(−m(Nt−Δ))]` (profiled-A grid scan + parabolic refine —
+    dependency-free, no convergence failures, safe to re-run inside every
+    jackknife sample; diagonal χ² only, errors come from jackknifing the whole
+    fit). The ground-state overlap fraction is `A₀ = A·(1+e^(−m·Nt))/C(0)`.
 - **`lcnn.py`** — Favoni et al. L-CNN (gauge-equivariant baseline):
   `build_axis_transports` (axis-aligned link products `U^(k)_μ(x)`, the
   L-CNN transport input — distinct from GELT's L1-ball `T`); `LConv`,
@@ -351,6 +375,18 @@ loop inline (there is no shared `gelt/train.py`). Device order: cuda → mps
   `datasets/`** (cache key includes ξ, Lt) so the GEVP analysis can be re-tuned
   without re-sampling. Reports `m·a_t` and `m·a_s = ξ·m·a_t`. Writes
   `glueball_validation.png`.
+- **`fit_glueball_overlap.py`** — presentation-grade §6.2 spectroscopy
+  (offline, CPU-trivial): cosh fits + ground-state overlap `A₀` for GELT, the
+  *projected* classical GEVP operator (`gevp_ground_vector`), and APE×max on
+  one shared fit window; the whole fit (incl. v₀) is redone inside every
+  delete-block jackknife sample, and the correlated same-configs differences
+  (Δm ≈ 0 = same physics, ΔA₀ > 0 = better operator) are the significance
+  statements. Consumes the test-split Ō arrays `train_glueball.py` dumps to
+  `datasets/…_test_obars.pt` (set `EVAL_ONLY = True` there to reproduce the
+  dump from an existing checkpoint in one GPU eval pass; the dump path can be
+  passed as `argv[1]`). Writes `glueball_overlap.png` (m_eff + fitted-mass
+  bands; ρ(Δ) = [C(Δ)/C(0)]/cosh_ref overlap panel — flat at A₀ ⇔ pure
+  ground state).
 - **`check_glueball_autocorrelation.py`** — step-1 pre-flight before
   `measure_glueball.py`: runs a long `n_skip=1` heat-bath+OR chain, builds the
   plaquette and the thin/smeared glueball operator per config, and reports
@@ -390,7 +426,10 @@ loop inline (there is no shared `gelt/train.py`). Device order: cuda → mps
   synthetic single-exponential correlator and gives a finite, positive-error
   jackknife band; and the **GEVP** recovers both masses of a synthetic
   two-state correlator matrix (plus basis shape/invariance and the
-  single-operator matrix↔scalar consistency check).
+  single-operator matrix↔scalar consistency check). The fit/overlap layer:
+  `gevp_ground_vector`'s projection exactly kills the excited state of the
+  synthetic two-state model, and `fit_cosh_correlator` recovers `(m, A)` from
+  an exact periodic correlator (weighted and unweighted).
 
 ## Conventions
 
@@ -436,6 +475,7 @@ python scripts/validate_sampler_z2.py  # Metropolis four-panel sanity check (Z�
 python scripts/validate_anisotropy.py  # anisotropic-lattice checks (ξ=1 regression, ⟨P_st⟩>⟨P_ss⟩, ξ_R)
 python scripts/check_glueball_autocorrelation.py  # τ_int of the glueball operator (set n_skip)
 python scripts/measure_glueball.py     # anisotropic 0⁺⁺ glueball baseline (correlator + GEVP m_eff)
+python scripts/fit_glueball_overlap.py # cosh fits + overlap A₀ (offline, from train_glueball.py's test-Ō dump)
 python -m gelt.cnn_baseline            # torchsummary for a 5×5 CNN
 pytest tests                           # unit tests
 ```

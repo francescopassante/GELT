@@ -476,6 +476,48 @@ mass value, on which the two methods agree. Still to do from the §6.2 list:
 the matched-parameter **L-CNN baseline** on the same per-timeslice task, and
 ideally a replication on a freshly sampled ensemble.
 
+### Presentation layer (2026-07-04) — cosh fits + ground-state overlap A₀
+
+How the Run-5 result should be *reported* — the LGT-standard presentation,
+not new physics. The m_eff(Δ) point cloud is how results are plotted, but a
+mass is **quoted from a fit**, and the operator-quality claim is quoted as a
+**ground-state overlap**, not a σ-count on an m_eff difference.
+`scripts/fit_glueball_overlap.py` (offline, CPU-trivial; input = the
+test-split Ō arrays `train_glueball.py` now dumps to
+`datasets/…_test_obars.pt` — set `EVAL_ONLY = True` there to reproduce the
+dump from the existing checkpoint in one GPU eval pass):
+
+- **Cosh fit**: `C(Δ) ≈ A·[e^{−mΔ} + e^{−m(Nt−Δ)}]` over one *shared* window
+  (default Δ ∈ [2, 7]; comparability beats per-operator optimality) for GELT,
+  the **projected GEVP operator** (fixed ground eigenvector v₀ at (t0, t0+1)
+  — `gevp_ground_vector`, the optimal single operator in the classical span,
+  the apples-to-apples comparator for a single learned operator), and APE×6.
+  σ_Δ from the blocked jackknife as diagonal χ² weights
+  (`fit_cosh_correlator`: profiled-A grid fit, no scipy); quoted errors from
+  redoing the *whole* fit (including v₀) inside every delete-block jackknife
+  sample.
+- **Overlap**: `A₀ = A·(1 + e^{−m·Nt})/C(0)` — the fraction of the operator's
+  spectral weight on the ground state, Morningstar–Peardon's operator-quality
+  metric, and *exactly what the Rayleigh loss maximises*: the training
+  objective and the reported quality metric coincide. The headline becomes
+  "A₀(GELT) vs A₀(GEVP)" with the correlated same-configs jackknife of the
+  differences (Δm consistent with 0 = same physics; ΔA₀ > 0 = better
+  operator) as the significance statement — replacing the bare
+  "3.9σ at Δ=1" phrasing.
+- **Figure** `glueball_overlap.png`: left, m_eff(Δ) with fitted-mass bands
+  over the window (the standard plateau + fit-band presentation); right,
+  ρ(Δ) = [C(Δ)/C(0)]/cosh_ref(Δ) — a pure ground-state operator is flat at
+  its A₀, excited-state contamination is the small-Δ excess: one panel that
+  *shows* why GELT wins.
+
+Status: code + tests in place; validated end-to-end on a synthetic
+two-state ensemble (periodic Gaussian fields with known couplings: recovers
+m = 0.322 ± 0.025 vs true 0.33, A₀ = 0.955 ± 0.050 vs true 0.99 for the
+GELT-like operator, 0.826 ± 0.053 vs 0.764 for the APE×6-like one, and
+Δm = 0.000 ± 0.002 where the GEVP can reach the exact optimum). Awaiting one
+`EVAL_ONLY` pass on the V100 to dump the Run-5 test Ō arrays and produce the
+real numbers.
+
 ## 0. Where we are vs. what spectroscopy needs
 
 Everything built so far is **per-configuration regression toward a known
