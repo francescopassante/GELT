@@ -527,29 +527,35 @@ starts at Δ = 2, so ΔA₀ never uses the Δ = 1 point where GELT's advantage i
 sharpest. Written up in `glueball_report/glueball_spectroscopy.tex` §
 "Quoting the result like a lattice paper" (Table 3 / Figure 5).
 
-### Replication batch (2026-07-04, queued) — fresh ensemble + init robustness
+### Replication batch (2026-07-04, queued) — two fresh ensembles
 
 `scripts/overnight_replication.sh` (~24 h unattended on the V100) closes the
-remaining robustness caveats via three independent from-scratch phases,
-driven by the new env overrides in `train_glueball.py`
-(`GLUEBALL_ENSEMBLE_SEED` seeds the sampler and gets its own cache file;
-`GLUEBALL_INIT_SEED` seeds init/batch order independently;
-`GLUEBALL_RESUME` / `GLUEBALL_EVAL_ONLY` toggle the flags; non-default seeds
-get a `RUN_TAG` suffix on checkpoint / dump / plot so Run-5 artifacts are
-never clobbered):
+"one ensemble" caveat via independent from-scratch phases, driven by the new
+env overrides in `train_glueball.py` (`GLUEBALL_ENSEMBLE_SEED` seeds the
+sampler and gets its own cache file; `GLUEBALL_INIT_SEED` seeds init/batch
+order independently; `GLUEBALL_RESUME` / `GLUEBALL_EVAL_ONLY` toggle the
+flags; non-default seeds get a `RUN_TAG` suffix on checkpoint / dump / plot
+so Run-5 artifacts are never clobbered):
 
 1. **`replication_ens1`** — sample a fresh seed-1 ensemble (same L, β, ξ, N;
-   the long pole) and train GELT from scratch on it: an independent
-   replication of both the m_eff and A₀ statements. Two independent ~2σ ΔA₀
-   measurements combine to ~3σ.
-2. **`init_seed1` / `init_seed2`** — from-scratch retrains on the *original*
-   ensemble with different init/batch-order seeds: Run 5 was not a lucky
-   initialization if the converged Rayleigh loss and the test m_eff/A₀
-   agree across inits.
+   the sampling is the long pole) and train GELT from scratch on it: an
+   independent replication of both the m_eff and A₀ statements.
+2. **`replication_ens2`** — same with seed 2 (bonus): three fully
+   independent A₀ measurements (Run 5 + ens1 + ens2) combine to ~3.5σ on
+   the overlap headline. If the clock runs out mid-phase, phase 1 is
+   already on disk.
 
-Each phase logs to `logs/<phase>.log` and leaves a test-Ō dump in
-`datasets/*_test_obars.pt`; analyse each with
-`scripts/fit_glueball_overlap.py <dump>` (CPU, offline). Note the seed-1
+Init-seed robustness runs were considered and dropped as low-value: a
+converged loss that saturates the transfer-matrix floor is already
+init-blind evidence — any init reaching the variational bound has found the
+same optimum (and the one init-sensitive failure mode, the zero-init saddle,
+is excluded by `mlp_zero_init=False`).
+
+Each phase logs to `logs/<phase>.log` (`python -u` + `TQDM_MININTERVAL=30`,
+so the sampler sweep bar and the epoch/batch bars tick every ~30 s under
+`tail -f` — a stuck run is visible as a stale log) and leaves a test-Ō dump
+in `datasets/*_test_obars.pt`; analyse each with
+`scripts/fit_glueball_overlap.py <dump>` (CPU, offline). Note each fresh
 ensemble's classical anchor is recomputed on its own test split
 automatically — check the GEVP mass lands near 0.33 there too before
 comparing the learned numbers.

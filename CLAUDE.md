@@ -394,14 +394,16 @@ loop inline (there is no shared `gelt/train.py`). Device order: cuda → mps
   bands; ρ(Δ) = [C(Δ)/C(0)]/cosh_ref overlap panel — flat at A₀ ⇔ pure
   ground state).
 - **`overnight_replication.sh`** — ~24 h unattended V100 batch closing the
-  Run-5 robustness caveats: a fresh seed-1 ensemble + from-scratch GELT
-  training (replication), plus two from-scratch retrains on the original
-  ensemble with different init seeds (init robustness). Uses
+  "one ensemble" caveat: two fresh ensembles (seeds 1 and 2, sampled from
+  scratch — the long pole) each with a from-scratch GELT training, giving
+  three fully independent A₀ measurements (Run 5 + ens1 + ens2). Uses
   `train_glueball.py`'s env overrides (`GLUEBALL_ENSEMBLE_SEED`,
   `GLUEBALL_INIT_SEED`, `GLUEBALL_RESUME`, `GLUEBALL_EVAL_ONLY`); non-default
   seeds get a `RUN_TAG` suffix on cache / checkpoint / dump / plot names so
-  Run-5 artifacts are never overwritten. Phases are failure-isolated, log to
-  `logs/`, and each leaves a `datasets/*_test_obars.pt` dump for
+  Run-5 artifacts are never overwritten. Phases are failure-isolated and log
+  to `logs/<phase>.log` with unbuffered output and ~30 s tqdm ticks
+  (`python -u`, `TQDM_MININTERVAL=30`) so progress is watchable with
+  `tail -f`; each leaves a `datasets/*_test_obars.pt` dump for
   `fit_glueball_overlap.py`.
 - **`check_glueball_autocorrelation.py`** — step-1 pre-flight before
   `measure_glueball.py`: runs a long `n_skip=1` heat-bath+OR chain, builds the
