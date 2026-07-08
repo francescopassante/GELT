@@ -1,0 +1,85 @@
+% ==============================================================================
+%  Chapter 2 -- Lattice gauge theory
+%  Purpose: self-contained LGT primer, ~15-20 pages. Everything later chapters
+%  rely on must be defined HERE (links, plaquettes, Wilson action, gauge
+%  transformations, transfer matrix, correlators, anisotropy, topology).
+%  Sources to draw from: notes/papers_review.md sec. 0 (lattice primer) and
+%  glueball_report/glueball_spectroscopy.tex secs. "From the path integral
+%  to the lattice" and "Masses from Euclidean correlators".
+% ==============================================================================
+
+\section{The Euclidean path integral}
+\label{sec:lgt-path-integral}
+
+\TODO{Wick rotation, Euclidean action, path integral as a statistical
+partition function $Z = \int \mathcal{D}U\, e^{-S[U]}$; expectation values
+of observables. This is what licenses Monte Carlo (Ch.~3) and the
+transfer-matrix reading of correlators (\cref{sec:lgt-transfer}).}
+
+\section{Gauge fields on the lattice}
+\label{sec:lgt-links}
+
+\subsection{Links, plaquettes, and the Wilson action}
+\TODO{Define link variables $U_\mu(x) \in G$ as parallel transporters,
+gauge transformations
+$U_\mu(x) \to \Omega(x)\, U_\mu(x)\, \Omega^{\dg}(x+\hat\mu)$, the
+plaquette
+$P_{\mu\nu}(x) = U_\mu(x) U_\nu(x+\hat\mu) U^{\dg}_\mu(x+\hat\nu) U^{\dg}_\nu(x)$
+and the Wilson action
+$S = \beta \sum_p \left(1 - \tfrac{1}{N_c}\Re\Tr P\right)$ \cite{wilson1974}.
+Naive continuum limit. Fix the conventions used by the code (they match
+the repo's CLAUDE.md): direction-first tensor layout, periodic boundary
+conditions, $\mu < \nu$ plaquette ordering.}
+
+\subsection{Gauge groups used in this thesis}
+\TODO{$\mathbb{Z}_2$ as the debug-friendly testbed (why: exact results,
+bit-exact float64 invariance tests, cheap), $\SU{2}$ as the first
+non-abelian production group, the $\U{1}/\SU{3}$ generalisation path.
+Note the design rule that makes the code group-generic: color axes always
+present ($n_c = 1$ for $\mathbb{Z}_2$), every product an explicit matrix
+product, every inverse an explicit dagger.}
+
+\subsection{Wilson loops and observables}
+\TODO{Rectangular $R \times T$ Wilson loops, the static potential /
+confinement reading, and the naive (plaquette-based, clover-free)
+topological charge density $q(x)$ with
+$F_{\mu\nu} = (P - P^{\dg})/2i$ -- these are the regression targets of
+\cref{ch:regression}.}
+
+\section{Masses from Euclidean correlators}
+\label{sec:lgt-transfer}
+
+\subsection{The transfer matrix and spectral decomposition}
+\TODO{Transfer matrix $\hat T = e^{-\at \hat H}$, spectral decomposition of
+the two-point function
+$C(\Delta) = \sum_n |\langle 0|\hat O|n\rangle|^2 e^{-m_n \Delta}$
+(periodic: cosh). Key inequality for Ch.~7: for ANY operator on a single
+timeslice, $C(\Delta)/C(0) \le e^{-m_0 \Delta}$ -- the variational bound
+the Rayleigh loss saturates. Stress that the bound REQUIRES the operator
+to live on one timeslice (this becomes the per-timeslice network
+constraint of \cref{sec:glue-constraint}).}
+
+\subsection{Zero momentum projection, vacuum subtraction, effective mass}
+\TODO{$\Obar(t) = \sum_{\vec x} O(t, \vec x)$; the $0^{++}$ channel has a
+vacuum expectation value, so the connected correlator needs explicit
+subtraction. Define $\meff(\Delta) = \log[C(\Delta)/C(\Delta+1)]$ and the
+cosh-corrected version; plateau reading.}
+
+\subsection{Glueballs and why they are hard}
+\TODO{What a glueball is; the signal-to-noise problem (signal
+$\sim e^{-m\Delta}$ against a $\Delta$-independent vacuum noise floor);
+why heavy masses in lattice units are unresolvable. Sets up smearing,
+GEVP, and anisotropy as the classical rescue toolkit
+(\cref{sec:glue-classical}).}
+
+\section{Anisotropic lattices}
+\label{sec:lgt-anisotropy}
+
+\TODO{Fine temporal spacing $\at = \as/\xi$ buys more correlator points
+per physical decay length -- the standard trick for heavy states
+\cite{morningstar1999}. Tree-level anisotropic Wilson action:
+$\beta_t = \beta\xi$ on temporal plaquettes, $\beta_s = \beta/\xi$ on
+spatial ones. Bare vs.\ renormalized anisotropy (the code measures
+$\xi_R$ via a Creutz-ratio ratio in \texttt{validate\_anisotropy.py});
+be explicit that this thesis uses the BARE tree-level $\xi$ and does not
+tune it -- a declared limitation (\cref{sec:concl-future}).}

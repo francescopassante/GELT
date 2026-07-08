@@ -331,7 +331,7 @@ def _project_su2(M: torch.Tensor) -> torch.Tensor:
     return out
 
 
-def _sample_su2_w0(a: torch.Tensor, max_iter: int = 100) -> torch.Tensor:
+def _sample_su2_w0(a: torch.Tensor, max_iter: int = 1000) -> torch.Tensor:
     """Sample the scalar part w_0 ∈ [−1, 1] of the heat-bath SU(2) element.
 
     The local weight for ``W = U·V`` is ``∝ exp(a·w_0)`` with the SU(2) Haar
@@ -341,9 +341,15 @@ def _sample_su2_w0(a: torch.Tensor, max_iter: int = 100) -> torch.Tensor:
     to stay overflow-free at large ``a``) and accept with probability
     ``√(1−x²)`` (the test ``r'² ≤ 1 − x²``). Unlike Kennedy–Pendleton this is
     robust at *every* ``a = β·|staple|`` — including the small-staple sites of
-    coarse / low-dimensional lattices — and stays efficient at the large ``a``
-    of thermalised 4D SU(2). The rejection loop is vectorised over the lattice;
-    only not-yet-accepted sites are resampled.
+    coarse / low-dimensional lattices — though the per-trial acceptance decays
+    as ``√(π/2a)`` at large ``a``, hence the generous ``max_iter``: anisotropic
+    ξ=3 temporal staples reach ``a = β·ξ·6 ≈ 43`` (acceptance ≈ 0.19), where
+    one site in ~10⁹ draws needs > 100 trials — an ensemble run makes ~3×10⁹
+    draws, so a cap of 100 failed ~once per ensemble (the seed-2 replication
+    crash); at 1000 the tail probability is ~10⁻⁹¹ per site. The rejection loop
+    is vectorised over the lattice; only not-yet-accepted sites are resampled,
+    and the loop exits as soon as every site has accepted (typically ≪ 100
+    iterations), so the higher cap costs nothing on the common path.
 
     Parameters
     ----------
@@ -371,7 +377,8 @@ def _sample_su2_w0(a: torch.Tensor, max_iter: int = 100) -> torch.Tensor:
     if not bool(accepted.all()):
         raise RuntimeError(
             "SU(2) heat-bath w_0 sampling failed to converge in "
-            f"{max_iter} iterations (unexpected — Creutz accepts at every a)."
+            f"{max_iter} iterations (per-trial acceptance ~ √(π/2a); at this "
+            f"cap a failure should be ~impossible — max a = {a.max().item():.1f})."
         )
     return w0
 

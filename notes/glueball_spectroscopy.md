@@ -469,12 +469,13 @@ better operator measuring the same physics.
   batch Rayleigh estimator is noise-biased toward 0 (batch-estimated VEV and
   C(Δ) over 144 slices), the 200-config val estimate is cleaner.
 
-Remaining honesty caveats for the write-up: one ensemble, one (β, ξ), coarse
-a_s (no continuum claim — as for the classical result); the 3.9σ statement is
-about *operator quality* (excited-state contamination at Δ=1), not about the
-mass value, on which the two methods agree. Still to do from the §6.2 list:
-the matched-parameter **L-CNN baseline** on the same per-timeslice task, and
-ideally a replication on a freshly sampled ensemble.
+Remaining honesty caveats for the write-up: ~~one ensemble~~ *(resolved: the
+seed-1 replication reproduces the result from scratch — see "Replication
+results" below)*, one (β, ξ), coarse a_s (no continuum claim — as for the
+classical result); the 3.9σ statement is about *operator quality*
+(excited-state contamination at Δ=1), not about the mass value, on which the
+two methods agree. Still to do from the §6.2 list: the matched-parameter
+**L-CNN baseline** on the same per-timeslice task.
 
 ### Presentation layer (2026-07-04) — cosh fits + ground-state overlap A₀
 
@@ -527,7 +528,7 @@ starts at Δ = 2, so ΔA₀ never uses the Δ = 1 point where GELT's advantage i
 sharpest. Written up in `glueball_report/glueball_spectroscopy.tex` §
 "Quoting the result like a lattice paper" (Table 3 / Figure 5).
 
-### Replication batch (2026-07-04, queued) — two fresh ensembles
+### Replication batch (2026-07-04, ran overnight 07-04 → 07-05) — two fresh ensembles
 
 `scripts/overnight_replication.sh` (~24 h unattended on the V100) closes the
 "one ensemble" caveat via independent from-scratch phases, driven by the new
@@ -559,6 +560,74 @@ in `datasets/*_test_obars.pt`; analyse each with
 ensemble's classical anchor is recomputed on its own test split
 automatically — check the GEVP mass lands near 0.33 there too before
 comparing the learned numbers.
+
+### Replication results (2026-07-05) — ens1 replicates the win; the loss floor is ensemble-specific
+
+Phase 1 (`replication_ens1`) completed: fresh seed-1 ensemble sampled from
+scratch (`datasets/glueball_configs_L12_Lt24_b2.4_xi3.0_N2000_seed1.pt`),
+from-scratch GELT training (init seed 0), early-stopped after 26 epochs at
+best val Rayleigh **−0.5638**.
+
+**The higher val loss is the ensemble, not the training.** On seed 1 every
+operator reads ~1σ heavier: the classical GEVP anchor is m_eff(Δ=1) =
+0.390 ± 0.016 and stays flat ≈ 0.38–0.40 through Δ=4, vs the descent through
+0.357 toward 0.33 on the original ensemble. Decoding −0.5638 gives m ≈ 0.395
+— i.e. the ensemble's *own* Δ=0→1 floor, −(e^(−0.39) + e^(−0.78))/2 ≈ −0.568,
+saturated to ~0.004, exactly as Run 5 saturated −0.6185 at m ≈ 0.33 on its
+ensemble. The Rayleigh floor is an empirical property of the ensemble; what
+replicates is the *operator quality*, not the loss value. (Also the first
+from-scratch training with the scale pin active: slower than the unpinned
+Run-5 cold start — tens of epochs, as the 60-epoch schedule was sized for —
+but stable throughout, C(0) held at O(1), no skipped batches.)
+
+m_eff on the 400 test configs (blocked jackknife):
+
+| operator | m_eff(Δ=1) | m_eff(Δ=2) | m_eff(Δ=3) | m_eff(Δ=4) |
+|---|---|---|---|---|
+| GELT (learned) | **0.352 ± 0.014** | 0.368 ± 0.020 | 0.370 ± 0.032 | — |
+| classical GEVP | 0.390 ± 0.016 | 0.404 ± 0.024 | 0.383 ± 0.045 | 0.393 ± 0.061 |
+| GEVP + GELT (5-op) | 0.347 ± 0.014 | 0.356 ± 0.020 | 0.341 ± 0.031 | 0.365 ± 0.090 |
+
+Correlated-difference jackknife m_GELT − m_GEVP: Δ=1 **−0.038 ± 0.008
+(4.5σ)**, Δ=2 −0.036 ± 0.012 (2.9σ), Δ=3/4 consistent with 0 — the Run-5
+pattern, if anything stronger. The enlarged GEVP again sits on GELT (the
+classical ladder adds ~0.005 at Δ=1, within noise). Ladder correlations
+r = 0.361 / 0.748 / 0.885 / 0.925 for ×0/×2/×4/×6 — again the deep end of
+the ladder plus its own content.
+
+Cosh fits + overlap (`fit_glueball_overlap.py` on the ens1 dump, shared
+window Δ ∈ [2,7]): GELT m·a_t = 0.374 ± 0.031 with **A₀ = 1.013 ± 0.062**
+(consistent with a pure ground-state interpolator; A₀ ≤ 1 only up to noise);
+GEVP-projected 0.400 ± 0.038 with A₀ = 0.925 ± 0.071; APE×6 A₀ = 0.901 ±
+0.068. Correlated differences: Δm = −0.025 ± 0.013 (1.9σ, consistent with
+same physics), **ΔA₀ = +0.089 ± 0.030 (2.9σ)**.
+
+**Combined overlap headline:** the two independent ΔA₀ measurements —
++0.066 ± 0.031 (Run 5) and +0.089 ± 0.030 (ens1) — inverse-variance combine
+to **ΔA₀ = +0.078 ± 0.022 (3.6σ)**: the batch header's "~3.5σ" target,
+reached with one replication instead of two. The two ensembles' fitted
+masses differ by ~0.04 ± 0.04 (GELT 0.332 ± 0.027 vs 0.374 ± 0.031) — an
+ordinary ~1σ fluctuation between independent 2000-config ensembles, and the
+honest context for the "anchor ≈ 0.33" phrasing: the anchor carries its own
+ensemble error.
+
+Phase 2 (`replication_ens2`, seed 2) **failed 42% into sampling** —
+`_sample_su2_w0` raised its 100-iteration rejection cap. Not a fluke but a
+statistical inevitability: Creutz per-trial acceptance decays as √(π/2a),
+and the anisotropic temporal staples reach a = β·ξ·6 ≈ 43 (acceptance
+≈ 0.19), so one site exceeds 100 trials with p ≈ 8e−10 — and an ensemble
+run makes ~3.4e9 w₀ draws, i.e. ~O(1) expected failures *per ensemble*;
+the first two ensembles simply got lucky. **Fixed (2026-07-05):**
+`max_iter` 100 → 1000 (tail p ~ 1e−91 per site; free on the common path —
+the loop exits when all sites accept, typically ≪ 100 iterations). Rerun
+the ens2 phase standalone after pulling the fix:
+`GLUEBALL_ENSEMBLE_SEED=2 GLUEBALL_INIT_SEED=0 GLUEBALL_RESUME=0 python -u
+scripts/train_glueball.py`. With two independent ensembles already agreeing
+at 3.6σ combined, ens2 is a bonus, not a blocker. Artifacts (copied locally
+to `download/`, figures also at repo root for the report):
+`best_glueball_gelt_sm0-2-4-6_ens1.pth`,
+`datasets/best_glueball_gelt_sm0-2-4-6_ens1_test_obars.pt`,
+`glueball_gelt_ens1.png`, `glueball_overlap_ens1.png`.
 
 ## 0. Where we are vs. what spectroscopy needs
 

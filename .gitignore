@@ -6,4 +6,20 @@ __pycache__/
 *.pyc
 .claude/
 gelt.egg-info/
-notes/
+.DS_Store
+
+# downloaded run artifacts (checkpoints, dumps, plots from the V100)
+download/
+
+# LaTeX build artifacts
+*.aux
+*.log
+*.out
+*.toc
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.bbl
+*.bcf
+*.blg
+*.run.xml

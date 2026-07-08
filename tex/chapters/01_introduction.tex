@@ -1,0 +1,77 @@
+% ==============================================================================
+%  Chapter 1 -- Introduction
+%  Purpose: motivate the thesis in ~6-10 pages, readable by a physicist who
+%  knows neither ML nor lattice QCD in depth. Written LAST, once all results
+%  are in, but the skeleton below fixes the narrative arc now.
+% ==============================================================================
+
+\section{Motivation: machine learning for lattice gauge theory}
+\label{sec:intro-motivation}
+
+\TODO{Open with the physics problem: non-perturbative QCD observables
+(hadron/glueball spectra, topology) are only computable on the lattice, and
+lattice computations are dominated by two costs -- ensemble generation and
+operator/observable construction. Position ML as a tool for the second:
+learning better \emph{operators} and \emph{maps} on gauge configurations,
+not replacing the Monte Carlo.}
+
+\TODO{State the central obstruction: gauge symmetry. A generic network fed
+raw links must waste capacity learning an exact local symmetry with a group
+volume growing like $|\mathcal{G}|^{V}$; a network that is equivariant by
+construction gets it for free. Preview the ``inductive-bias gap''
+experiment of \cref{sec:reg-inductive-gap} (plaquette-fed CNN
+$R^2 \approx 0.99$ vs.\ link-fed CNN $R^2 \approx 0$ on the same target) as
+the one-plot motivation.}
+
+\section{From equivariant convolutions to equivariant attention}
+\label{sec:intro-attention}
+
+\TODO{Brief history: L-CNN \cite{favoni2022lcnn} showed exact lattice gauge
+equivariance via parallel-transported convolutions and bilinear layers;
+gauge-covariant ResNets \cite{nagai2021covariant} and the CASK transformer
+\cite{cask2025} extended the toolbox. Limitation to stress: convolutional
+kernels are \emph{static} after training -- the same stencil everywhere,
+on every configuration.}
+
+\TODO{The thesis proposal: GELT, a gauge-equivariant attention encoder.
+Attention weights are configuration-dependent, so the network can allocate
+its receptive field where the physics is (topological lumps, correlated
+regions). Two design departures from L-CNN to state up front: (i) the
+value path is matrix-bilinear ($\alpha \, Q^{\dg} \tilde V$), so L-CNN's
+loop-growing universality argument transfers; (ii) parallel transport
+between sites is averaged over \emph{all} shortest lattice paths in the
+$L^1$-ball (a DP recursion, not enumeration).}
+
+\section{Contributions}
+\label{sec:intro-contributions}
+
+\TODO{Bullet list, one item per delivered result. Current inventory:}
+\begin{itemize}
+  \item The GELT architecture (\cref{ch:gelt}): gauge-invariant attention
+        scores, matrix-bilinear values, $L^1$-ball shortest-path-averaged
+        transport, RoPE geometric prior; equivariance verified by unit
+        tests and a numerical invariance check.
+  \item A pure-tensor lattice codebase: $\mathbb{Z}_2$/$\SU{2}$ Metropolis
+        and $\SU{2}$ heat-bath + overrelaxation samplers (with anisotropy),
+        classical glueball toolkit (APE smearing, correlators, GEVP,
+        jackknife), and matched-parameter CNN and L-CNN baselines.
+  \item \textbf{The headline physics result} (\cref{ch:glueball}): GELT
+        trained as a variational $0^{++}$ glueball operator on the Rayleigh
+        loss $-C(1)/C(0)$ saturates the transfer-matrix bound, agrees with
+        the classical GEVP on the mass ($m\,\at = 0.332 \pm 0.027$), and
+        \emph{beats} it on ground-state overlap:
+        $A_0 = 0.903 \pm 0.047$ vs.\ $0.837 \pm 0.056$, a correlated
+        $\Delta A_0 = +0.078 \pm 0.022$ ($3.6\sigma$) combining the
+        original ensemble and an independent replication.
+  \item \TODO{The interpretability study (\cref{ch:interpretability}) --
+        attention maps as measurements -- once its results exist.}
+\end{itemize}
+
+\section{Outline of the thesis}
+\label{sec:intro-outline}
+
+\TODO{One sentence per chapter. Ch.~2 lattice gauge theory;
+Ch.~3 Monte Carlo methods; Ch.~4 geometric deep learning and prior
+equivariant architectures; Ch.~5 the GELT architecture; Ch.~6 validation
+and regression experiments; Ch.~7 glueball spectroscopy; Ch.~8
+interpretability; Ch.~9 conclusions and outlook.}

@@ -1,0 +1,1238 @@
+% ==============================================================================
+%  Extracting the 0++ glueball mass on the lattice — standalone report
+%  (independent of the thesis in tex/; build: pdflatex, run twice for refs)
+%
+%  Figures are the PNGs produced by the scripts at the repository root;
+%  \graphicspath points one level up.
+% ==============================================================================
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=2.6cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{amsmath,amssymb,mathtools}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{caption}
+\usepackage{xcolor}
+\usepackage[colorlinks=true,linkcolor=blue!50!black,citecolor=blue!50!black,urlcolor=blue!50!black]{hyperref}
+
+\graphicspath{{../}}
+
+% ---- shorthand ---------------------------------------------------------------
+\newcommand{\Tr}{\operatorname{Tr}}
+\newcommand{\dU}{\mathcal{D}U}
+\newcommand{\Obar}{\bar{O}}
+\newcommand{\meff}{m_{\mathrm{eff}}}
+\newcommand{\at}{a_t}
+\newcommand{\as}{a_s}
+\newcommand{\That}{\hat{T}}
+
+\title{Extracting the $0^{++}$ Glueball Mass on the Lattice:\\
+from the Euclidean Path Integral to a Learned Variational Operator}
+\author{Francesco Passante}
+\date{July 5, 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Glueballs are bound states of pure gauge fields, and their masses are among the
+most natural --- and notoriously noisy --- predictions of lattice gauge theory.
+This note develops, from first principles, everything needed to extract the
+lightest scalar ($0^{++}$) glueball mass in $SU(2)$ lattice gauge theory:
+the Euclidean path integral and the transfer matrix, the spectral decomposition
+of connected correlators, the effective mass and its variational bound, the
+signal-to-noise catastrophe specific to glueballs, and the three classical
+tools that tame it --- link smearing, the variational method (GEVP), and the
+anisotropic lattice. We then document an actual extraction on an
+anisotropic $SU(2)$ ensemble ($12^3\times24$, $\beta=2.4$, $\xi=3$), where a
+multi-level smearing GEVP resolves a clean plateau at $m\,\at\approx0.33$.
+Finally, we replace the hand-built operator basis by a gauge-equivariant
+neural network (GELT) trained on a Rayleigh-quotient loss whose converged
+value \emph{is} the mass. Fed multi-level smeared input channels and
+constrained to a single timeslice (so the transfer-matrix bound applies), the
+learned operator saturates the variational bound at the classical anchor,
+plateaus from $\Delta=1$, and carries significantly less excited-state
+contamination than the classical GEVP ($3.9\sigma$ from a correlated-difference
+jackknife) while agreeing with it on the mass itself. A from-scratch
+replication on an independently sampled ensemble reproduces the result;
+the two ensembles combine to a $3.6\sigma$ excess in ground-state overlap.
+\end{abstract}
+
+\tableofcontents
+
+% ==============================================================================
+\section{Introduction}
+% ==============================================================================
+
+In a pure Yang--Mills theory --- QCD with the quarks removed --- the only
+physical states are \emph{glueballs}: color-singlet bound states of gluons,
+held together by the same self-interaction that makes the theory confining.
+Their spectrum is a parameter-free prediction of the gauge dynamics, and
+computing it was one of the first triumphs of lattice gauge theory
+\cite{Berg1980,MorningstarPeardon1999}. The lightest state carries the quantum
+numbers of the vacuum, $J^{PC}=0^{++}$, and it is the target of everything
+that follows.
+
+Extracting a glueball mass is conceptually simple --- measure a Euclidean
+correlator, read off its exponential decay --- and practically hard: the
+signal decays exponentially while the noise does not, so the mass must be read
+at very small time separations, which is only possible if the measuring
+operator overlaps strongly onto the ground state. The entire craft of glueball
+spectroscopy is the construction of such operators.
+
+This note has two halves. Sections~\ref{sec:pathintegral}--\ref{sec:classical}
+build the standard theory and practice from the ground up, assuming only
+basic familiarity with lattice gauge theory, and document a classical
+measurement of the $SU(2)$ $0^{++}$ mass on an anisotropic lattice.
+Sections~\ref{sec:learned}--\ref{sec:runs} then reformulate the operator
+construction as a machine-learning problem: since the optimal operator is the
+maximizer of a Rayleigh quotient of the transfer matrix, a gauge-equivariant
+network trained to minimize $-C(1)/C(0)$ \emph{is} a variational glueball
+operator, and its converged loss \emph{is} (minus the exponential of) the
+mass. The final result is a learned operator that variationally subsumes the
+hand-built smearing basis it was validated against.
+
+% ==============================================================================
+\section{From the path integral to the lattice}
+\label{sec:pathintegral}
+% ==============================================================================
+
+\subsection{The Euclidean path integral}
+
+Continuum expectation values of a quantum field theory can be written, after
+Wick rotation $t\to -i\tau$, as statistical averages with a real, positive
+weight,
+\begin{equation}
+  \langle O \rangle
+  \;=\;
+  \frac{1}{Z}\int \mathcal{D}A\; O[A]\, e^{-S_E[A]},
+  \qquad
+  Z=\int \mathcal{D}A\; e^{-S_E[A]},
+  \label{eq:pathintegral}
+\end{equation}
+where $S_E$ is the Euclidean action. Two things make this formulation the
+foundation of lattice gauge theory. First, $e^{-S_E}$ is a probability weight
+(up to normalization), so \eqref{eq:pathintegral} can be estimated by Monte
+Carlo importance sampling. Second --- and this is the part that matters for
+spectroscopy --- Euclidean time evolution is generated by $e^{-\tau\hat H}$
+rather than $e^{-it\hat H}$: excited states are \emph{exponentially
+suppressed} rather than oscillating, so the large-$\tau$ behaviour of
+correlation functions isolates the lowest-energy state in a given channel.
+Masses are read off exponential decays. Section~\ref{sec:correlators} makes
+this precise via the transfer matrix.
+
+\subsection{Gauge fields on a lattice: links, plaquettes, Wilson action}
+
+Wilson's discretization \cite{Wilson1974} replaces spacetime by a hypercubic
+lattice $\Lambda$ with spacing $a$, and the gauge potential $A_\mu(x)$ by
+group-valued \emph{link variables}
+\begin{equation}
+  U_\mu(x) \;=\; \mathcal{P}\exp\!\Big( i g \!\int_x^{x+a\hat\mu}\! A\cdot dx \Big)
+  \;\in\; SU(N),
+\end{equation}
+the parallel transporters along the elementary edges of the lattice. A gauge
+transformation is a group element $\Omega(x)$ at every site, acting as
+\begin{equation}
+  U_\mu(x) \;\longrightarrow\; \Omega(x)\, U_\mu(x)\, \Omega^\dagger(x+a\hat\mu).
+  \label{eq:gaugetrafo}
+\end{equation}
+Any product of links along a \emph{closed} loop therefore transforms by
+conjugation at its base point, and its trace is exactly gauge invariant. The
+smallest such loop is the \emph{plaquette},
+\begin{equation}
+  P_{\mu\nu}(x)
+  \;=\;
+  U_\mu(x)\, U_\nu(x+a\hat\mu)\, U_\mu^\dagger(x+a\hat\nu)\, U_\nu^\dagger(x),
+\end{equation}
+and the Wilson action is the sum of plaquettes,
+\begin{equation}
+  S[U] \;=\; \beta \sum_{x,\,\mu<\nu}
+  \Big( 1 - \tfrac{1}{N}\,\mathrm{Re}\,\Tr P_{\mu\nu}(x) \Big),
+  \qquad
+  \beta = \frac{2N}{g^2},
+  \label{eq:wilson}
+\end{equation}
+which reproduces $\tfrac14 F_{\mu\nu}^aF_{\mu\nu}^a$ in the classical
+continuum limit $a\to0$. The bare coupling $\beta$ is the only parameter;
+the lattice spacing $a(\beta)$ is not an input but an output, set by the
+dynamics (asymptotic freedom drives $a\to0$ as $\beta\to\infty$). All results
+below are quoted in lattice units, i.e.\ as dimensionless products such as
+$m\,a$.
+
+\subsection{Expectation values by Monte Carlo}
+
+The lattice path integral is an ordinary (huge-dimensional) integral over the
+compact group manifold, with Haar measure on every link:
+\begin{equation}
+  \langle O \rangle
+  \;=\;
+  \frac{1}{Z}\int \prod_{x,\mu} dU_\mu(x)\; O[U]\, e^{-S[U]} .
+\end{equation}
+A Markov-chain Monte Carlo algorithm generates an ensemble of configurations
+$\{U^{(1)},\dots,U^{(N)}\}$ distributed as $e^{-S}$, and
+$\langle O\rangle \approx \frac1N \sum_i O[U^{(i)}]$ with an error
+$\propto 1/\sqrt{N_{\rm eff}}$, where $N_{\rm eff}$ accounts for
+autocorrelation along the chain (Section~\ref{sec:ensemble}). Everything in
+this note runs in the gauge group $SU(2)$, which is cheap, confining, and
+admits exact single-link updates.
+
+% ==============================================================================
+\section{Masses from Euclidean correlators}
+\label{sec:correlators}
+% ==============================================================================
+
+\subsection{The transfer matrix}
+
+The Euclidean lattice theory on a lattice with $N_t$ timeslices and periodic
+temporal boundary conditions is equivalent to a quantum system with
+Hamiltonian $\hat H$ acting on a Hilbert space of spatial-field states: the
+partition function factorizes as
+\begin{equation}
+  Z \;=\; \Tr\, \That^{\,N_t},
+  \qquad
+  \That \;=\; e^{-\at \hat H},
+\end{equation}
+where $\That$, the \emph{transfer matrix}, propagates the system by one
+timeslice ($\at$ is the temporal lattice spacing). For the Wilson action
+$\That$ is self-adjoint and positive (\emph{reflection positivity}
+\cite{OsterwalderSeiler1978}), which is what makes everything below a theorem
+rather than a heuristic: $\That$ has a complete set of eigenstates $|n\rangle$
+with real eigenvalues $e^{-\at E_n}$, $E_0 \le E_1 \le \dots$, and we measure
+energies relative to the vacuum, $E_0 = 0$.
+
+An operator $O(\vec x, t)$ built from the \emph{spatial} links of timeslice
+$t$ only corresponds to a Schr\"odinger-picture operator $\hat O$ on this
+Hilbert space. This locality-in-time condition looks like a technicality; it
+will return twice with teeth --- once for smearing
+(Section~\ref{sec:smearing}) and once, decisively, for the neural network
+(Section~\ref{sec:constraint}).
+
+\subsection{Spectral decomposition of the correlator}
+
+Insert complete sets of transfer-matrix eigenstates into a two-point function
+at temporal separation $\Delta$ (in units of $\at$):
+\begin{equation}
+  \big\langle O(t{+}\Delta)\, O(t) \big\rangle
+  \;=\;
+  \frac{1}{Z}\Tr\!\big[ \That^{\,N_t-\Delta}\, \hat O\, \That^{\,\Delta}\, \hat O \big]
+  \;\xrightarrow[N_t\gg\Delta]{}\;
+  \sum_{n} \big|\langle 0|\hat O|n\rangle\big|^2\, e^{-E_n \Delta\,\at}.
+  \label{eq:spectral}
+\end{equation}
+Every term is positive, and the decay rates are the energies of the states
+the operator couples to. At large $\Delta$ the lightest such state dominates:
+its energy is read off the exponential tail. (On a finite periodic lattice
+the exponential is replaced by
+$e^{-E_n\Delta \at}+e^{-E_n(N_t-\Delta)\at}\propto\cosh$, symmetric about
+$\Delta=N_t/2$; this matters only near the midpoint.)
+
+\subsection{Zero momentum, vacuum subtraction, effective mass}
+
+Three standard refinements turn \eqref{eq:spectral} into a mass measurement.
+
+\paragraph{Zero-momentum projection.} Summing the operator over a spatial
+slice,
+\begin{equation}
+  \Obar(t) \;=\; \sum_{\vec x} O(\vec x, t),
+\end{equation}
+projects onto momentum $\vec p=0$, so the energies in the decomposition are
+\emph{masses}, $E_n = m_n$, with no kinetic contamination. It also averages
+over $L^3$ sites, improving statistics.
+
+\paragraph{Vacuum subtraction.} The $0^{++}$ channel shares the quantum
+numbers of the vacuum, so $\langle\Obar\rangle\neq0$ and the $n=0$ term of
+\eqref{eq:spectral} is a $\Delta$-independent constant
+$|\langle0|\hat O|0\rangle|^2$ that would bury the signal. One therefore
+measures the \emph{connected} correlator,
+\begin{equation}
+  C(\Delta)
+  \;=\;
+  \big\langle \Obar(t_0{+}\Delta)\,\Obar(t_0) \big\rangle
+  - \big\langle \Obar \big\rangle^2
+  \;=\;
+  \sum_{n>0} \big|\langle 0|\hat{\bar O}|n\rangle\big|^2\, e^{-m_n \Delta\,\at},
+  \label{eq:connected}
+\end{equation}
+averaged over all time origins $t_0$ (time-translation invariance buys another
+factor $N_t$ of statistics). A structural gift of the $0^{++}$ channel: since
+it \emph{is} the vacuum channel, after subtraction the lightest surviving
+state is automatically the scalar glueball --- no quantum-number projection
+(spin, parity, charge conjugation on the cubic group) is needed for the
+ground state.
+
+\paragraph{Effective mass.} Define
+\begin{equation}
+  \meff(\Delta) \;=\; \log\frac{C(\Delta)}{C(\Delta+1)} .
+  \label{eq:meff}
+\end{equation}
+Because every term in \eqref{eq:connected} is positive,
+$\meff(\Delta)\ge m_G$ for all $\Delta$ and $\meff(\Delta)\to m_G\,\at$
+monotonically from above as $\Delta\to\infty$: the correlator is a
+\emph{variational upper bound} machine. In practice one looks for the
+\emph{plateau} --- the range of $\Delta$ where $\meff$ has stopped descending
+(excited states have decayed) but the error bars have not yet exploded. The
+whole game is to make that window exist.
+
+% ==============================================================================
+\section{Why the glueball is hard: signal-to-noise}
+\label{sec:snr}
+% ==============================================================================
+
+For most hadrons the plateau window is wide. For glueballs it is a crack in
+the wall, for a reason first made sharp by Lepage \cite{Lepage1989}. The Monte
+Carlo variance of the correlator estimate is itself a correlator,
+\begin{equation}
+  \mathrm{Var}\big[ C(\Delta) \big]
+  \;\sim\;
+  \big\langle \Obar^2(t_0{+}\Delta)\, \Obar^2(t_0) \big\rangle - C(\Delta)^2 ,
+\end{equation}
+and the operator $\Obar^2$ couples to the \emph{vacuum}: the variance
+approaches a $\Delta$-independent constant. The signal decays as
+$e^{-m_G\Delta \at}$ while the noise does not, so
+\begin{equation}
+  \frac{\text{signal}}{\text{noise}}
+  \;\sim\;
+  \sqrt{N}\; e^{-m_G \Delta\, \at} .
+  \label{eq:lepage}
+\end{equation}
+The scalar glueball is \emph{heavy} --- $m_G\, a$ is order one on typical
+lattices --- so the signal is gone within two or three timeslices, and by
+\eqref{eq:lepage} doubling the statistics buys only $\log\sqrt2/(m_G \at)$
+extra slices. More configurations are nearly useless; the plateau must be
+dragged to \emph{small} $\Delta$, where the noise is still small. Since
+$\meff(\Delta)$ starts high and descends as excited states die off, dragging
+the plateau to small $\Delta$ means building an operator with large
+\emph{ground-state overlap}: $|\langle 0|\hat{\bar O}|1\rangle|^2$ dominant in
+\eqref{eq:connected} already at $\Delta=1$. Everything in the next section is
+a technique for manufacturing overlap.
+
+% ==============================================================================
+\section{The classical toolkit}
+\label{sec:toolkit}
+% ==============================================================================
+
+\subsection{Smeared operators}
+\label{sec:smearing}
+
+The simplest scalar glueball operator is the spatial plaquette itself, summed
+over orientations to make a rotational scalar. It is a terrible interpolating
+operator: a single \emph{thin-link} loop of extent $a$ probes UV fluctuations,
+not the physical glueball, whose wavefunction has a size of order the
+confinement scale. Its $\meff$ starts far above $m_G$ and descends too slowly
+to plateau before the noise wall of \eqref{eq:lepage}.
+
+The fix is \emph{link smearing}: replace each spatial link by a
+gauge-covariant local average of itself and its neighbouring
+\emph{staples} (the three-link detours connecting the same endpoints). One
+APE step \cite{APE1987} is
+\begin{equation}
+  U_j(x)\;\longrightarrow\;
+  \mathrm{Proj}_{SU(N)}\Big[
+    (1-\alpha)\, U_j(x)
+    + \frac{\alpha}{n_{\rm st}} \sum_{\text{spatial staples}} S_j(x)
+  \Big],
+  \label{eq:ape}
+\end{equation}
+iterated $n$ times; operators built from smeared links are spatially extended
+over a radius that grows with $n$, matching the physical size of the state and
+suppressing the UV contamination. Two rules are absolute:
+\begin{itemize}
+  \item \textbf{Smear spatial links only, never in time.} Temporal smearing
+  makes the operator depend on several timeslices at once, destroying the
+  transfer-matrix interpretation of \eqref{eq:spectral} --- the ``operator on
+  timeslice $t$'' premise --- and with it the variational bound.
+  \item \textbf{Smearing is not cooling.} Cooling/gradient flow drives the
+  \emph{configuration} toward classical solutions and changes the measured
+  physics; operator smearing changes only the \emph{operator}, leaving the
+  ensemble untouched. Both are built from staples; they answer different
+  questions.
+\end{itemize}
+There is no single best smearing level --- too little leaves UV
+contamination, too much washes the operator out --- which motivates using
+\emph{several} levels at once:
+
+\subsection{The variational method (GEVP)}
+\label{sec:gevp}
+
+Given a basis of $n_{\rm op}$ operators $\Obar_i$ (here: the scalar operator
+at APE levels $0,2,4,6$), measure the full connected correlator
+\emph{matrix}
+\begin{equation}
+  C_{ij}(\Delta) \;=\;
+  \big\langle \Obar_i(t_0{+}\Delta)\, \Obar_j(t_0) \big\rangle
+  - \langle\Obar_i\rangle \langle\Obar_j\rangle ,
+\end{equation}
+and solve the \emph{generalized eigenvalue problem} (GEVP)
+\cite{MichaelTeasdale1983,LuscherWolff1990,Blossier2009}
+\begin{equation}
+  C(\Delta)\, v_n \;=\; \lambda_n(\Delta, t_0)\; C(t_0)\, v_n ,
+  \label{eq:gevp}
+\end{equation}
+at a fixed reference time $t_0$ (here $t_0=1$). The eigenvector $v_n$ defines
+the linear combination $\sum_i (v_n)_i \Obar_i$ that optimally isolates state
+$n$ within the span of the basis, and the eigenvalues decay with the
+\emph{individual} state energies,
+\begin{equation}
+  \lambda_n(\Delta,t_0) \;=\; e^{-m_n (\Delta-t_0)\,\at}
+  \big( 1 + \mathcal{O}(e^{-\delta m\, \Delta \,\at}) \big),
+\end{equation}
+with corrections controlled by the gap $\delta m$ to the first state
+\emph{outside} the basis span --- parametrically smaller than the
+single-operator contamination. Effective masses are then read from the
+eigenvalues, $\meff^{(n)}(\Delta)=\log[\lambda_n(\Delta)/\lambda_n(\Delta+1)]$,
+for $\Delta\ge t_0$. This ``multi-level smearing basis + GEVP'' construction
+is the Morningstar--Peardon strategy \cite{MorningstarPeardon1999} that
+underlies every modern glueball spectrum.
+
+One numerical remark from practice: at low statistics the estimated $C(t_0)$
+can be indefinite, so a naive Cholesky-based solver fails. The implementation
+used here whitens with the eigendecomposition of $C(t_0)$ and floors
+near-zero eigenvalues --- adequate for four well-separated smearing levels,
+though for larger bases the flooring should be replaced by truncation
+(projecting the noisy directions out rather than blowing them up).
+
+\subsection{Anisotropic lattices}
+\label{sec:aniso}
+
+Smearing and the GEVP fix the \emph{overlap}; they cannot manufacture
+timeslices. If $m_G\, \at \sim 1$, the correlator falls by $e^{-1}$ per slice
+and even a perfect operator has only $2$--$3$ usable points --- too few to
+demonstrate a plateau. The field's standard cure
+\cite{MorningstarPeardon1999} is the \emph{anisotropic lattice}: a temporal
+spacing finer than the spatial one, $\at = \as/\xi$ with anisotropy
+$\xi>1$, so the same physical decay is sampled by $\xi$ times more slices.
+At tree level this is a reweighting of the Wilson action by plaquette
+orientation,
+\begin{equation}
+  S \;=\; \beta_s \!\!\sum_{\text{spatial } P}\!\!
+        \Big(1-\tfrac1N \mathrm{Re}\Tr P\Big)
+      + \beta_t \!\!\sum_{\text{temporal } P}\!\!
+        \Big(1-\tfrac1N \mathrm{Re}\Tr P\Big),
+  \qquad
+  \beta_s = \frac{\beta}{\xi},\quad \beta_t = \beta\,\xi .
+  \label{eq:aniso}
+\end{equation}
+The masses extracted from temporal decays come out in units of $\at$; the
+conversion $m\,\as = \xi\, m\,\at$ uses the \emph{renormalized} anisotropy
+$\xi_R$, which quantum corrections shift away from the bare $\xi$ (we measure
+the shift but do not tune it away; see Section~\ref{sec:caveat}).
+
+% ==============================================================================
+\section{Ensemble generation and error analysis}
+\label{sec:ensemble}
+% ==============================================================================
+
+\subsection{Heat-bath and overrelaxation for $SU(2)$}
+
+Spectroscopy needs many well-decorrelated configurations, and the workhorse
+Metropolis algorithm decorrelates slowly (each accepted move is a small random
+step). $SU(2)$ admits two exact, tuning-free local updates that together beat
+this critical slowing down:
+
+\paragraph{Heat-bath \cite{Creutz1980,KennedyPendleton1985}.} The action is
+linear in any single link: $S \supset -\tfrac{\beta}{N}\mathrm{Re}\Tr[U_\mu(x) A^\dagger]$,
+where $A$ is the sum of the staples around that link (with the $\xi^{\pm1}$
+weights of \eqref{eq:aniso} folded in). For $SU(2)$ a sum of group elements is
+proportional to a group element, $A = k\,V$ with $V\in SU(2)$, so the
+single-link conditional distribution is known in closed form and can be
+sampled \emph{exactly} --- the new link is completely independent of the old
+one.
+
+\paragraph{Overrelaxation \cite{Creutz1987}.} The reflection
+$U \to V^\dagger U^\dagger V^\dagger$ preserves the action exactly
+(microcanonical) while moving as far as possible across the constant-action
+surface --- pure decorrelation at negligible cost. The production sweep used
+below is one heat-bath sweep followed by $n_{\rm OR}=4$ overrelaxation sweeps,
+in a checkerboard (even/odd) pattern so that whole sublattices update in
+parallel.
+
+\subsection{Autocorrelation}
+
+Successive configurations of the chain are correlated; the effective sample
+size is $N_{\rm eff} = N / (2\tau_{\rm int})$, where the integrated
+autocorrelation time $\tau_{\rm int}$ of the \emph{measured observable}
+(estimated with Madras--Sokal automatic windowing \cite{MadrasSokal1988}) sets
+the number of sweeps $n_{\rm skip}\gtrsim 2\tau_{\rm int}$ to discard between
+saved configurations. Crucially, $\tau_{\rm int}$ must be measured on the
+smeared glueball operator, not the plaquette --- extended observables
+decorrelate more slowly.
+
+\subsection{Jackknife errors}
+
+All quoted errors are leave-one-out jackknife errors over configurations:
+recompute the full analysis (correlator, GEVP, $\meff$) on $N$ subsamples each
+omitting one configuration; the spread of the results estimates the error of
+the full-sample result, propagating correctly through every nonlinearity
+(ratios, logs, eigenvalues). When residual autocorrelation is suspected, the
+omitted unit is a contiguous \emph{block} of configurations rather than one
+(``blocked jackknife''), which keeps the independence assumption honest. Two
+further uses appear below: neighbouring-$\Delta$ points of a jackknifed
+$\meff$ curve are strongly correlated, so ``the error bars overlap'' can
+overstate consistency; and when comparing two estimates measured on the
+\emph{same} configurations, the jackknife of their \emph{difference} cancels
+the correlated fluctuations and is the honest significance test
+(Section~\ref{sec:run5}).
+
+% ==============================================================================
+\section{The classical measurement, run by run}
+\label{sec:classical}
+% ==============================================================================
+
+All ensembles are $SU(2)$, sampled with heat-bath + overrelaxation. The
+operator is the orientation-summed spatial $1\times1$ Wilson loop
+(the spatial plaquette scalar), at APE levels $0,2,4,6$; the analysis is the
+connected correlator \eqref{eq:connected}, $\meff$ \eqref{eq:meff}, and the
+GEVP \eqref{eq:gevp} with $t_0=1$, all errors jackknifed.
+
+\subsection{Runs 0--1: the isotropic lattice fails}
+
+On an isotropic $12^4$ lattice at $\beta=2.4$ with $N=2000$ configurations,
+the single smeared operator shows only a weak $m\,a\approx0.8$ at
+$\Delta=1$--$2$ and slides into noise (negative $\meff$, huge bars) by
+$\Delta\approx3$ --- the textbook heavy-$0^{++}$ failure of
+Section~\ref{sec:snr}, verbatim. Adding the full multi-level GEVP (Run~1)
+produced a flatter, lower ground state but still \emph{no plateau}: with the
+signal dead by $\Delta\approx3$ there is nothing late-$\Delta$ for any basis
+to exploit. The diagnosis, important because it redirects the effort: the
+\emph{operator basis was not the bottleneck; the lattice was.} No amount of
+overlap engineering survives $m_G\,a\sim1$ on an isotropic lattice.
+
+\subsection{Run 2: validating the anisotropic implementation}
+
+Before trusting physics from the anisotropic action \eqref{eq:aniso}, three
+checks (Figure~\ref{fig:aniso}):
+\begin{itemize}
+  \item \textbf{$\xi=1$ regression:} the anisotropic code path at $\xi=1$
+  reproduces the exactly known 2D $SU(2)$ mean plaquette
+  $I_2(\beta)/I_1(\beta)$: measured $0.4329\pm0.0017$ vs.\ exact $0.4331$
+  ($0.1\sigma$) --- the refactor changed nothing where it must not.
+  \item \textbf{Plaquette splitting:} in 4D, $\langle P_{st}\rangle$ rises and
+  $\langle P_{ss}\rangle$ falls with $\xi$ (since $\beta_t>\beta_s$),
+  coinciding at $\xi=1$ --- the anisotropy acts in the intended direction.
+  \item \textbf{Renormalized anisotropy:} a Creutz-ratio-based estimate gives
+  $\xi_R \approx 3.32$ at bare $\xi=3$ --- the expected tree-level vs.\
+  renormalized mismatch, made visible rather than tuned away.
+\end{itemize}
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=\textwidth]{anisotropy_validation.png}
+  \caption{Validation of the anisotropic $SU(2)$ action. Left: the $\xi=1$
+  code path reproduces the exact 2D mean plaquette $I_2(\beta)/I_1(\beta)$ to
+  $0.1\sigma$. Right: at $\beta=2.0$ in 4D the plaquette splits with the bare
+  anisotropy --- temporal plaquettes grow, spatial ones shrink --- and a
+  Creutz-ratio estimate gives a renormalized $\xi_R\approx3.32$ at bare
+  $\xi=3$.}
+  \label{fig:aniso}
+\end{figure}
+
+\subsection{Run 3: the anchor, $m\,\at \approx 0.33$}
+
+The production ensemble is $12^3\times24$ at $\beta=2.4$, bare $\xi=3.0$,
+$N=2000$ configurations (heat-bath + overrelaxation, acceptance~1.00). The
+anisotropy transforms the measurement (Figure~\ref{fig:classical}):
+$C(\Delta)$ now decays cleanly over $\sim$10--12 timeslices before the
+periodic turnaround at $\Delta=N_t/2=12$, instead of dying at $\Delta\approx3$.
+The GEVP ground state (levels $[0,2,4,6]$, $t_0=1$) plateaus with tight
+errors:
+\begin{equation}
+  \meff(1) = 0.365\pm0.008, \quad
+  \meff(2) = 0.333\pm0.011
+  \qquad (\text{units of } \at),
+\end{equation}
+a small descent then flattening --- the expected approach from above of the
+variational bound. Because two points that differ by $\sim2\sigma$ are a
+descent, not yet a plateau, the anchor was later strengthened with
+$\Delta=3$--$4$ points on the held-out test split of the same ensemble
+(Section~\ref{sec:run4}): $\meff(3)=0.333\pm0.036$ confirms
+\begin{equation}
+  \boxed{\; m\,\at \approx 0.33 \;}
+\end{equation}
+as the classical ground-truth anchor for everything that follows.
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=\textwidth]{glueball_validation.png}
+  \caption{The classical baseline on the anisotropic ensemble
+  ($12^3\times24$, $\beta=2.4$, $\xi=3$, $N=2000$). Top left: the analysis
+  code recovers a known mass from a synthetic single-exponential correlator.
+  Top right: the smeared operator's expectation value grows monotonically
+  with APE steps (smearing sanity check). Bottom left: the connected
+  correlator $C(\Delta)$ for thin and $6\times$-smeared operators decays over
+  $\sim$10--12 slices, symmetric about $\Delta=N_t/2$ (periodicity). Bottom
+  right: effective masses --- the multi-level GEVP ground state (green)
+  plateaus where the single operators do not.}
+  \label{fig:classical}
+\end{figure}
+
+\subsection{What the number does and does not mean}
+\label{sec:caveat}
+
+$m\,\at\approx0.33$ is the trustworthy, method-validating result. The
+conversion $m\,\as = \xi\, m\,\at \approx 1.0$ is \emph{not} continuum
+physics: at $\beta_s=\beta/\xi=0.8$ the spatial lattice is deep in strong
+coupling (coarse $\as$), so $m\,\as$ carries large discretization artifacts,
+and the conversion moreover uses the bare $\xi=3$ where Run~2 measured
+$\xi_R\approx3.32$. A publishable $m_G$ would require tuned anisotropy
+(raising $\beta$ with $\xi$ to keep $\beta_s$ in the scaling window) and a
+continuum extrapolation --- deliberately left as future work. The claim
+established here is the one the rest of this note needs: \emph{the pipeline
+resolves a plateau}, i.e.\ a classical ground truth exists on this ensemble.
+
+% ==============================================================================
+\section{A neural network as a variational operator}
+\label{sec:learned}
+% ==============================================================================
+
+Everything so far is a search for the operator with maximal ground-state
+overlap, conducted by hand: choose loop shapes, choose smearing levels, let a
+GEVP take one global linear combination. The observation driving the second
+half of this note is that this search is an \emph{optimization problem with a
+differentiable objective}, and the objective is exactly a physics quantity.
+
+\subsection{The Rayleigh-quotient loss}
+\label{sec:rayleigh}
+
+Let $O_\theta(\vec x, t)$ be \emph{any} gauge-invariant scalar field built
+from the spatial links of timeslice $t$ (with parameters $\theta$), and
+$\Obar_\theta(t)$ its zero-momentum projection. Write
+$|\psi\rangle = (\hat{\bar O}_\theta - \langle\Obar_\theta\rangle)\,|0\rangle$
+for the vacuum-subtracted state it creates. Then by construction
+$C(\Delta) = \langle\psi|\That^\Delta|\psi\rangle$ and $\langle\psi|0\rangle=0$,
+so the correlator ratio
+\begin{equation}
+  R(\theta) \;=\; \frac{C(1)}{C(0)}
+  \;=\; \frac{\langle\psi|\That|\psi\rangle}{\langle\psi|\psi\rangle}
+  \label{eq:rayleighquotient}
+\end{equation}
+is a \emph{Rayleigh quotient of the transfer matrix} restricted to the
+orthogonal complement of the vacuum. Since $\That$ is positive and
+self-adjoint (reflection positivity again), the supremum of
+\eqref{eq:rayleighquotient} over all operators is the largest non-vacuum
+eigenvalue,
+\begin{equation}
+  R(\theta) \;\le\; e^{-m_G\,\at},
+\end{equation}
+with equality exactly when $|\psi\rangle$ is the glueball ground state.
+Therefore:
+\begin{quote}
+\textbf{Train a network on the loss $\mathcal{L}(\theta) = -\,C(1)/C(0)$.}
+The loss is a rigorous variational bound; at convergence
+$m_G\,\at = -\log R$; the converged loss value \emph{is} the glueball mass,
+and the trained network \emph{is} the optimal interpolating operator.
+\end{quote}
+No labels, no supervision --- the training signal is the same Monte Carlo
+correlator the classical analysis measures. Two structural gifts: the
+quotient is invariant under $O\to\lambda O$, so the output needs no
+normalization (this gift has a sting; Section~\ref{sec:pitfalls}); and, as in
+Section~\ref{sec:correlators}, the $0^{++}$ channel needs no quantum-number
+projection for the ground state. In practice the loss used below averages two
+ratios, $\mathcal{L} = -\tfrac12\,[\,C(1)/C(0) + C(2)/C(0)\,]$, whose floor at
+the anchor mass is $-\tfrac12(e^{-m\at}+e^{-2m\at}) \approx -0.62$ at
+$m\,\at=0.33$ --- a number to remember.
+
+\subsection{The GELT architecture in brief}
+
+The operator family $O_\theta$ is GELT, a gauge-equivariant lattice
+transformer in the spirit of the L-CNN framework \cite{Favoni2020}. Only its
+contract matters here:
+\begin{itemize}
+  \item \textbf{Input:} untraced plaquettes $W(x)$, which transform
+  \emph{adjointly}, $W(x)\to\Omega(x)W(x)\Omega^\dagger(x)$, plus parallel
+  transporters $T_{\Delta x}(x)$ to every site in an $L^1$-ball of radius $R$,
+  averaged over all shortest lattice paths.
+  \item \textbf{Attention:} scores are gauge \emph{invariant}
+  ($\mathrm{Re}\Tr[Q^\dagger(x)\,\tilde K(x{+}\Delta x)]$, with $K$
+  transported to $x$), so the attention map itself is a gauge-invariant,
+  physically interpretable object.
+  \item \textbf{Values:} the value path is matrix-\emph{bilinear},
+  $\sum \alpha\, Q_v^\dagger \tilde V$ --- each layer multiplies transported
+  loop matrices, so depth composes ever-larger Wilson loops, the same
+  universality mechanism as L-CNN's bilinear layers.
+  \item \textbf{Output:} a trace and per-site MLP produce a gauge-invariant
+  scalar field $O_\theta(x)$ per site --- precisely an operator density.
+\end{itemize}
+Equivariance throughout guarantees the output is exactly gauge invariant, so
+$O_\theta$ is a legitimate physical operator for any $\theta$: the
+variational bound of Section~\ref{sec:rayleigh} holds at every step of
+training, not just at convergence. Conceptually, GELT is a \emph{learned,
+content-dependent smearing}: transport-averaging plus stacked attention is a
+gauge-covariant multi-scale aggregation, and the Rayleigh loss tunes it for
+ground-state overlap directly --- the thing hand-tuned APE schedules
+approximate.
+
+\subsection{The single-timeslice constraint (where the theory bites)}
+\label{sec:constraint}
+
+The derivation of \eqref{eq:rayleighquotient} required $\Obar(t)$ to be a
+functional of the fields on \emph{timeslice $t$ only} --- the same rule that
+forbids temporal smearing (Section~\ref{sec:smearing}), now applied to the
+network itself. A 4D network violates it doubly: temporal plaquettes among
+its input channels, and a receptive field (transport radius $\times$ depth)
+that leaks across timeslices. The failure is not a small correction; it makes
+the loss \emph{gameable}. If $O(t)$ may depend on neighbouring slices, the
+optimizer's cheapest route to $C(1)/C(0)\to1$ is an output that varies slowly
+in $t$ --- in the limit, a per-configuration constant gives
+$C(\Delta)=C(0)$ for all $\Delta$ and a fake mass of zero. The network would
+``beat'' every classical operator for a purely unphysical reason.
+
+The fix defines the setup: \textbf{run GELT as a three-dimensional network on
+the spatial links of one timeslice}, batched over
+(configuration $\times$ timeslice), with per-timeslice outputs reshaped to
+$\Obar(t)$ for the correlator. Within its slice the operator keeps its full
+spatial loop-building power --- exactly the domain the classical operator
+uses. The absence of temporal loop content is not a limitation; it is the
+definition of a valid interpolating operator. (The 3D restriction also
+collapses the transport memory cost by $\sim70\times$, making on-the-fly
+transport per batch cheap --- the constraint that protects the physics also
+pays the compute bill.)
+
+\subsection{Making the loss trainable}
+\label{sec:pitfalls}
+
+Four practical pathologies, each discovered the hard way:
+
+\paragraph{Zero gradient at initialization.} The network's readout was
+zero-initialized (a common stabilization). But $C(0)$ and $C(1)$ are both
+quadratic in the output, so at $O\equiv0$ the gradient of $-C(1)/(C(0)+\epsilon)$
+is \emph{exactly} zero --- training never leaves the saddle. The readout must
+be initialized nonzero.
+
+\paragraph{Denominators.} An early loss chained ratios
+$C(\Delta)/C(\Delta{-}1)$, putting the small, signed, noisy $C(1)$ in a
+denominator; clamping kept the values finite but the \emph{gradients} were
+garbage in direction, and the operator scale was pumped to $C(0)\sim5\times10^8$.
+Every ratio now has the large, positive $C(0)$ as its denominator, and the
+correlator arithmetic runs in float64.
+
+\paragraph{The scale-flat direction.} Scale invariance of the quotient means
+$\theta$-space has an exactly flat direction $O\to\lambda O$. With smooth,
+site-coherent inputs (Section~\ref{sec:run5}) the bilinear value path squares
+its gain per layer, and the optimizer drifted along the flat direction to
+$C(0)\sim10^{73}$ --- float32 overflow, \texttt{NaN} validation loss, and
+(insidiously) no checkpoint ever saved, because \texttt{NaN} never improves
+the best-so-far. The cure is a variationally neutral \emph{scale pin}: adding
+$(\log C(0))^2$ to the loss penalizes only the flat direction (it is minimized
+at $C(0)=1$ and does not touch the ratio), removing the runaway without
+biasing the physics.
+
+\paragraph{Estimator bias and overfitting.} The loss is a ratio of
+\emph{batch-estimated} means (including the vacuum subtraction, itself a
+noisy batch estimate), hence biased on small batches --- so batches are made
+as large as memory allows and the final numbers never come from the training
+estimator. More fundamentally, the variational bound holds in
+\emph{expectation}, not on a finite sample: a network can overfit the noise
+of its training correlator and spuriously ``violate'' the bound there. The
+protocol is therefore a hard split (70\% train / 10\% validation / 20\% test,
+contiguous in Monte Carlo time), checkpoint selection on validation, and every
+reported mass from a blocked jackknife on the untouched test configurations
+only.
+
+% ==============================================================================
+\section{Training runs: from a failed operator to one that wins}
+\label{sec:runs}
+% ==============================================================================
+
+All runs train on the cached Run-3 ensemble ($12^3\times24$, $\beta=2.4$,
+$\xi=3$, $N=2000$; 1400 train / 200 validation / 400 test configurations),
+with a small per-timeslice 3D GELT ($R=2$, 4 layers, 2 heads,
+$d_{\rm qkv}=6$, $d_{\rm model}=16$; $\sim$5k parameters), AdamW with cosine
+schedule, batches of 6 configurations ($=144$ timeslices), and gradient
+checkpointing on a V100. The classical GEVP of Section~\ref{sec:classical},
+re-evaluated on the same test split with the same blocked jackknife, is the
+baseline throughout.
+
+\subsection{Run 4 --- thin input: a genuine operator that loses on overlap}
+\label{sec:run4}
+
+Fed thin spatial plaquettes, GELT trains stably to a best validation loss of
+$-0.433$ --- well short of the $\approx-0.62$ variational floor --- with a
+clear overfitting signature (validation bottoms out near epoch 12 while the
+training loss keeps falling; Figure~\ref{fig:run4}, left). On test:
+
+\begin{table}[htbp]
+  \centering
+  \begin{tabular}{lcccc}
+    \toprule
+    operator & $\meff(1)$ & $\meff(2)$ & $\meff(3)$ & $\meff(4)$ \\
+    \midrule
+    GELT (thin input)   & $0.527\pm0.028$ & $0.441\pm0.042$ & $0.310\pm0.045$ & $\sim0.5$, large bars \\
+    classical GEVP      & $0.398\pm0.016$ & $0.357\pm0.025$ & $0.333\pm0.036$ & $0.284\pm0.050$ \\
+    \bottomrule
+  \end{tabular}
+  \caption{Run 4 (thin-input GELT) vs.\ the classical GEVP, blocked jackknife
+  on the 400 test configurations. Units of $\at$.}
+  \label{tab:run4}
+\end{table}
+
+The learned operator is \emph{genuine} --- its $\meff$ descends
+$0.705\to0.527\to0.441\to0.310$, the $\Delta=3$ point consistent with the
+anchor, and it clearly beats the thin classical operator
+($\approx0.8$ at $\Delta=1$) with no hand-built smearing. But it carries
+excited-state contamination the smeared GEVP basis has projected out, and no
+convincing plateau of its own.
+
+The diagnosis is a \emph{depth budget}. Four bilinear layers compose loops of
+degree $\le16$ in the input plaquettes; six iterated APE steps contain
+branched staple content of degree $\sim3^6$ in the links within the same
+spatial radius. The network cannot re-derive an iterated smearing schedule at
+affordable depth. This diagnosis was made quantitative by an eval-only
+diagnostic (Run 4b): the correlation of the learned $\Obar$ with the APE
+ladder on test fluctuations peaks at APE$\times2$
+($|r| = 0.68,\ \mathbf{0.87},\ 0.71,\ 0.59$ for levels $0,2,4,6$) --- the
+depth-4 network learned about two APE steps' worth of staple content.
+Run 4b also appended the learned operator to the classical basis as a fifth
+GEVP operator: the enlarged basis is \emph{identical} to the classical one
+within small fractions of the error bars (Figure~\ref{fig:run4}, the
+overlapping curves). The $\sim25\%$ of the learned operator's variance that
+is linearly independent of the ladder carries no additional ground-state
+overlap --- the thin-input operator is variationally redundant. This null is
+the clean baseline for what follows: any future separation of the enlarged
+GEVP from the classical curve must come from what the network computes
+\emph{on top of} smearing, not from smearing itself.
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=\textwidth]{glueball_gelt_from_raw_plaquettes.png}
+  \caption{Run 4: GELT trained from thin spatial plaquettes. Left: Rayleigh
+  training curves; validation (orange) bottoms out near epoch 12 and turns up
+  --- overfitting of the empirical correlator --- while the best value
+  $-0.433$ stays far from the $\approx-0.62$ variational floor. Right: test
+  effective masses. The learned operator (green) is genuine (descending
+  toward the anchor, far better than the thin operator) but sits above the
+  classical GEVP (red) at small $\Delta$: an overlap gap.}
+  \label{fig:run4}
+\end{figure}
+
+\subsection{Run 5 --- smeared input channels: the physics fix}
+\label{sec:run5}
+
+If depth cannot rebuild iterated smearing, give the network the smearing:
+feed plaquettes built at the same cumulative APE levels the GEVP uses
+($0,2,4,6$), stacked as input channels ($3$ spatial planes $\times$ 4 levels
+$=12$ channels), with parallel transport still built from thin links.
+Smearing is spatial-only, so the single-timeslice transfer-matrix condition
+is untouched. The comparison also becomes maximally sharp: both methods now
+see \emph{exactly the same} smearing levels --- the GEVP may take one global
+linear combination of them, while GELT may mix them nonlinearly and
+site-by-site. Any gap is attributable to the network.
+
+The first attempt hit the scale-flat runaway of Section~\ref{sec:pitfalls}
+(smooth coherent channels $\to$ constructive attention sums $\to$ squared
+per-layer gain $\to$ $C(0)\sim10^{73}$ by epoch 2); with the
+$(\log C(0))^2$ scale pin the warm-started retrain is stable throughout ---
+$C(0)$ held at $\mathcal{O}(1)$, no overfit turn-up, validation flat on the
+floor --- reaching best validation loss
+\begin{equation}
+  \mathcal{L}_{\rm val} = -0.6185
+  \quad\Longleftrightarrow\quad
+  m\,\at \approx 0.329 ,
+\end{equation}
+i.e.\ the Rayleigh quotient \emph{saturates the transfer-matrix bound at the
+anchor mass}: the converged loss is the glueball mass, realized. On test
+(Figure~\ref{fig:run5}):
+
+\begin{table}[htbp]
+  \centering
+  \begin{tabular}{lcccc}
+    \toprule
+    operator & $\meff(1)$ & $\meff(2)$ & $\meff(3)$ & $\meff(4)$ \\
+    \midrule
+    GELT (smeared input)      & $\mathbf{0.370\pm0.016}$ & $\mathbf{0.333\pm0.020}$ & $0.345\pm0.029$ & --- \\
+    classical GEVP            & $0.398\pm0.016$ & $0.357\pm0.025$ & $0.333\pm0.036$ & $0.284\pm0.050$ \\
+    GEVP $+$ GELT (5 ops)     & $0.366\pm0.017$ & $0.333\pm0.020$ & $0.347\pm0.030$ & $0.319\pm0.048$ \\
+    \bottomrule
+  \end{tabular}
+  \caption{Run 5 final results, blocked jackknife on the 400 test
+  configurations. Units of $\at$. The learned single operator plateaus from
+  $\Delta=1$; the enlarged five-operator GEVP collapses onto it.}
+  \label{tab:run5}
+\end{table}
+
+Since GELT and the GEVP are measured on the same test configurations, their
+error bars are correlated and comparing them independently would be
+dishonest. The significance test is the blocked jackknife of the
+\emph{difference} $\meff^{\rm GELT}-\meff^{\rm GEVP}$, in which the shared
+fluctuations cancel:
+\begin{equation}
+  \Delta{=}1:\ -0.028\pm0.007\ (3.9\sigma), \qquad
+  \Delta{=}2:\ -0.024\pm0.014\ (1.8\sigma), \qquad
+  \Delta{=}3:\ +0.012\pm0.021 .
+\end{equation}
+The learned operator sits \emph{significantly below} the classical GEVP
+exactly where excited-state contamination lives (small $\Delta$) and is
+statistically identical on the plateau: a better operator measuring the same
+physics --- which is precisely what the variational bound demands of a
+legitimate win. Three corroborating observations:
+\begin{itemize}
+  \item \textbf{The win criterion is met.} GELT is flat at $\approx0.33$--$0.37$
+  from $\Delta=1$ (in Figure~\ref{fig:run5} it hugs the anchor line through
+  $\Delta\approx6$) while the GEVP is still descending at $\Delta=1$--$2$.
+  Even GELT's most contaminated point, the $\Delta{=}0{\to}1$ Rayleigh mass
+  $0.392$, sits below the GEVP's $\meff(1)$.
+  \item \textbf{One learned operator subsumes the hand-built basis.} Offered
+  the classical four-level ladder \emph{plus} GELT, the variational solver
+  picks essentially pure GELT --- the enlarged GEVP equals GELT's own
+  $\meff$ to within $\sim0.004$ at $\Delta=1$. Against the Run-4b null, this
+  separation is cleanly attributable to the network's nonlinear, spatially
+  resolved mixing of the same smearing levels.
+  \item \textbf{The network adds content, not just smearing.} The ladder
+  correlations of the trained operator are
+  $|r| = 0.45, 0.76, 0.87, 0.91$ for levels $0,2,4,6$ --- it lives at the
+  deep end of the ladder --- and training grew the ladder-\emph{independent}
+  variance from $\sim8\%$ to $\sim18\%$ \emph{while the loss improved}: the
+  network's own content, not residual noise, drives the win.
+\end{itemize}
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=\textwidth]{glueball_gelt_GELT_beats_GEVP.png}
+  \caption{Run 5 (final): GELT with multi-level smeared input channels
+  ($[0,2,4,6]$). Left: with the scale pin the training is stable and the
+  validation Rayleigh loss sits on the variational floor,
+  $-0.6185 \leftrightarrow m\,\at\approx0.329$ (validation below training is
+  an estimator artifact: the 6-configuration batch estimator is noise-biased
+  toward zero, the 200-configuration validation estimate is cleaner). Right:
+  test effective masses. The learned operator (green) is flat on the anchor
+  (dashed) from $\Delta=1$, below the still-descending classical GEVP (red)
+  at small $\Delta$; the enlarged GEVP $+$ GELT basis (purple) collapses onto
+  pure GELT.}
+  \label{fig:run5}
+\end{figure}
+
+\subsection{Quoting the result like a lattice paper: cosh fits and the
+ground-state overlap $A_0$}
+\label{sec:overlap}
+
+Table~\ref{tab:run5} compares effective masses point by point. That is how
+lattice results are \emph{plotted}, but not how they are \emph{quoted}: the
+convention of the field is to quote the mass from a fit of $C(\Delta)$ to the
+single-state form over a plateau window, drawn as a horizontal band through
+the $\meff$ points, and to quote \emph{operator quality} --- which is what
+the GELT-vs-GEVP comparison is actually about --- as the \emph{ground-state
+overlap}, the number Morningstar and Peardon use to rank their smeared and
+fuzzed operators \cite{MorningstarPeardon1999}. This subsection re-expresses
+the Run-5 result in that standard form (Figure~\ref{fig:overlap}).
+
+Each operator's connected correlator is fitted to the periodic
+(finite-$N_t$) single-state form of Section~\ref{sec:correlators},
+\begin{equation}
+  C(\Delta) \;\approx\;
+  A\,\big[\, e^{-m\,\at\,\Delta} + e^{-m\,\at\,(N_t-\Delta)} \,\big],
+  \label{eq:coshfit}
+\end{equation}
+over one \emph{shared} window $\Delta\in[2,7]$ --- comparability beats
+per-operator optimality, and starting at $\Delta=2$ keeps the GEVP's residual
+$\Delta=1$ contamination out of \emph{its} mass fit: the contamination is
+what the overlap should report, not what the fit should absorb. Extrapolating
+the fitted ground-state piece back to $\Delta=0$ and comparing with the
+measured $C(0)=\sum_{n>0}|\langle0|\hat{\bar O}|n\rangle|^2$ gives the
+\textbf{ground-state overlap fraction}
+\begin{equation}
+  A_0 \;=\; \frac{A\,\big(1+e^{-m\,\at\,N_t}\big)}{C(0)} \;\in\; (0,1] ,
+  \label{eq:overlap}
+\end{equation}
+the fraction of the operator's spectral weight carried by the glueball;
+$A_0=1$ is a pure ground-state interpolator. This closes a conceptual loop:
+the Rayleigh quotient \eqref{eq:rayleighquotient} is (up to the wrap term) a
+weighted average $\sum_n w_n\,e^{-m_n\at}$ with weights summing to one and
+$w_{\rm ground}=A_0$, so saturating the variational bound \emph{is} the
+statement $A_0\to1$ --- the quantity quoted here is the quantity the
+training maximizes. Objective and metric coincide.
+
+The comparison also needs the right comparator. A single learned operator
+should not be measured against a whole basis but against the best
+\emph{single} operator the basis contains; the GEVP supplies exactly that
+(Section~\ref{sec:gevp}): the ground-state eigenvector $v_0$ of
+\eqref{eq:gevp}, solved once at reference times $(t_0,t_d)=(1,2)$, defines
+the fixed-vector \emph{projected operator}
+$\Obar_{\rm proj}(t)=\sum_i (v_0)_i\,\Obar_i(t)$ --- the variational optimum
+in the span of the four smearing levels \cite{Blossier2009} --- whose scalar
+correlator is fitted like any other. Errors follow the same discipline as
+before: the $\sigma_\Delta$ entering the (diagonal) $\chi^2$ are fixed from
+the full-sample blocked jackknife, the \emph{entire} fit --- including
+$v_0$ --- is redone inside each of the 40 delete-block samples, and the
+GELT$-$GEVP differences are jackknifed directly so the shared-ensemble
+fluctuations cancel. On the 400 test configurations:
+
+\begin{table}[htbp]
+  \centering
+  \begin{tabular}{lccc}
+    \toprule
+    operator & $m\,\at$ (fit) & $A_0$ & $\chi^2/\mathrm{dof}$ \\
+    \midrule
+    GELT (learned)    & $0.332\pm0.027$ & $\mathbf{0.903\pm0.047}$ & $0.05$ \\
+    GEVP-projected    & $0.340\pm0.030$ & $0.837\pm0.056$          & $0.04$ \\
+    APE$\times6$      & $0.340\pm0.032$ & $0.805\pm0.052$          & $0.11$ \\
+    \bottomrule
+  \end{tabular}
+  \caption{Cosh fits \eqref{eq:coshfit} on the shared window
+  $\Delta\in[2,7]$, blocked jackknife on the 400 test configurations
+  ($\mathrm{dof}=4$). The $\chi^2/\mathrm{dof}$ values are artificially low
+  because neighbouring $C(\Delta)$ points are strongly correlated while the
+  $\chi^2$ is diagonal --- a fit-quality heuristic, not a goodness-of-fit
+  test; the quoted errors come from the jackknife, which propagates the
+  correlations correctly.}
+  \label{tab:overlap}
+\end{table}
+
+\noindent with correlated differences
+\begin{equation}
+  \Delta(m\,\at) \;=\; -0.008\pm0.014\ \ (0.6\sigma), \qquad
+  \Delta A_0 \;=\; +0.066\pm0.031\ \ (2.1\sigma).
+  \label{eq:overlapdiff}
+\end{equation}
+The headline, in the field's own language: \emph{both operators measure the
+same mass, but the learned operator carries $90\%$ of its spectral weight on
+the ground state against $84\%$ for the optimal combination of the entire
+classical basis.} Two readings of Table~\ref{tab:overlap} sharpen it:
+\begin{itemize}
+  \item \textbf{The GEVP barely improves on its best member; GELT does.} The
+  optimal classical combination gains only $\sim0.03$ of overlap over
+  APE$\times$6 alone ($0.837$ vs $0.805$), while GELT gains $\sim0.10$ over
+  the full basis: one learned operator adds more ground-state overlap than
+  the whole Morningstar--Peardon construction adds over its best single
+  level --- the fit-language restatement of the enlarged-GEVP collapse of
+  Section~\ref{sec:run5}.
+  \item \textbf{$2.1\sigma$ and $3.9\sigma$ are complementary, not in
+  tension.} The $3.9\sigma$ of Section~\ref{sec:run5} lives
+  entirely at $\Delta=1$, where the contamination is largest; the shared fit
+  window starts at $\Delta=2$, so $\Delta A_0$ never sees GELT's cleanest
+  advantage and reconstructs it only by extrapolation. $A_0$ is the
+  \emph{physical} operator-quality statement; the correlated $\meff$
+  difference at $\Delta=1$ remains the sharpest single-point evidence of the
+  same fact.
+\end{itemize}
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=\textwidth]{glueball_overlap_run5.png}
+  \caption{The Run-5 result in standard spectroscopic form. Left: test
+  $\meff(\Delta)$ for GELT (green) and the projected GEVP operator (red)
+  with their fitted-mass bands over the shared window $\Delta\in[2,7]$ ---
+  the quoted mass is the band, not any single point; both bands sit on the
+  classical anchor (dashed). Right: the ground-state fraction
+  $\rho(\Delta)=[C(\Delta)/C(0)]\,/\,\cosh_{\mathrm{ref}}(\Delta)$, with
+  $\cosh_{\mathrm{ref}}$ the fitted GELT ground state normalised to
+  $\rho(0)=1$. A pure ground-state interpolator is flat at its $A_0$
+  (dashed lines); excited-state contamination is the excess at small
+  $\Delta$. Thin links collapse to $\rho\approx0.25$ immediately; APE$\times$6
+  and the projected GEVP descend through $\Delta\approx3$ toward
+  $A_0\approx0.80$--$0.84$; GELT is flat at $A_0\approx0.90$ from
+  $\Delta=1$. (The classical curves' dip slightly below their $A_0$ lines
+  near $\Delta\approx4$--$5$ is noise plus the cosh wrap, well within the
+  error bars --- an exact spectral sum would approach $A_0$ from above.)}
+  \label{fig:overlap}
+\end{figure}
+
+\subsection{Replication on an independent ensemble}
+\label{sec:replication}
+
+Everything so far is one ensemble. To close that caveat, the entire chain
+--- heat-bath/overrelaxation sampling, from-scratch training, checkpoint
+selection, test-split analysis --- was repeated with a different sampler
+seed: a second, fully independent $12^3\times24$, $\beta=2.4$, $\xi=3$,
+$N=2000$ ensemble, the same network and hyperparameters, no reuse of the
+Run-5 weights. Nothing about the procedure was tuned on the new data.
+
+The replication reproduces the operator-quality result --- and sharpens a
+point about what does \emph{not} replicate. On the new ensemble every
+operator, classical and learned alike, reads $\sim1\sigma$ heavier: the
+classical GEVP sits flat at $\meff\approx0.38$--$0.40$ rather than
+descending through $0.36$ toward $0.33$, and the fitted masses come out
+$0.37$--$0.40$. Correspondingly, training converged to a best validation
+Rayleigh loss of $-0.564$ rather than $-0.619$ --- which decodes to
+$m\approx0.395$, i.e.\ the variational floor \emph{of this ensemble's own
+correlator}, saturated to $\sim0.004$ exactly as before. The Rayleigh floor
+is an empirical property of the ensemble, not a universal target: what the
+loss saturates is the transfer-matrix bound as realized on the sampled
+data, so the mass fluctuates between independent ensembles (here by
+$0.04\pm0.04$, an ordinary $\sim1\sigma$ statistical difference on 2000
+configurations --- the ``anchor'' carries its own ensemble error), while
+the operator-quality statements are what should --- and do --- replicate.
+On the new test split ($400$ configurations, same shared window
+$\Delta\in[2,7]$):
+
+\begin{table}[htbp]
+  \centering
+  \begin{tabular}{lccc}
+    \toprule
+    operator & $m\,\at$ (fit) & $A_0$ & $\chi^2/\mathrm{dof}$ \\
+    \midrule
+    GELT (learned)    & $0.374\pm0.031$ & $\mathbf{1.013\pm0.062}$ & $0.01$ \\
+    GEVP-projected    & $0.400\pm0.038$ & $0.925\pm0.071$          & $0.08$ \\
+    APE$\times6$      & $0.390\pm0.037$ & $0.901\pm0.068$          & $0.05$ \\
+    \bottomrule
+  \end{tabular}
+  \caption{The replication ensemble's analogue of Table~\ref{tab:overlap}:
+  cosh fits on the shared window $\Delta\in[2,7]$, blocked jackknife on the
+  400 test configurations. $A_0$ exceeds $1$ only within its error ---
+  consistent with a pure ground-state interpolator.}
+  \label{tab:replication}
+\end{table}
+
+\noindent with correlated differences
+\begin{equation}
+  \Delta(m\,\at) \;=\; -0.025\pm0.013\ \ (1.9\sigma), \qquad
+  \Delta A_0 \;=\; +0.089\pm0.030\ \ (2.9\sigma),
+  \label{eq:replicationdiff}
+\end{equation}
+and a correlated $\meff$ difference of $-0.038\pm0.008$ ($4.5\sigma$) at
+$\Delta=1$ and $-0.036\pm0.012$ ($2.9\sigma$) at $\Delta=2$ --- the Run-5
+pattern, if anything stronger. The enlarged GEVP again collapses onto the
+learned operator (the classical ladder adds $\sim0.005$ at $\Delta=1$,
+within noise), and the smearing-ladder correlations are nearly identical
+($r=0.36/0.75/0.89/0.93$ against APE$\times0/2/4/6$).
+
+Since the two ensembles are statistically independent, the two overlap
+differences combine: inverse-variance weighting of $+0.066\pm0.031$ (Run 5)
+and $+0.089\pm0.030$ (replication) gives
+\begin{equation}
+  \Delta A_0^{\rm combined} \;=\; +0.078\pm0.022 \qquad (3.6\sigma).
+  \label{eq:combined}
+\end{equation}
+The learned operator's excess ground-state overlap over the optimal
+classical combination is not a feature of one ensemble.
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=\textwidth]{glueball_overlap_ens1.png}
+  \caption{Figure~\ref{fig:overlap} repeated on the independent replication
+  ensemble: $\meff(\Delta)$ with fitted-mass bands (left) and the
+  ground-state fraction $\rho(\Delta)$ (right). The overall mass scale sits
+  $\sim1\sigma$ higher than on the original ensemble --- both operators
+  agree on that shift, as they must --- while the operator-quality ordering
+  (GELT flat at its $A_0$ from small $\Delta$, the classical operators
+  descending into it) is unchanged.}
+  \label{fig:replication}
+\end{figure}
+
+% ==============================================================================
+\section{Conclusions, caveats, outlook}
+% ==============================================================================
+
+The classical chain --- Wilson action, heat-bath/overrelaxation ensemble,
+smeared operators, multi-level GEVP, anisotropic lattice, jackknife ---
+resolves the $SU(2)$ $0^{++}$ ground state at $m\,\at\approx0.33$ on a
+$12^3\times24$, $\beta=2.4$, $\xi=3$ ensemble, after the isotropic lattice
+demonstrably could not. On top of it, a gauge-equivariant network trained on
+the Rayleigh-quotient loss, constrained to a single timeslice so the
+transfer-matrix bound applies, and fed the same smearing levels as the
+classical basis, saturates the variational bound at the anchor mass and beats
+the classical GEVP where it can legitimately be beaten: $3.9\sigma$ less
+excited-state contamination at $\Delta=1$, identical mass on the plateau, and
+a single learned operator that variationally subsumes the four-operator
+hand-built basis. In the field's standard quoting (Section~\ref{sec:overlap}):
+fitted masses $0.332(27)$ vs $0.340(30)$ --- the same physics --- with
+ground-state overlap $A_0=0.90(5)$ against $0.84(6)$ for the optimal
+classical combination, a correlated difference of $+0.066\pm0.031$; the
+projected GEVP gains only $\sim0.03$ of overlap over its best single smearing
+level, the learned operator $\sim0.10$ over the whole basis. A from-scratch
+replication on an independently sampled ensemble
+(Section~\ref{sec:replication}) reproduces all of the operator-quality
+statements --- $\Delta A_0=+0.089\pm0.030$, a $4.5\sigma$ correlated $\meff$
+difference at $\Delta=1$ --- and the two ensembles combine to
+$\Delta A_0=+0.078\pm0.022$ ($3.6\sigma$).
+
+Honest boundaries of the claim. (i) Two independent ensembles now, but still
+one $(\beta,\xi)$ and coarse $\as$ --- no continuum statement is made, for
+the learned operator exactly as for the classical one
+(Section~\ref{sec:caveat}); and the replication shows the mass itself
+fluctuates by $\sim1\sigma$ between ensembles, so the ``anchor'' carries its
+own ensemble error. (ii) The $3.9\sigma$ and the overlap
+differences are statements about \emph{operator quality}, not about the mass
+value, on which the two methods agree --- as the variational principle says
+they must.
+(iii) Still open: a matched-parameter L-CNN baseline on the identical
+per-timeslice task.
+
+Beyond validation, the trained operator opens a door the classical one
+cannot: its gauge-invariant attention maps are a direct image of the spatial
+loop structure the \emph{optimal} glueball operator attends to --- what the
+learned $18\%$ beyond the smearing ladder actually computes is now an
+interpretability question with a physical answer.
+
+% ==============================================================================
+\begin{thebibliography}{99}
+
+\bibitem{Wilson1974}
+K.~G. Wilson,
+\emph{Confinement of quarks},
+Phys.\ Rev.\ D \textbf{10} (1974) 2445.
+
+\bibitem{Berg1980}
+B.~Berg,
+\emph{Plaquette-plaquette correlations in the SU(2) lattice gauge theory},
+Phys.\ Lett.\ B \textbf{97} (1980) 401.
+
+\bibitem{OsterwalderSeiler1978}
+K.~Osterwalder and E.~Seiler,
+\emph{Gauge field theories on a lattice},
+Ann.\ Phys.\ \textbf{110} (1978) 440.
+
+\bibitem{Creutz1980}
+M.~Creutz,
+\emph{Monte Carlo study of quantized SU(2) gauge theory},
+Phys.\ Rev.\ D \textbf{21} (1980) 2308.
+
+\bibitem{KennedyPendleton1985}
+A.~D. Kennedy and B.~J. Pendleton,
+\emph{Improved heatbath method for Monte Carlo calculations in lattice gauge
+theories},
+Phys.\ Lett.\ B \textbf{156} (1985) 393.
+
+\bibitem{Creutz1987}
+M.~Creutz,
+\emph{Overrelaxation and Monte Carlo simulation},
+Phys.\ Rev.\ D \textbf{36} (1987) 515.
+
+\bibitem{APE1987}
+M.~Albanese et al.\ [APE Collaboration],
+\emph{Glueball masses and string tension in lattice QCD},
+Phys.\ Lett.\ B \textbf{192} (1987) 163.
+
+\bibitem{Lepage1989}
+G.~P. Lepage,
+\emph{The analysis of algorithms for lattice field theory},
+in \emph{From Actions to Answers} (TASI 1989), World Scientific (1990).
+
+\bibitem{MichaelTeasdale1983}
+C.~Michael and I.~Teasdale,
+\emph{Extracting glueball masses from lattice QCD},
+Nucl.\ Phys.\ B \textbf{215} (1983) 433.
+
+\bibitem{LuscherWolff1990}
+M.~L\"uscher and U.~Wolff,
+\emph{How to calculate the elastic scattering matrix in two-dimensional
+quantum field theories by numerical simulation},
+Nucl.\ Phys.\ B \textbf{339} (1990) 222.
+
+\bibitem{Blossier2009}
+B.~Blossier, M.~Della Morte, G.~von Hippel, T.~Mendes and R.~Sommer,
+\emph{On the generalized eigenvalue method for energies and matrix elements
+in lattice field theory},
+JHEP \textbf{04} (2009) 094, arXiv:0902.1265.
+
+\bibitem{MorningstarPeardon1999}
+C.~J. Morningstar and M.~Peardon,
+\emph{The glueball spectrum from an anisotropic lattice study},
+Phys.\ Rev.\ D \textbf{60} (1999) 034509, arXiv:hep-lat/9901004.
+
+\bibitem{MadrasSokal1988}
+N.~Madras and A.~D. Sokal,
+\emph{The pivot algorithm: A highly efficient Monte Carlo method for the
+self-avoiding walk},
+J.\ Stat.\ Phys.\ \textbf{50} (1988) 109.
+
+\bibitem{Favoni2020}
+M.~Favoni, A.~Ipp, D.~I. M\"uller and D.~Schuh,
+\emph{Lattice gauge equivariant convolutional neural networks},
+Phys.\ Rev.\ Lett.\ \textbf{128} (2022) 032003, arXiv:2012.12901.
+
+\end{thebibliography}
+
+\end{document}

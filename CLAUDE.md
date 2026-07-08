@@ -147,7 +147,7 @@ pathologies were fixed en route: chained-ratio denominators → `C(0)`, and a
 `(log C(0))²` scale pin (`SCALE_REG`) for the Ō → λŌ flat direction, which the
 site-coherent smeared inputs otherwise pump to float32 overflow. Still open
 from the §6.2 list: the matched-parameter L-CNN baseline on the same
-per-timeslice task, and a replication on a fresh ensemble.
+per-timeslice task (the fresh-ensemble replication is done — see below).
 
 **Presentation layer (2026-07-04):** how the Run-5 result is *reported* in
 LGT-standard form — masses quoted from a cosh fit (not single m_eff points)
@@ -163,10 +163,25 @@ m·a_t = 0.332 ± 0.027 with **A₀ = 0.903 ± 0.047**, GEVP-projected
 0.340 ± 0.030 with A₀ = 0.837 ± 0.056; correlated ΔA₀ = +0.066 ± 0.031
 (2.1σ), Δm consistent with 0 — same mass, more ground-state weight. Written
 up in `glueball_report/glueball_spectroscopy.tex` § "Quoting the result".
-Robustness (fresh-ensemble replication + init seeds) runs via
-`scripts/overnight_replication.sh` (see
-`notes/glueball_spectroscopy.md` § "Presentation layer" / "Replication
-batch").
+
+**Replication (2026-07-05):** the seed-1 phase of
+`scripts/overnight_replication.sh` (fresh ensemble sampled from scratch +
+from-scratch training) **reproduces the result**: GELT A₀ = 1.013 ± 0.062 vs
+GEVP-projected 0.925 ± 0.071, correlated **ΔA₀ = +0.089 ± 0.030 (2.9σ)**,
+m_eff difference at Δ=1 −0.038 ± 0.008 (4.5σ); combined with Run 5 the
+overlap headline is **ΔA₀ = +0.078 ± 0.022 (3.6σ)**. Key lesson: the
+Rayleigh floor is *ensemble-specific* — the seed-1 ensemble reads ~1σ
+heavier (GEVP flat at ≈ 0.39; best val −0.5638 ↔ m ≈ 0.395, the floor of
+*that* ensemble, saturated to ~0.004 like Run 5's −0.6185 ↔ 0.33), so
+loss values don't replicate but operator quality does. The seed-2 phase
+died 42% into sampling on `_sample_su2_w0`'s 100-iteration rejection cap —
+a statistical inevitability, not a fluke (Creutz acceptance ~ √(π/2a);
+anisotropic temporal staples reach a ≈ 43 → ~O(1) expected cap hits per
+ensemble's ~3.4e9 draws). Fixed: `max_iter` 100 → 1000 (free on the common
+path); rerun ens2 standalone if a third measurement is wanted — with two
+independent ensembles agreeing it's a bonus, not a blocker. Written up in
+the report § "Replication on an independent ensemble" and
+`notes/glueball_spectroscopy.md` § "Replication results".
 
 Known caveats (see `notes/fable_audit.md` for the full list and the
 prioritized fixes):

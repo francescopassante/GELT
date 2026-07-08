@@ -1,0 +1,57 @@
+% ==============================================================================
+%  Chapter 4 -- Geometric deep learning and gauge-equivariant networks
+%  Purpose: the ML half of the background, ~12-18 pages. Takes a reader from
+%  "what is a neural network" to "what L-CNN does and what it cannot do",
+%  ending exactly where Ch. 5 (GELT) picks up.
+%  Sources: notes/papers_review.md (L-CNN sec. 1, Nagai-Tomiya, CASK).
+% ==============================================================================
+
+\section{Symmetry as an inductive bias}
+\label{sec:gdl-blueprint}
+
+\TODO{The geometric deep learning blueprint \cite{bronstein2021gdl}:
+symmetry group $\to$ equivariant layers $\to$ invariant readout.
+Definitions of invariance and equivariance
+($f(g \cdot x) = g \cdot f(x)$); CNNs as the translation-equivariance
+special case; why building the symmetry in beats data augmentation for
+EXACT local symmetries (the gauge group volume grows with the lattice
+volume -- augmentation cannot cover it).}
+
+\section{Attention and transformers}
+\label{sec:gdl-attention}
+
+\TODO{Scaled dot-product attention and multi-head self-attention
+\cite{vaswani2017attention}, kept minimal: queries/keys/values, softmax
+scores, permutation equivariance, positional encodings (absolute bias
+vs.\ rotary/RoPE \cite{su2021rope} -- both reappear as GELT variants).
+The property the thesis exploits: attention weights are
+CONFIGURATION-DEPENDENT, unlike convolution kernels, and they are readable
+after the fact -- the hook for \cref{ch:interpretability}.}
+
+\section{Gauge-equivariant architectures for the lattice}
+\label{sec:gdl-lcnn}
+
+\subsection{L-CNN}
+\TODO{Favoni et al.\ \cite{favoni2022lcnn} in detail (this is GELT's
+scaffold AND its matched-parameter baseline): parallel-transported
+convolutions (L-Conv), bilinear layers (L-Bilin), trace-gated activations,
+the loop-doubling universality argument (stacked L-Conv+L-Bilin generates
+arbitrarily large Wilson loops). The repo implements it faithfully in
+\texttt{gelt/lcnn.py} with axis-aligned transports.}
+
+\subsection{Gauge-covariant ResNets and CASK}
+\TODO{Nagai--Tomiya \cite{nagai2021covariant} (covariant smearing-like
+layers, 4D non-abelian) and CASK \cite{cask2025} (gauge-covariant
+transformer) -- one paragraph each; how GELT differs (invariant SCORES +
+matrix-bilinear VALUES; all-shortest-path $L^1$-ball transport rather than
+axis-aligned or staple-based).}
+
+\section{What convolution cannot give you}
+\label{sec:gdl-gap}
+
+\TODO{The chapter's closing argument, setting up Ch.~5: static kernels
+cannot adapt the receptive field to the configuration; physically
+interesting structure (topological lumps, critical correlations) is
+inhomogeneous and $\beta$-dependent. Attention is the minimal mechanism
+that fixes this while keeping exact equivariance -- IF scores are gauge
+invariant and values transform covariantly. That "if" is Ch.~5.}
