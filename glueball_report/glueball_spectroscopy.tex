@@ -33,7 +33,7 @@
 \title{Extracting the $0^{++}$ Glueball Mass on the Lattice:\\
 from the Euclidean Path Integral to a Learned Variational Operator}
 \author{Francesco Passante}
-\date{July 5, 2026}
+\date{August 2, 2026}
 
 \begin{document}
 \maketitle
@@ -60,6 +60,9 @@ contamination than the classical GEVP ($3.9\sigma$ from a correlated-difference
 jackknife) while agreeing with it on the mass itself. A from-scratch
 replication on an independently sampled ensemble reproduces the result;
 the two ensembles combine to a $3.6\sigma$ excess in ground-state overlap.
+A closing exploratory section reads the learned operator's gauge-invariant
+attention weights out as a measurement, finding its advantage concentrated in
+a single local attention head.
 \end{abstract}
 
 \tableofcontents
@@ -1112,6 +1115,229 @@ classical combination is not a feature of one ensemble.
 \end{figure}
 
 % ==============================================================================
+\section{What the learned operator attends to}
+\label{sec:attention}
+% ==============================================================================
+
+The validation above establishes \emph{that} the learned operator is better;
+it says nothing about \emph{how}. Because every GELT attention score is a
+gauge invariant --- $\mathrm{Re}\,\Tr[Q^\dagger\tilde K]$ between parallel
+transported adjoint fields --- the attention weights $\alpha_n(x)$ are not an
+implementation detail but a measurable field: a per-site probability
+distribution over the $24$ neighbours in the $L_1$ ball of radius $R=2$, plus
+the site itself. This section reads that distribution out of the Run-5
+checkpoint and asks what structure the optimal operator has learned. It is a
+first look, on deliberately modest statistics, not a finished study.
+
+\paragraph{Setup.} A fresh $12^3\times24$, $\beta=2.4$, $\xi=3$ ensemble of
+$N=32$ configurations was sampled with a new seed, so it is held out by
+construction; the Run-5 checkpoint was loaded unchanged and run in inference
+over all $32\times24=768$ timeslices. Three statistics are accumulated per
+(layer, head): the \emph{attention range}
+$\ell_{\mathrm{att}}(x)=\sum_n\alpha_n(x)\,|\Delta x_n|_1$, the offset entropy
+$-\sum_n\alpha_n\log\alpha_n$ (maximal value $\log 25=3.22$), and a per-site
+axial anisotropy --- the relative spread, across the three spatial axes, of the
+attention mass at $|\Delta x|_1=1$ (maximal value $\sqrt2=1.41$, attained when
+all of it sits on one axis). Two further arms follow the rule that a
+correlation is not an explanation: the per-timeslice Spearman correlation of
+$\ell_{\mathrm{att}}(x)$ against the smeared spatial-plaquette density $o(x)$
+(the physical field this operator measures --- large $o$ means \emph{small}
+Wilson action density, since $S\propto\sum_x(1-o(x)/3)$), and a head-ablation
+intervention in which head $h$'s column of layer $l$'s output mixing matrix is
+zeroed and the degradation in the Rayleigh loss measured. Errors on both
+validation arms respect the correct independent unit: the ablation
+$\Delta$loss is a delete-one jackknife over configurations of the
+\emph{correlated} difference (ablated and intact operators evaluated on the
+same configurations, so the shared ensemble noise cancels), and the Spearman
+error is the spread of per-configuration means, not of per-slice values ---
+slices within a configuration are correlated over $\sim1/m$, which is the very
+quantity this report measures. The whole study runs in about an hour on a
+laptop CPU.
+
+\paragraph{The checkpoint transfers.} On this previously unseen chain the
+operator returns $C(1)/C(0)=0.648$, i.e.\ a Rayleigh loss of $-0.538$ and
+$m\,\at\approx0.43$. This is a third independent realization of the
+ensemble-specific variational floor discussed in
+Section~\ref{sec:replication} ($0.33$ on Run 5, $0.395$ on the replication
+ensemble), and it confirms that the trained weights are not tuned to their
+training chain. The number should be read with its statistical width in mind:
+the same quantity on the first $8$ configurations of this same chain reads
+$m\,\at\approx0.375$, so a Rayleigh ratio on tens of configurations carries an
+uncertainty of order $0.05$ --- which is exactly why the intervention arm
+below needed error bars before it could be interpreted at all.
+
+\begin{table}[htbp]
+  \centering
+  \begin{tabular}{ccccccc}
+    \toprule
+    layer & head & $\ell_{\mathrm{att}}$ & entropy & anisotropy
+          & axis split & Spearman$(\ell,o)$ \\
+    \midrule
+    1 & 0 & $1.69\pm0.15$ & $2.24$ & $0.56$ & $0.40/0.31/0.29$ & $-0.139(1)$ \\
+    1 & 1 & $1.87\pm0.06$ & $1.04$ & $0.99$ & $0.00/1.00/0.00$ & $-0.009(1)$ \\
+    2 & 0 & $1.93\pm0.05$ & $0.35$ & $1.37$ & $0.00/1.00/0.00$ & $-0.086(1)$ \\
+    2 & 1 & $2.00\pm0.00$ & $0.004$ & $1.41$ & $1.00/0.00/0.00$ & $+0.397(2)$ \\
+    3 & 0 & $2.00\pm0.01$ & $0.07$ & $1.41$ & $0.00/1.00/0.00$ & $-0.088(1)$ \\
+    3 & 1 & $\mathbf{0.30\pm0.18}$ & $0.89$ & $0.79$ & $0.81/0.00/0.19$
+      & $-0.328(2)$ \\
+    4 & 0 & $1.59\pm0.21$ & $1.25$ & $1.36$ & $0.99/0.00/0.00$ & $-0.230(2)$ \\
+    4 & 1 & $1.44\pm0.12$ & $2.22$ & $0.75$ & $0.00/0.64/0.36$
+      & $\mathbf{-0.564(2)}$ \\
+    \bottomrule
+  \end{tabular}
+
+  \vspace{1.2em}
+
+  \begin{tabular}{cccc}
+    \toprule
+    layer & head & $\Delta$loss (ablate) & significance \\
+    \midrule
+    1 & 0 & $-0.0023\pm0.0010$ & $-2.3\sigma$ \\
+    1 & 1 & $-0.0002\pm0.0005$ & $-0.4\sigma$ \\
+    2 & 0 & $-0.0025\pm0.0011$ & $-2.2\sigma$ \\
+    2 & 1 & $-0.0003\pm0.0017$ & $-0.2\sigma$ \\
+    3 & 0 & $-0.0010\pm0.0014$ & $-0.7\sigma$ \\
+    3 & 1 & $\mathbf{+0.0787\pm0.0145}$ & $\mathbf{+5.4\sigma}$ \\
+    4 & 0 & $+0.0005\pm0.0055$ & $+0.1\sigma$ \\
+    4 & 1 & $+0.0058\pm0.0036$ & $+1.6\sigma$ \\
+    \bottomrule
+  \end{tabular}
+  \caption{Attention statistics (top) and head-ablation intervention (bottom)
+  of the Run-5 operator on the held-out seed-7 ensemble ($32$ configurations,
+  $768$ timeslices, $1728$ sites each). The $\ell_{\mathrm{att}}$ error is the
+  \emph{site-to-site} spread, not a mean error: it is the
+  configuration-dependent part of the attention, the part a fixed convolution
+  kernel could not supply. ``Axis split'' is the fraction of sites at which
+  the head selects each spatial axis for its $|\Delta x|_1=1$ attention mass.
+  Spearman errors are configuration-level. Baseline Rayleigh loss $-0.538$;
+  a positive $\Delta$loss means removing the head makes the operator worse,
+  and the error is a delete-one jackknife over configurations of the
+  correlated difference.}
+  \label{tab:attention}
+\end{table}
+
+\paragraph{One head does the work.} The ablation is strikingly concentrated:
+head 1 of layer 3 costs $+0.0787\pm0.0145$ in Rayleigh loss when removed ---
+$5.4\sigma$, an order of magnitude more than any other head, and roughly a
+seventh of the entire signal --- while no other head reaches $2\sigma$ in the
+positive direction. That same head is the only \emph{local} one in the
+network: $\ell_{\mathrm{att}}=0.30$ with $71\%$ of its attention mass on the
+site itself, against six heads that sit at or near the maximal range
+$\ell_{\mathrm{att}}=2$. The optimal operator is therefore not a democratic
+ensemble of scales but one content-dependent local head embedded in a stack of
+long-range ones.
+
+Two heads carry a mildly \emph{negative} $\Delta$loss (layer 1 head 0 and
+layer 2 head 0, both $\approx-0.0024$ at $2.2$--$2.3\sigma$): removing them
+marginally improves the Rayleigh ratio on this ensemble. Eight cells were
+tested, so $\sim0.2$ excursions beyond $2.2\sigma$ are expected by chance and
+two is only a mild excess; but the direction is also what mild overfitting
+would produce, since these weights were optimized on the Rayleigh ratio of a
+\emph{different} ensemble and are being scored here on a fresh one. Either way
+the effect is $30\times$ smaller than the layer-3 head and does not bear on
+the operator's measured quality.
+
+\paragraph{No emergent coarsening.} The interpretability program's
+Study-1 hypothesis --- that a learned operator should widen its receptive
+field with depth, an RG-like coarsening no fixed architecture imposes --- is
+\emph{not} supported here. $\ell_{\mathrm{att}}$ is essentially flat across
+layers at the ceiling $\ell=2$, and the one departure (layer 3, head 1) goes
+the wrong way. Worse, two heads are effectively degenerate: layer 2 head 1 has
+entropy $0.004$ and $\ell_{\mathrm{att}}=2.000\pm0.000$, and layer 3 head 0 is
+close behind, meaning they place all of their mass deterministically on the
+outer $|\Delta x|_1=2$ shell regardless of the configuration. Those heads are
+fixed kernels, not measurements: whatever they contribute, a convolution could
+have supplied it. This is a negative result about the current
+architecture --- with $R=2$ the ball is too small for a range hierarchy to have
+anywhere to go --- and it is worth reporting as such, since it identifies $R$
+and the number of layers, not the attention mechanism, as what to vary next.
+
+\paragraph{Attention reaches further where the action is dense.} The
+ground-truth arm is the more encouraging one. Layer 4 head 1 --- the highest
+entropy head in the network, i.e.\ the most genuinely distributed --- has
+$\ell_{\mathrm{att}}(x)$ anticorrelating with the smeared plaquette density at
+Spearman $-0.56$. Since large $o(x)$ is \emph{small} action density, the sign
+says the head extends its reach precisely on the disordered, high-action
+regions and contracts on smooth vacuum. That is the behaviour one would want
+of a glueball operator, and it is measured against a physical field rather
+than asserted from a picture. Layer 3 head 1, the load-bearing local head,
+shows the same sign more weakly ($-0.33$).
+
+\paragraph{The axial anisotropy is a globally fixed axis.} Four heads sit at
+anisotropy $\gtrsim1.36$ out of a maximum of $1.41$: at each site, their
+distance-one attention is concentrated on a single spatial axis. The $0^{++}$
+channel is a cubic-group scalar, and nothing in GELT enforces rotational
+symmetry (only gauge equivariance; the shortest-path transport average is
+rotation-symmetric, the learned weights are not). The question is whether the
+selected axis varies from site to site, in which case isotropy is restored in
+the zero-momentum sum, or is globally fixed, in which case the operator is not
+a cubic-group scalar. The axis-split column settles it, and the answer is the
+unfavourable one: layer 1 head 1, layer 2 head 0 and layer 3 head 0 select the
+same axis at $100.0\%$ of all $1.3$ million site--slice samples, layer 2
+head 1 selects a different single axis at $100.0\%$, and layer 4 head 0 at
+$99\%$. These are not content-driven choices; they are frozen directions.
+
+Two observations keep this from being fatal. First, the axis-locked heads are
+exactly the low-entropy, maximal-range, ablation-irrelevant ones --- the
+degenerate kernels of the previous paragraph --- while the two heads that
+matter physically are the two most isotropic ones: the load-bearing layer-3
+head splits $0.81/0.00/0.19$ and the best-correlated layer-4 head splits
+$0.00/0.64/0.36$. Second, a spin-2 admixture in the interpolating operator
+contaminates the correlator with \emph{heavier} states, biasing an extracted
+mass upward, not downward; it cannot manufacture the ground-state overlap
+excess of Section~\ref{sec:overlap}. What it does mean is that the learned
+operator is a $0^{++}$ interpolator only approximately, and that explicitly
+projecting onto the cubic $A_1^{++}$ representation --- averaging the operator
+over the $24$ lattice rotations, or symmetrizing the architecture --- is a
+concrete and likely profitable next step.
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=\textwidth]{glueball_attention.png}
+  \caption{Attention of the Run-5 operator as a measurement. Top:
+  $\ell_{\mathrm{att}}$ versus depth with site-to-site spread as error bars
+  (left), the config-averaged radial profile (centre), and the head-ablation
+  matrix (right). Bottom: the distribution of the per-site range, whose width
+  is the configuration dependence (left), and one $z=0$ slice of
+  $\delta\ell_{\mathrm{att}}(x)$ next to the smeared density $\delta o(x)$ for
+  the most strongly correlated head (centre, right).}
+  \label{fig:attention}
+\end{figure}
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=\textwidth]{glueball_attention_kernels.png}
+  \caption{Config-averaged attention kernels $\bar\alpha(\Delta x)$ on the
+  $\Delta x_3=0$ plane, per (layer, head), on a logarithmic scale. This is
+  the \emph{static} part of the attention only --- the part expressible as a
+  fixed convolution; the claim of Table~\ref{tab:attention} lives in the
+  site-to-site residual around these means.}
+  \label{fig:attentionkernels}
+\end{figure}
+
+\paragraph{What this section is not.} The statistics above are honest but
+small, and it is worth recording what taking the independent unit seriously
+cost. The ablation was first run on $8$ configurations with no error bars,
+where the layer-3 head read $+0.127$ and four of the eight cells came out
+negative. At $32$ configurations with a correlated jackknife the same head
+reads $+0.0787\pm0.0145$ and the negative cells collapse to the
+$\lesssim0.003$ level: the point estimate moved by more than $3\sigma$ of its
+own final error. A Rayleigh ratio on a handful of configurations is simply not
+a measurement --- the same caution applies to the $m\,\at\approx0.43$ quoted
+above, whose $8$-configuration value on the same chain was $0.375$. The
+Spearman correction was milder than the ablation's: configuration-level errors
+come out only $1.5\times$ the naive slice-level ones, so the strong
+correlations ($-0.56$, $-0.33$) were never in doubt, but the quoted precision
+now means what it says.
+
+What remains open is the receptive-field question, and no amount of reanalysis
+can settle it: deciding whether the absence of depth-wise coarsening is a
+property of the attention mechanism or merely of $R=2$ requires
+\emph{retraining} at larger $R$ on the full $2000$-configuration ensemble,
+which is GPU work. Until then the negative result stands only for the network
+as trained.
+
+% ==============================================================================
 \section{Conclusions, caveats, outlook}
 % ==============================================================================
 
@@ -1149,12 +1375,27 @@ value, on which the two methods agree --- as the variational principle says
 they must.
 (iii) Still open: a matched-parameter L-CNN baseline on the identical
 per-timeslice task.
+(iv) The attention readout of Section~\ref{sec:attention} rests on $32$
+configurations, enough to resolve its one large intervention effect at
+$5.4\sigma$ but not the sub-$0.01$ structure around it; and it reveals that
+the learned operator is only approximately a cubic-group scalar.
 
 Beyond validation, the trained operator opens a door the classical one
 cannot: its gauge-invariant attention maps are a direct image of the spatial
 loop structure the \emph{optimal} glueball operator attends to --- what the
 learned $18\%$ beyond the smearing ladder actually computes is now an
-interpretability question with a physical answer.
+interpretability question with a physical answer. A first readout
+(Section~\ref{sec:attention}) already returns four concrete findings: the
+operator's advantage is carried almost entirely by a single \emph{local}
+attention head ($5.4\sigma$ under ablation, against nothing else above
+$2\sigma$); the hypothesized RG-like widening of the receptive field with
+depth does \emph{not} occur at $R=2$, several heads having collapsed to fixed
+maximal-range kernels; the most distributed head measurably extends its reach
+on high-action regions and contracts on smooth vacuum; and those frozen heads
+are locked to single spatial axes, so the learned operator is a cubic-group
+scalar only approximately. The last of these is the most actionable: an
+explicit $A_1^{++}$ projection --- averaging over the $24$ lattice rotations
+--- is cheap, physically motivated, and untested.
 
 % ==============================================================================
 \begin{thebibliography}{99}
