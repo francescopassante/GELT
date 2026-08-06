@@ -18,7 +18,7 @@ Conventions
   only — never time, or the transfer-matrix interpretation breaks.
 """
 
-from typing import Optional, Tuple
+from typing import Optional, Sequence, Tuple
 
 import torch
 from tqdm import tqdm
@@ -33,13 +33,22 @@ def ape_smear(
     alpha: float = 0.5,
     n_steps: int = 1,
     progress: bool = False,
+    directions: Optional[Sequence[int]] = None,
 ) -> torch.Tensor:
-    """Spatial APE smearing of an ensemble (time = axis 0).
+    """APE smearing of an ensemble — spatial by default (time = axis 0).
 
-    Each spatial link is replaced by the group projection of
-        V_μ(x) = (1 − α) U_μ(x) + (α / n_staples) Σ spatial staples,
-    iterated ``n_steps`` times. Time links are left untouched, and only spatial
-    staples enter, so the result is gauge covariant and the time axis is clean.
+    Each smeared link is replaced by the group projection of
+        V_μ(x) = (1 − α) U_μ(x) + (α / n_staples) Σ staples,
+    iterated ``n_steps`` times. By default only spatial links are touched and
+    only spatial staples enter, so the result is gauge covariant and the time
+    axis is clean — which is what the transfer-matrix argument requires.
+
+    ``directions`` overrides that choice: passing ``range(D)`` smears every
+    direction with every staple, which is 4D cooling (see ``gelt.topology``)
+    and is emphatically NOT safe for spectroscopy — it mixes timeslices and
+    voids the transfer-matrix bound. It is the right thing for topology, where
+    the goal is to strip UV fluctuation from ``q(x)`` and no temporal
+    interpretation is at stake.
 
     ``staple_sum`` returns the *action* staple A_μ(x), which runs from x+μ̂ back
     to x (it transforms as Ω(x+μ̂)·A·Ω†(x)). APE adds the open path that runs
@@ -53,16 +62,18 @@ def ape_smear(
     n_steps : number of smearing iterations.
     progress : show a tqdm bar over the (n_steps × B) per-config smear updates
         — the serial batch loop is slow, so a bar is useful on large ensembles.
+    directions : which link directions to smear (and which staples to use).
+        ``None`` (default) means spatial only, i.e. ``range(1, D)``.
 
     Returns
     -------
     Smeared links of the same shape.
     """
     D = U.shape[1]
-    spatial = list(range(1, D))  # time is axis 0
-    if len(spatial) < 2:
-        raise ValueError("Spatial smearing needs at least two spatial directions.")
-    n_staples = 2 * (len(spatial) - 1)
+    dirs = list(range(1, D)) if directions is None else list(directions)  # time is axis 0
+    if len(dirs) < 2:
+        raise ValueError("Smearing needs at least two directions to build a staple.")
+    n_staples = 2 * (len(dirs) - 1)
 
     out = U.clone()
     with tqdm(
@@ -74,9 +85,9 @@ def ape_smear(
         for _ in range(n_steps):
             new = out.clone()
             for b in range(out.shape[0]):
-                for mu in spatial:
+                for mu in dirs:
                     staples = gaugegroup.dagger(
-                        staple_sum(out[b], mu, gaugegroup, nu_dirs=spatial)
+                        staple_sum(out[b], mu, gaugegroup, nu_dirs=dirs)
                     )
                     V = (1 - alpha) * out[b, mu] + (alpha / n_staples) * staples
                     new[b, mu] = gaugegroup.project(V)

@@ -53,6 +53,16 @@ removed pending rewrites; the spec now lives across the notes below.)
   Contains the **2026-07-01 audit** amending the §6.2 plan (per-timeslice 3D
   operator, code blockers, revised checklist — the source of truth for
   `train_glueball.py`).
+- `notes/topological_localization.md` — **design record for the
+  interpretability program promised in the conference abstract**: why clause 1
+  (attention localizing on topological structure) needs the 4D `q(x)` model
+  rather than the 3D glueball operator, the cooling ground truth (`n_cool=35`
+  from the pre-flight, and why the naive charge's `Z < 1` is harmless to a rank
+  statistic), the lattice/ensemble choices with reasons, the training-target
+  circularity trade-off, the statistical conventions inherited from the
+  glueball attention study, and the closure of clause 2 (attention range vs
+  correlation length) as not measurable at `ξ_s ≲ 1`. The source of truth for
+  this program; read before touching `gelt/topology.py`.
 - `notes/resources.md` — curated textbooks, lecture notes, and ML-for-LGT
   papers with suggested reading order.
 - `notes/tunnel-visualization.md` — exploratory notes on visualising
@@ -182,6 +192,28 @@ path); rerun ens2 standalone if a third measurement is wanted — with two
 independent ensembles agreeing it's a bonus, not a blocker. Written up in
 the report § "Replication on an independent ensemble" and
 `notes/glueball_spectroscopy.md` § "Replication results".
+
+**Interpretability program (2026-08-07, `notes/topological_localization.md`):**
+the attention readout is live. `scripts/visualize_glueball_attention.py` reads
+the Run-5 operator's attention out as a physical field on a held-out ensemble:
+the operator's quality is carried by **one local head** (L3h1 ablates at
++0.0787 ± 0.0145, 5.4σ, against nothing else above 2σ), there is **no
+depth-wise coarsening** at R=2 (six of eight heads saturate at
+ℓ_att = 2.000 ± 0.000; two are degenerate fixed kernels), the most distributed
+head extends its reach on high-action regions (Spearman −0.564 ± 0.002 vs the
+smeared density), and the anisotropic heads are locked to a **globally fixed
+spatial axis** (100.0% of 1.3M site-slice samples) — so the learned operator is
+a cubic-group scalar only approximately, and an explicit `A₁⁺⁺` projection over
+the 24 lattice rotations is the open next step. `scripts/beta_scan.py` closed
+the companion question negatively: `ξ_s ≤ 1.1` spatial lattice spacings across
+β ∈ [2.1, 2.7], smaller than the integer grid the attention lives on, so the
+attention-range-vs-correlation-length study is not measurable on this lattice
+family (the box is *large* — L/ξ_s ≈ 12 — it is the spacing that is coarse).
+`gelt/topology.py` (`cool`, `cooled_charge_density`) + `tests/test_topology.py`
++ `scripts/check_cooling.py` are the 4D cooling layer for the topology study;
+`glueball.ape_smear` gained a `directions` argument (default unchanged, so the
+spatial-only spectroscopy path is byte-identical). Both results are written up
+in `glueball_report/glueball_spectroscopy.tex` § 10.
 
 Known caveats (see `notes/fable_audit.md` for the full list and the
 prioritized fixes):

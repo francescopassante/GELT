@@ -1315,6 +1315,90 @@ concrete and likely profitable next step.
   \label{fig:attentionkernels}
 \end{figure}
 
+\paragraph{Attention range versus correlation length: a measurement this
+lattice does not permit.} The natural companion to the localization question
+is whether the learned attention range tracks a physical length --- whether
+$\ell_{\mathrm{att}}$ grows with the correlation length $\xi$ as the coupling
+is varied. The relevant length is the \emph{spatial} one, in the units the
+attention offsets are counted in:
+\begin{equation}
+  \xi_s \;=\; \frac{1}{m\,\as} \;=\; \frac{1}{\xi\, m\,\at},
+  \label{eq:xis}
+\end{equation}
+since $\ell_{\mathrm{att}}$ is built from spatial displacements $|\Delta x|_1$
+measured in $\as$. Before training one operator per coupling, it is worth
+asking whether $\xi_s$ moves at all. It is a purely classical question --- one
+ensemble and one GEVP per $\beta$, no network --- and the answer decides
+whether the study is possible:
+
+\begin{table}[htbp]
+  \centering
+  \begin{tabular}{ccccc}
+    \toprule
+    $\beta$ & $\beta_s=\beta/\xi$ & $m\,\at$ (GEVP, $\Delta=2$) & $m\,\as$
+            & $\xi_s$ \\
+    \midrule
+    2.1 & 0.70 & $0.5812\pm0.0246$ & 1.744 & $0.57\pm0.02$ \\
+    2.3 & 0.77 & $0.4009\pm0.0128$ & 1.203 & $0.83\pm0.03$ \\
+    2.4 & 0.80 & $0.3330\pm0.0106$ & 0.999 & $1.00\pm0.03$ \\
+    2.5 & 0.83 & $0.3026\pm0.0105$ & 0.908 & $1.10\pm0.04$ \\
+    2.7 & 0.90 & $0.3325\pm0.0113$ & 0.998 & $1.00\pm0.03$ \\
+    \bottomrule
+  \end{tabular}
+  \caption{Classical $\beta$-scan on the $12^3\times24$, $\xi=3$ lattice
+  family ($N=2000$ per coupling, multi-level GEVP, blocked jackknife). The
+  $\beta=2.4$ row is the anchor ensemble of Section~\ref{sec:runs} and
+  reproduces its established value $0.333\pm0.011$, which validates the scan.
+  $\xi_s$ is Eq.~\eqref{eq:xis}, in units of the spatial lattice spacing.}
+  \label{tab:betascan}
+\end{table}
+
+\noindent The decisive number is not the span but the magnitude: $\xi_s$ never
+exceeds $1.1$ lattice spacings anywhere in the window. The attention offsets
+are \emph{integers}, $|\Delta x|_1\in\{0,1,2,\dots\}$, so the entire variation
+of the quantity $\ell_{\mathrm{att}}$ would have to track lives inside the
+first offset shell. A factor of two in a sub-lattice length is not a factor of
+two in anything the network can represent, and training one operator per
+$\beta$ would return a flat scatter whose flatness measured the lattice
+spacing rather than the attention.
+
+It is worth being precise about what is and is not small here, because the two
+are easily confused. The \emph{box} is large: $L/\xi_s \approx 12$ correlation
+lengths across, which is the regime in which finite-volume effects are
+absent, not present. What is coarse is the \emph{spacing}. At $\xi=3$ the
+spatial coupling is $\beta_s=\beta/\xi\approx0.8$ --- strong coupling --- so
+$\as$ is large and the entire physical extent of the glueball falls inside a
+single grid cell. The lattice has plenty of cells; the object occupies about
+one of them. Refining $\as$, not enlarging $L$, is what the measurement would
+need.
+
+One caveat on the high-$\beta$ end. $m\,\at$ falls monotonically from
+$\beta=2.1$ to $\beta=2.5$ and then \emph{rises} at $\beta=2.7$, where
+continuum scaling demands it keep falling. With $L/\xi_s\approx12$ this cannot
+be a finite-volume squeeze. The natural reading is excited-state
+contamination at fixed $\Delta$: the mass is quoted at $\Delta=2$, and since
+$\at$ shrinks as $\beta$ grows, that same $\Delta$ is a shorter \emph{physical}
+Euclidean time in which to filter excited states, biasing $\meff$ upward. A
+second systematic points the same way --- the conversion $m\,\as=\xi\,m\,\at$
+uses the \emph{bare} anisotropy, while the renormalized one differs and drifts
+with $\beta$. Both mean the $\beta=2.7$ entry should be read as an upper bound
+on the mass, hence a \emph{lower} bound on $\xi_s$: the true window may be
+somewhat wider than the tabulated factor $1.9$. It would have to be very much
+wider --- $\xi_s$ clearing several spacings --- to change the conclusion, but
+the honest statement is that the high-$\beta$ end is bounded rather than
+measured.
+
+The honest conclusion is that this is a statement about the lattice, not about
+the architecture. Reaching $\xi_s\gg1$ requires either a larger volume at
+larger $\beta$ (cost $\propto L^3$) or a milder anisotropy: since
+$\beta_s=\beta/\xi$ sets $\as$, lowering $\xi$ from $3$ towards $1.5$ at fixed
+$\beta$ would double $\beta_s$ and should push $\xi_s$ comfortably past one
+spacing while keeping $m\,\at$ resolvable in time. Both are ensemble campaigns
+rather than analyses, and neither is attempted here. What the scan does
+deliver, at the cost of one unattended run rather than four trainings, is a
+quantitative reason for the omission --- and, incidentally, an independent
+reproduction of the anchor mass.
+
 \paragraph{What this section is not.} The statistics above are honest but
 small, and it is worth recording what taking the independent unit seriously
 cost. The ablation was first run on $8$ configurations with no error bars,
@@ -1335,7 +1419,9 @@ can settle it: deciding whether the absence of depth-wise coarsening is a
 property of the attention mechanism or merely of $R=2$ requires
 \emph{retraining} at larger $R$ on the full $2000$-configuration ensemble,
 which is GPU work. Until then the negative result stands only for the network
-as trained.
+as trained. Note that the $\beta$-scan above makes the same point from the
+physics side: with $\xi_s\lesssim1$, a larger $R$ would give the attention
+more room without giving it more to see.
 
 % ==============================================================================
 \section{Conclusions, caveats, outlook}
@@ -1379,6 +1465,11 @@ per-timeslice task.
 configurations, enough to resolve its one large intervention effect at
 $5.4\sigma$ but not the sub-$0.01$ structure around it; and it reveals that
 the learned operator is only approximately a cubic-group scalar.
+(v) Whether the attention range tracks the correlation length is
+\emph{not} measurable on this lattice family: the classical $\beta$-scan of
+Table~\ref{tab:betascan} puts $\xi_s$ below $1.1$ spatial lattice spacings
+everywhere it can be measured, which is smaller than the grid the attention
+lives on.
 
 Beyond validation, the trained operator opens a door the classical one
 cannot: its gauge-invariant attention maps are a direct image of the spatial
