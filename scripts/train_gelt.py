@@ -3,9 +3,12 @@ import torch.nn as nn
 import torch.optim as optim
 from tqdm import tqdm
 
+import functools
+
 from gelt import haar_ensemble, mcmc_ensemble
 from gelt.blocks_rope import GELT
 from gelt.lattice import topological_charge_density
+from gelt.sampler import heatbath_overrelaxation_sweep
 
 """
 ========================================================================================
@@ -123,20 +126,26 @@ if __name__ == "__main__":
 
     # Topological charge density q_x is defined only in D=4 (the ε_μνρσ needs
     # four directions) and is non-trivial only for non-abelian SU(N≥2); SU(2)
-    # is the minimal physically meaningful case. L=4 keeps the 4D ensemble
-    # tractable on a laptop (4⁴ = 256 sites/config).
+    # is the minimal physically meaningful case.
+    #
+    # These are the PHYSICS settings for the topological-localization study
+    # (notes/topological_localization.md §3), not the former laptop-debug ones
+    # (L=4, β=1, R=1, N=1000, which were 4⁴ = 256 sites of strong-coupling
+    # noise — no topology in them, and no room for a "region"). Restore those
+    # four values for a fast local smoke test; this configuration is a V100 run.
     D = 4
-    L = 4
+    L = 8  # 8⁴ = 4096 sites: a lump needs room to be localized *in*
     gaugegroup = SU(2)
-    R = 1
+    R = 2  # R=1 is nearest-neighbour only, so ℓ_att ∈ [0,1] and the attention
+    #        range has nowhere to go — the study needs it to be able to vary
     model_dtype = torch.float32 if isinstance(gaugegroup, Z2) else torch.complex64
 
-    beta = 1
+    beta = 2.4  # SU(2) scaling window; β=1 is strong coupling with no topology
     # Per-site topological charge density target: q_x has shape (B, *Λ). Paired
     # with ``reduction="none"`` on GELT, the model's per-site readout is
     # supervised directly — every site contributes a sample, and the equivariant
     # trace head outputs the locally gauge-invariant quantity at x.
-    N = 1000
+    N = 400  # 400 × 4096 = 1.6M per-site labels; statistics are not the binder
     dataset_parameters = {
         "N": N,
         "D": D,
@@ -147,7 +156,13 @@ if __name__ == "__main__":
         "save": True,
         "prefix": f"{gaugegroup}_L{L}_D{D}_N{N}_beta{beta}_R{R}_topo",
         "structured": True,
-        "sampler": mcmc_ensemble,
+        # mcmc_ensemble's registry default for SU(2) is METROPOLIS, whose
+        # decorrelation at β=2.4 in 4D is poor. Heat-bath + overrelaxation is
+        # exact and tuning-free and must be requested explicitly.
+        "sampler": functools.partial(
+            mcmc_ensemble,
+            sweep_fn=functools.partial(heatbath_overrelaxation_sweep, n_or=4),
+        ),
         "beta": beta,
         "target": topological_charge_density,
         "n_therm": 200,
@@ -160,10 +175,17 @@ if __name__ == "__main__":
         # cascade (fc2 → fc1 → α → Q/K/V/mix) is slow at lr=1e-3 — pushing the
         # LR up gets training past the identity-branch stall in a few epochs.
         "lr": 3e-3,
-        "batch_size": 64,
-        "epochs": 3000,
-        "patience": 3000,
-        "checkpoint_path": "best_gelt.pth",
+        # Batch is over CONFIGS, and each expands to 4096 sites × 40 offsets of
+        # gathered K/V per layer — the memory knob. 64 (the L=4 debug value)
+        # asks for ~2.7 GB per gathered tensor at L=8 and OOMs; 8 is the V100
+        # setting. Drop to 4 if it still OOMs.
+        "batch_size": 8,
+        # 280 train configs / batch 8 = 35 steps/epoch. The old 3000/3000 was
+        # sized for the 256-site debug task; this is a supervised MSE fit and
+        # converges in far fewer.
+        "epochs": 150,
+        "patience": 20,
+        "checkpoint_path": f"best_gelt_topo_L{L}_b{beta}_R{R}.pth",
     }
 
     # Debug-capacity GELT for the per-site topological charge density target.
@@ -177,14 +199,20 @@ if __name__ == "__main__":
         "L": L,
         "D": D,
         "R": R,
-        "nhead": 1,
+        # 2 heads, so the head-specialization / ablation arm of the attention
+        # readout has something to compare (a single head cannot specialize).
+        "nhead": 2,
         "gemhsa_layers": 4,
-        "d_qkv": 4,
+        # d_qkv ≥ 2D is REQUIRED here: RoPE assigns pair p to axis p % D, so in
+        # D=4 anything below 8 leaves whole axes on the identity rotation
+        # (CLAUDE.md known caveat 3). The old value of 4 was harmless at the
+        # debug scale and is not harmless now.
+        "d_qkv": 8,
         "gate": "softplus",
         # Z2 can run as a real model. SU(N) must stay complex; otherwise
         # GELT.forward would cast complex plaquettes/transports down to real.
         "dtype": model_dtype,
-        "mlp_hidden": 3,
+        "mlp_hidden": 32,  # was 3 (debug capacity); this is a real fit now
         "mlp_out": 1,
         # Per-site target → no spatial reduction. Use "sum" for the Wilson
         # action, "mean" for the average ⟨W⟩.
@@ -201,7 +229,11 @@ if __name__ == "__main__":
         # GEMHSA working width from the input dimensionality so intermediate
         # layers don't collapse to 1–6 channels. In D=4 the plaquette input is
         # already 6 channels, so d_model must be ≥ 6.
-        "d_model": 8,
+        "d_model": 16,  # was 8; matches the glueball operator's working width
+        # Recompute each GEMHSA layer in backward instead of storing its
+        # activations — the gathered K/V neighbourhoods are the memory wall at
+        # 4096 sites × 40 offsets, exactly as in train_glueball.py.
+        "grad_checkpoint": True,
     }
 
     # Reuse a previously saved dataset if one exists under this prefix;
