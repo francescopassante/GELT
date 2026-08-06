@@ -34,6 +34,7 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from tqdm import tqdm
 
 from gelt.glueball import jackknife_gevp_effective_mass, smearing_operator_basis
 from gelt.lattice import SU
@@ -63,6 +64,12 @@ N_OR = 4
 SMEAR_ALPHA = 0.5
 SMEAR_LEVELS = [0, 2, 4, 6]
 GEVP_T0 = 1
+# Configs per smearing batch. The full N=2000 ensemble is ~10.6 GB as complex64
+# and ape_smear clones it, so smearing it in one shot needs >20 GB of device
+# memory and OOMs a 32 GB V100. Each config smears independently, so chunking is
+# exact, not an approximation. The ensemble stays on the CPU; only the chunk
+# moves. (measure_glueball.py sidesteps this by smearing on the CPU entirely.)
+SMEAR_CHUNK = 200
 # Δ at which the plateau mass is quoted. Δ=2 is where the anchor ensemble's
 # GEVP plateau was read (m·a_t = 0.333 ± 0.011); Δ=1 is more contaminated.
 QUOTE_DELTA = 2
@@ -115,9 +122,18 @@ def gevp_mass(configs):
     ill-conditioned in float32 at these statistics) and the ground state is
     column 0 of the (Nt, n_ops) jackknife output.
     """
-    Obar = smearing_operator_basis(
-        configs.to(device), gaugegroup, SMEAR_LEVELS, alpha=SMEAR_ALPHA, progress=True
-    ).double()
+    parts = []
+    for i in tqdm(range(0, configs.shape[0], SMEAR_CHUNK), desc="  smearing"):
+        chunk = configs[i : i + SMEAR_CHUNK].to(device)
+        parts.append(
+            smearing_operator_basis(
+                chunk, gaugegroup, SMEAR_LEVELS, alpha=SMEAR_ALPHA
+            ).cpu()
+        )
+        del chunk
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+    Obar = torch.cat(parts, dim=1).double()  # (n_levels, B, Nt)
     meff, err = jackknife_gevp_effective_mass(Obar, t0=GEVP_T0)
     m_ground, err_ground = meff[:, 0], err[:, 0]
     return m_ground[QUOTE_DELTA].item(), err_ground[QUOTE_DELTA].item(), m_ground.cpu()
