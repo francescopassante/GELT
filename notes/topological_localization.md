@@ -136,6 +136,50 @@ check is one training run and mirrors the gate structure that worked for
 clause 2 — let the cheap measurement decide before paying for the expensive
 one.
 
+### Result of (A) — 2026-08-07, checkpoint `best_gelt_topo_L8_b2.4_R2.pth`
+
+Training reached **R² = 1.0000** in a handful of epochs (150 epochs, 2 h 07,
+but `|fc2|` drifted only 0.058 → 0.048 after the first few). That is not
+overfitting or a bug: `q_x` is a single matrix bilinear in the plaquettes at
+`x`, GELT's value path *is* matrix-bilinear, so the network reproduced an
+algebraic identity it already had the exact form for.
+
+The readout (`scripts/topology_attention.py`, N=32 held out, seed 11):
+
+| | ℓ_att | self-α | ablation ΔMSE |
+|---|---|---|---|
+| L1 h0 | 0.365 ± 0.173 | 0.774 | 0.00098 |
+| L1 h1 | **1.620** ± 0.053 | 0.083 | 0.00017 |
+| L2 h0 / h1 | 0.007 / 0.011 | 0.994 / 0.991 | 0.011 / 0.014 |
+| L3 h0 | **0.580** ± 0.219 | 0.644 | 0.00043 |
+| L3 h1 | 0.006 | 0.996 | 0.034 |
+| L4 h0 | 0.006 | 0.995 | **0.241** |
+| L4 h1 | 0.001 | 0.999 | **0.348** |
+
+**Not a total collapse — three heads kept genuine range** (L1h1 puts 8% of its
+mass on the site and 72% at |Δx|=2). **But range and usefulness are
+anticorrelated:** the two heads that carry the task are pure self-attention
+(ΔMSE 0.241 and 0.348 on a unit-variance target, i.e. R² 1.0 → ~0.65), while
+the long-range head costs 0.00017 to delete — 2000× less.
+
+**Localization: null.** Spearman(ℓ_att(x), |q_cool(x)|) = −0.011 … −0.004
+with config-level errors ~0.003, against −0.564 for the glueball operator's
+action-density correlation. Not a weak signal — nothing. It is *not* an
+artifact of collapsed heads having no variance to correlate: L1h0 and L3h0
+have site-to-site spreads of 47% and 38% of their means and still return
+−0.011 and −0.008.
+
+**Conclusion: a network given a target that needs no context uses no context,
+and the context it does gather is not topological.** The ablation is what makes
+this a measurement rather than an impression. This is a legitimate result for
+the talk in its own right, and it converts the pivot to target (B) from a
+speculation into an evidence-backed decision.
+
+Ensemble note: 12 of 32 held-out configs had |Q| ≥ 0.5 (⟨|Q|⟩ = 0.42), with
+plateaus near 0.85 and 1.65 — the Z ≈ 0.85 renormalization of §2, consistent
+with true |Q| = 1 and 2. So roughly a third of configurations carry a lump at
+all; see risk 2 in §7.
+
 ---
 
 ## 5. Attention readout — inherited conventions
