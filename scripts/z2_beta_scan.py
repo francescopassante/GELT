@@ -44,7 +44,11 @@ import torch
 
 from gelt.glueball import jackknife_gevp_effective_mass, smearing_operator_basis
 from gelt.lattice import Z2
-from gelt.sampler import integrated_autocorrelation_time, mcmc_ensemble
+from gelt.sampler import (
+    integrated_autocorrelation_time,
+    mcmc_ensemble,
+    z2_heatbath_sweep,
+)
 
 
 # ── Tunables ──────────────────────────────────────────────────────────────────
@@ -74,10 +78,9 @@ N_THERM = 500
 # whose autocorrelation time grows towards β_c (local updates decorrelate like
 # ξ^z, z ≈ 2). The τ_int column exists to tell you whether it was enough —
 # raise this, or drop the closest β, if τ_int approaches N_SKIP.
-N_SKIP = 50  # measured Metropolis acceptance is only ~0.10 (the Z₂ proposal is
-#              a flip, U → −U, and most flips cost too much action), so 20
-#              sweeps bought only ~2 accepted updates per link. Sweeps are
-#              nearly free here; buy more of them.
+N_SKIP = 20  # with the heat-bath every link is redrawn every sweep, so 20 here
+#              is worth far more than the 50 Metropolis sweeps it replaces
+#              (which delivered ~1 accepted update per link at 2% acceptance)
 SMEAR_ALPHA = 0.5
 SMEAR_LEVELS = [0, 2, 4, 8]  # only 2 spatial directions in 3D, so each smearing
 #   step is weak (one staple pair) — reach further in levels to compensate, and
@@ -99,9 +102,13 @@ def ensemble(beta):
         print(f"  loading cached {path}")
         return torch.load(path)
     print(f"  sampling N={N_CONFIGS} at β={beta} …")
+    # Heat-bath, NOT the registry-default Metropolis: the Z₂ flip proposal's
+    # acceptance measured 0.05 → 0.02 across this β range, so Metropolis leaves
+    # the chain essentially frozen exactly where ξ is largest.
     configs, acc = mcmc_ensemble(
         L=L, D=D, gaugegroup=gaugegroup, beta=beta, n_configs=N_CONFIGS,
         n_therm=N_THERM, n_skip=N_SKIP, progress=True, Lt=LT,
+        sweep_fn=z2_heatbath_sweep,
     )
     print(f"  acceptance = {acc:.2f}")
     os.makedirs("datasets", exist_ok=True)
@@ -147,15 +154,34 @@ def main():
     for beta, m, err, xi, xi_err, _, tau in rows:
         print(f"{beta:>7} {BETA_C - beta:>8.4f} {m:>9.4f} ± {err:.4f}"
               f" {xi:>8.2f} ± {xi_err:.2f} {tau:>8.1f}")
-    span = max(r[3] for r in rows) / min(r[3] for r in rows)
-    xi_max = max(r[3] for r in rows)
+    # Only RESOLVED points may enter the gate. The first scan "passed" on a
+    # point with m = 0.025 ± 0.216 — consistent with zero — whose ξ = 39.7 ± 339
+    # single-handedly produced a ×18 span. A ratio built from unresolved
+    # numbers is not a measurement.
+    resolved = [r for r in rows if r[1] > 0 and r[1] / r[2] >= 3.0]
     tau_max = max(r[6] for r in rows)
     print("-" * 72)
-    print(f"ξ spans ×{span:.2f}, reaching {xi_max:.2f} lattice spacings.")
+    print(f"resolved points (m/err ≥ 3): {len(resolved)}/{len(rows)}"
+          + ("" if not resolved else "  at β = "
+             + ", ".join(f"{r[0]}" for r in resolved)))
+    if len(resolved) < 3:
+        print("GATE FAILS: fewer than 3 resolved points — the scan has no curve to")
+        print("      fit. Fix the sampling before reading anything else below.")
+        span = xi_max = float("nan")
+    else:
+        span = max(r[3] for r in resolved) / min(r[3] for r in resolved)
+        xi_max = max(r[3] for r in resolved)
+        print(f"ξ spans ×{span:.2f}, reaching {xi_max:.2f} lattice spacings"
+              " (resolved points only).")
+        # The mass must fall monotonically towards β_c. Scatter means noise.
+        ms = [r[1] for r in resolved]
+        if any(b - a > max(r[2] for r in resolved) for a, b in zip(ms, ms[1:])):
+            print("WARNING: m is not monotonically decreasing towards β_c even on the")
+            print("      resolved points — that is noise, not critical behaviour.")
     print(
         "GATE: ξ must reach ≳3–4 spacings (so ℓ_att, quantized on integer\n"
-        "      offsets, can resolve it) AND span a factor ≳2. If both hold,\n"
-        "      Phase B is worth its training runs.\n"
+        "      offsets, can resolve it) AND span a factor ≳2, on RESOLVED\n"
+        "      points. If both hold, Phase B is worth its training runs.\n"
         f"CHECK: max τ_int = {tau_max:.1f} against N_SKIP = {N_SKIP}. If τ_int is\n"
         "      comparable to or larger than N_SKIP, the chain is undersampled\n"
         "      near β_c and the quoted errors are too small — raise N_SKIP.\n"

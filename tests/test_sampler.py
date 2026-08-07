@@ -9,6 +9,8 @@ sharp tests:
     ``validate_sampler_su2.py``, but here as an automated regression test.
 """
 
+import math
+
 import torch
 
 from gelt.lattice import SU, action, random_links
@@ -109,3 +111,42 @@ def test_heatbath_mean_plaquette_matches_exact_2d():
     b = torch.tensor(beta, dtype=torch.float64)
     exact = (torch.special.i0(b) / torch.special.i1(b) - 2.0 / b).item()
     assert abs(measured - exact) < 0.01, (measured, exact)
+
+
+def test_z2_heatbath_mean_plaquette_matches_exact_2d():
+    """2D Z₂: ⟨P⟩ → tanh(β), the exact result. This is the automated analogue
+    of validate_sampler_z2.py's 2D panel, and the correctness check that the
+    heat-bath's P(U=+1) = σ(2βs) has the right sign and normalization."""
+    from gelt.lattice import Z2
+    from gelt.sampler import z2_heatbath_sweep
+
+    torch.manual_seed(3)
+    g = Z2()
+    L, beta = 8, 0.6
+    U = random_links(L, 2, g, dtype=torch.float64)
+    n_plaq = L * L
+
+    for _ in range(100):  # thermalise
+        U, acc = z2_heatbath_sweep(U, g, beta)
+        assert acc == 1.0  # rejection-free by construction
+
+    plaqs = []
+    for _ in range(400):
+        U, _ = z2_heatbath_sweep(U, g, beta)
+        S = action(U.unsqueeze(0), g, beta=beta)
+        plaqs.append(1.0 - (S / beta).item() / n_plaq)
+
+    measured = sum(plaqs) / len(plaqs)
+    exact = math.tanh(beta)
+    assert abs(measured - exact) < 0.02, (measured, exact)
+
+
+def test_z2_heatbath_stays_on_the_group():
+    from gelt.lattice import Z2
+    from gelt.sampler import z2_heatbath_sweep
+
+    torch.manual_seed(4)
+    g = Z2()
+    U = random_links(6, 3, g, dtype=torch.float64)
+    U, _ = z2_heatbath_sweep(U, g, 0.75)
+    assert torch.all((U == 1.0) | (U == -1.0))

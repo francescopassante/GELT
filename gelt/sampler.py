@@ -285,6 +285,73 @@ def metropolis_sweep(
     return U, total_accepted / total_proposed
 
 
+def z2_heatbath_sweep(
+    U: torch.Tensor,
+    gaugegroup: GaugeGroup,
+    beta: float,
+    xi: float = 1.0,
+    time_axis: int = 0,
+) -> Tuple[torch.Tensor, float]:
+    """One Z₂ heat-bath sweep — each link drawn from its exact local weight.
+
+    For Z₂ the local weight is a two-point distribution, so the heat-bath is a
+    one-liner and is *exact*: with ``s`` the (real, scalar) staple sum, the
+    link-dependent part of the Wilson action is ``S = −β·U·s`` — the same
+    relation ``metropolis_sweep`` encodes as ``ΔS = 2β·U·s`` for the flip
+    ``U → −U`` — so
+
+        P(U = +1) = e^{βs} / (e^{βs} + e^{−βs}) = σ(2βs).
+
+    **Why this exists.** The Z₂ Metropolis proposal is the deterministic flip
+    ``U → −U``, whose acceptance collapses as the configuration orders: measured
+    at 0.05 → 0.02 across β = 0.745 → 0.760 in 3D, so even ``n_skip = 50`` buys
+    only ~1 accepted update per link per configuration, and the resulting
+    ensembles are undersampled no matter how many configurations are collected.
+    The heat-bath updates **every** link on **every** sweep with no rejection —
+    a 20–50× gain in effective updates in that regime, and no tuning parameter.
+    It matters most exactly where it is needed: near a critical point, where
+    critical slowing down is worst.
+
+    Like the SU(2) heat-bath this is **opt-in, not the registry default** (so
+    ``validate_sampler_z2.py`` keeps exercising Metropolis); pass it as
+    ``sweep_fn=`` to :func:`mcmc_ensemble`.
+
+    Parameters
+    ----------
+    U : ``(D, *Λ, 1, 1)`` — not modified in-place.
+    xi, time_axis : anisotropy, folded into the staple exactly as elsewhere.
+
+    Returns
+    -------
+    (U_new, 1.0) — acceptance is 1 by construction, kept for interface parity.
+    """
+    D = U.shape[0]
+    spatial_shape = U.shape[1:-2]
+    device = U.device
+    parity = _site_parity(spatial_shape, device)
+
+    U = U.clone()
+    for mu in range(D):
+        for par in (0, 1):
+            # Same checkerboard argument as metropolis_sweep: same-parity sites
+            # share no plaquette through direction-μ links, so their updates
+            # commute and the staple can be computed once per (μ, parity).
+            A = staple_sum(U, mu, gaugegroup, xi=xi, time_axis=time_axis)
+            s = A[..., 0, 0].real  # (*Λ) — nc = 1, so the staple is a scalar
+            p_plus = torch.sigmoid(2.0 * beta * s)
+            draw = torch.where(
+                torch.rand(spatial_shape, device=device) < p_plus,
+                torch.ones((), dtype=U.dtype, device=device),
+                -torch.ones((), dtype=U.dtype, device=device),
+            )
+            site_mask = parity == par
+            U[mu] = torch.where(
+                site_mask[..., None, None], draw[..., None, None], U[mu]
+            )
+
+    return U, 1.0
+
+
 def _su2_decompose_staple(
     A: torch.Tensor, gaugegroup: GaugeGroup, eps: float = 1e-12
 ) -> Tuple[torch.Tensor, torch.Tensor]:
