@@ -175,6 +175,47 @@ this a measurement rather than an impression. This is a legitimate result for
 the talk in its own right, and it converts the pivot to target (B) from a
 speculation into an evidence-backed decision.
 
+### Result of (B) — cooled target, 2026-08-07: the network cannot fit it
+
+Flipping `TARGET_COOLED = True` and retraining gave **R² = −0.0001**, and the
+decisive number is `train = 0.9999`: a normalized MSE of 1.0 *is* the mean
+predictor, so it never fit even the training set. Early stopping at 26 epochs.
+This is underfitting, not a bad minimizer.
+
+**Cause: 4 GEMHSA layers cannot emulate 35 iterations of a nonlinear flow.**
+Cooling is an iterated projection; each layer supplies one bilinear step. With
+no route to the target the network parks at the mean and the attention stays
+at initialization — which is exactly what the readout then measured:
+ℓ_att = 1.77–1.82 against the uniform value 72/41 = **1.756**, self-α ≈ 0.02
+against uniform 1/41 = **0.024**, entropy 3.60–3.70 against log 41 = **3.71**,
+and ablation ΔMSE of −6e−7 … −1.5e−5, i.e. no head does anything. Every
+downstream number in that run describes an untrained network, not a physical
+one. (`σ_y` also fell from 0.0263 to 0.0007 — the cooled field is far smoother
+and smaller — but standardization handles that; it is not the cause.)
+
+**The two runs bracket a structural tension:**
+
+| target | learnable? | attention needed? |
+|---|---|---|
+| naive q(x) | perfectly, R² = 1 | **no** — on-site bilinear |
+| cooled q(x), n_cool = 35 | **no**, R² = 0 | yes, but unreachable at depth 4 |
+
+And the middle is thin: the §2 pre-flight shows the charge only becomes
+topologically meaningful around n_cool ≳ 10 (at n_cool = 5 the integer
+deviation is *worse* than raw), while depth 4 can plausibly emulate ~4 steps.
+The window where the target is both physically meaningful and architecturally
+reachable may be empty at this depth. Escaping it needs more layers (each
+doubles loop degree) or a larger R, not more data.
+
+**Do not "fix" this by feeding pre-smeared input channels.** That is what
+rescued the glueball operator (Run 4→5), but here it would make q_cool an
+on-site function of the cooled input and collapse straight back into case (A).
+
+**Conclusion across (A) and (B): attention maps reflect what the task demands,
+not what the physics contains.** Demonstrated in both directions, with an
+intervention on the (A) side showing the load-bearing heads are precisely the
+context-free ones. That is the reportable result of clause 1.
+
 Ensemble note: 12 of 32 held-out configs had |Q| ≥ 0.5 (⟨|Q|⟩ = 0.42), with
 plateaus near 0.85 and 1.65 — the Z ≈ 0.85 renormalization of §2, consistent
 with true |Q| = 1 and 2. So roughly a third of configurations carry a lump at
