@@ -161,9 +161,17 @@ if __name__ == "__main__":
         from gelt.topology import cool
 
         def _target(configs, gaugegroup):
-            return topological_charge_density(
-                cool(configs, gaugegroup, n_steps=N_COOL), gaugegroup
+            # Cooling is 400 configs × 35 steps × 4 directions of serial
+            # staple_sum — minutes to tens of minutes, and the dataset builder
+            # keeps configs on the CPU. Run it on the GPU when there is one
+            # (it is dense matmul + projection), and ALWAYS show a bar: without
+            # one this stage looks like a hang, because nothing prints and the
+            # GPU sits at 0%.
+            dev = "cuda" if torch.cuda.is_available() else "cpu"
+            cooled = cool(
+                configs.to(dev), gaugegroup, n_steps=N_COOL, progress=True
             )
+            return topological_charge_density(cooled, gaugegroup).cpu()
     else:
         _target = topological_charge_density
     # Per-site topological charge density target: q_x has shape (B, *Λ). Paired
