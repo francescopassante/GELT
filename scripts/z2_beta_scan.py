@@ -54,21 +54,34 @@ from gelt.sampler import integrated_autocorrelation_time, mcmc_ensemble
 # risks ξ ≳ L/4, where finite volume bends the mass back up (the lesson from
 # the SU(2) scan's β=2.7 point).
 BETA_C = 0.7614
-BETAS = [0.70, 0.73, 0.75, 0.755, 0.758]
+# The first scan put points at 0.70 and 0.73 and learned that they are wasted:
+# β=0.70 gave ξ = 0.58 ± 0.69 with m_eff turning negative by Δ=5, i.e. the
+# correlator dies inside one lattice spacing and the point carries no signal.
+# Calibrating Ising scaling ξ ~ |β_c − β|^(−ν), ν ≈ 0.63, against that
+# measurement puts ξ ≈ 3 at β_c − β ≈ 0.004 and ξ ≈ 6 at ≈ 0.0016 — so the
+# entire usable window is the last ~0.015 below β_c, and the scan has to sit
+# inside it. The closest point is held at 0.7600 (ξ ≈ 6 ≈ L/4): nearer than
+# that and finite volume bends the mass back up, as it did at SU(2) β=2.7.
+BETAS = [0.7450, 0.7520, 0.7560, 0.7585, 0.7600]
 
 L = 24  # spatial extent; keeps ξ ≲ L/4 = 6 measurable without finite volume
 D = 3  # 2 spatial + 1 temporal. Time is axis 0
 LT = 48  # long temporal extent: near β_c the correlator decays slowly
-N_CONFIGS = 1000
+N_CONFIGS = 2000  # the first scan's N=1000 gave errors larger than the mass
 N_THERM = 500
 # Metropolis decorrelation. A Z₂ sweep at this size costs ~0.010 s, so skipping
 # generously is nearly free and worth it: this is a *fixed* skip across a scan
 # whose autocorrelation time grows towards β_c (local updates decorrelate like
 # ξ^z, z ≈ 2). The τ_int column exists to tell you whether it was enough —
 # raise this, or drop the closest β, if τ_int approaches N_SKIP.
-N_SKIP = 20
+N_SKIP = 50  # measured Metropolis acceptance is only ~0.10 (the Z₂ proposal is
+#              a flip, U → −U, and most flips cost too much action), so 20
+#              sweeps bought only ~2 accepted updates per link. Sweeps are
+#              nearly free here; buy more of them.
 SMEAR_ALPHA = 0.5
-SMEAR_LEVELS = [0, 2, 4]  # only 2 spatial directions in 3D, so staples are thin
+SMEAR_LEVELS = [0, 2, 4, 8]  # only 2 spatial directions in 3D, so each smearing
+#   step is weak (one staple pair) — reach further in levels to compensate, and
+#   give the GEVP a wider basis where the signal is weakest
 GEVP_T0 = 1
 QUOTE_DELTA = 3  # small masses ⇒ read the plateau a little further out
 
