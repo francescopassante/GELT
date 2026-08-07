@@ -25,10 +25,10 @@ slowing down is the thing most likely to invalidate this scan: local updates
 decorrelate like ξ^z with z ≈ 2, so an n_skip that is ample at β = 0.70 can be
 far too small at β = 0.758, and an undersampled chain fakes small errors.
 
-Runtime note: the sampling is NOT the long pole here — a Z₂ sweep at 24²×48
-costs ~0.010 s, so all five ensembles are ~20 min. The analysis is: ape_smear
-loops over configurations in Python, and the jackknife does one GEVP solve per
-configuration. Expect the bar under "smearing" to dominate.
+Runtime note: with N_SKIP raised to cover the measured τ_int, sampling is now
+the long pole — ~2000 × 200 sweeps × 0.010 s ≈ 70 min per β, so budget most of
+a night for five. The analysis is comparatively cheap: the jackknife is
+*blocked*, so it does N/JACK_BLOCK fits rather than one per configuration.
 
 Run:
     python scripts/z2_beta_scan.py
@@ -42,7 +42,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from gelt.glueball import jackknife_gevp_effective_mass, smearing_operator_basis
+from gelt.glueball import (
+    connected_correlator,
+    connected_correlator_matrix,
+    fit_cosh_correlator,
+    gevp_effective_mass,
+    gevp_eigenvalues,
+    gevp_ground_vector,
+    smearing_operator_basis,
+)
 from gelt.lattice import Z2
 from gelt.sampler import (
     integrated_autocorrelation_time,
@@ -78,15 +86,24 @@ N_THERM = 500
 # whose autocorrelation time grows towards β_c (local updates decorrelate like
 # ξ^z, z ≈ 2). The τ_int column exists to tell you whether it was enough —
 # raise this, or drop the closest β, if τ_int approaches N_SKIP.
-N_SKIP = 20  # with the heat-bath every link is redrawn every sweep, so 20 here
-#              is worth far more than the 50 Metropolis sweeps it replaces
-#              (which delivered ~1 accepted update per link at 2% acceptance)
+N_SKIP = 200  # τ_int measured 43.8 at β=0.760 with N_SKIP=20 — i.e. the chain
+#               decorrelated FOUR TIMES SLOWER than it was sampled, so the
+#               configurations were not independent and the errors were
+#               fiction. This is ~4·τ_int at the worst β. Critical slowing down
+#               is intrinsic to approaching β_c with local updates (τ ~ ξ^z,
+#               z ≈ 2); the heat-bath removed the rejection problem, not this.
 SMEAR_ALPHA = 0.5
-SMEAR_LEVELS = [0, 2, 4, 8]  # only 2 spatial directions in 3D, so each smearing
-#   step is weak (one staple pair) — reach further in levels to compensate, and
-#   give the GEVP a wider basis where the signal is weakest
+SMEAR_LEVELS = [0, 4, 8, 16]  # only 2 spatial directions in 3D, so each smearing
+#   step is weak (one staple pair). The ladder has to reach much further to
+#   build any ground-state overlap: every scan so far showed m_eff(Δ=1) ≈ 4–5
+#   collapsing to ~0.3 by Δ=2, i.e. C(1)/C(2) ≈ 80 — the operator was almost
+#   pure excited state, so the ground state only surfaced where the signal had
+#   already died.
 GEVP_T0 = 1
-QUOTE_DELTA = 3  # small masses ⇒ read the plateau a little further out
+GEVP_TD = 2  # Δ at which the ground-state eigenvector is defined
+FIT_WINDOW = (2, 8)  # cosh-fit window; starts past the contact-term drop at Δ=1
+JACK_BLOCK = 20  # blocked jackknife: neighbouring configs are correlated at
+#                  large τ_int, so single deletion would understate the error
 
 gaugegroup = Z2()
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -116,23 +133,51 @@ def ensemble(beta):
     return configs
 
 
+def _fit_from_obar(Obar):
+    """Mass from a cosh fit to the GEVP-projected correlator.
+
+    Reading a single m_eff(Δ) point throws away every other Δ and inherits the
+    noise of one ratio — which is why the first two scans returned errors of the
+    same size as the mass. Projecting onto the GEVP ground-state vector and
+    fitting the whole window is the way masses are actually quoted (see the
+    report's "Quoting the result" section) and uses all the data.
+    """
+    C = connected_correlator_matrix(Obar)
+    v0 = gevp_ground_vector(C, t0=GEVP_T0, td=GEVP_TD)
+    proj = torch.einsum("i,ibt->bt", v0, Obar)  # (B, Nt) projected operator
+    m, _A, _chi2 = fit_cosh_correlator(connected_correlator(proj), *FIT_WINDOW)
+    return m
+
+
 def measure(configs):
-    """Plateau mass, its jackknife error, the full m_eff curve, and τ_int."""
+    """Fitted mass, its blocked-jackknife error, the m_eff curve, and τ_int."""
     Obar = smearing_operator_basis(
         configs.to(device), gaugegroup, SMEAR_LEVELS, alpha=SMEAR_ALPHA, progress=True
     ).double().cpu()
-    meff, err = jackknife_gevp_effective_mass(Obar, t0=GEVP_T0)
-    m_ground, err_ground = meff[:, 0], err[:, 0]
+
+    m = _fit_from_obar(Obar)
+
+    # Blocked jackknife over configurations. Blocks, not single deletions,
+    # because τ_int is large near β_c and neighbouring configurations are
+    # correlated; deleting one at a time would understate the error exactly
+    # where it matters. It is also ~N/JACK_BLOCK times cheaper.
+    n = Obar.shape[1]
+    n_blocks = n // JACK_BLOCK
+    vals = []
+    for b in range(n_blocks):
+        keep = torch.ones(n, dtype=torch.bool)
+        keep[b * JACK_BLOCK : (b + 1) * JACK_BLOCK] = False
+        vals.append(_fit_from_obar(Obar[:, keep]))
+    vals = torch.tensor(vals, dtype=torch.float64)
+    err = ((n_blocks - 1) / n_blocks * (vals - vals.mean()).pow(2).sum()).sqrt().item()
+
+    # m_eff curve, kept only so the plateau can be inspected by eye.
+    lams = gevp_eigenvalues(connected_correlator_matrix(Obar), t0=GEVP_T0)
+    m_curve = gevp_effective_mass(lams)[:, 0]
     # Chain observable for τ_int: the most-smeared zero-momentum operator,
     # averaged over time slices — one number per configuration, in chain order.
-    series = Obar[-1].mean(dim=1)
-    _, tau, _ = integrated_autocorrelation_time(series)
-    return (
-        m_ground[QUOTE_DELTA].item(),
-        err_ground[QUOTE_DELTA].item(),
-        m_ground.cpu(),
-        float(tau),
-    )
+    _, tau, _ = integrated_autocorrelation_time(Obar[-1].mean(dim=1))
+    return m, err, m_curve.cpu(), float(tau)
 
 
 def main():
@@ -144,7 +189,7 @@ def main():
         xi = 1.0 / m if m > 0 else float("inf")
         xi_err = xi * err / m if m > 0 else float("inf")
         rows.append((beta, m, err, xi, xi_err, curve, tau))
-        print(f"  m·a(Δ={QUOTE_DELTA}) = {m:.4f} ± {err:.4f}   ξ = {xi:.2f} ± {xi_err:.2f}"
+        print(f"  m·a (cosh fit Δ∈{FIT_WINDOW}) = {m:.4f} ± {err:.4f}   ξ = {xi:.2f} ± {xi_err:.2f}"
               f"   τ_int = {tau:.1f}")
         print("  m_eff(Δ): " + "  ".join(f"{v:.3f}" for v in curve[:8].tolist()))
 
@@ -225,7 +270,7 @@ def main():
             "xi": [r[3] for r in rows], "xi_err": [r[4] for r in rows],
             "m_eff_curves": [r[5] for r in rows], "tau_int": [r[6] for r in rows],
             "meta": {"L": L, "Lt": LT, "D": D, "N": N_CONFIGS,
-                     "n_skip": N_SKIP, "quote_delta": QUOTE_DELTA},
+                     "n_skip": N_SKIP, "fit_window": FIT_WINDOW, "jack_block": JACK_BLOCK},
         },
         "datasets/z2_beta_scan.pt",
     )
