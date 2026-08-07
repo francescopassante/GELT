@@ -141,6 +141,31 @@ if __name__ == "__main__":
     model_dtype = torch.float32 if isinstance(gaugegroup, Z2) else torch.complex64
 
     beta = 2.4  # SU(2) scaling window; β=1 is strong coupling with no topology
+
+    # The pivot switch of notes/topological_localization.md §4. Naive q(x) is
+    # quadratic in the plaquettes AT x, so the task needs zero receptive field
+    # and the attention may legitimately collapse to pure self-attention (an
+    # R² of 1.0 says the network found that exact algebraic solution). If
+    # scripts/topology_attention.py reports COLLAPSED, flip this to True:
+    # cooled q(x) depends on a whole neighbourhood of thin links, so it cannot
+    # be solved on-site and the attention is forced to carry range.
+    #
+    # The cost is that the localization ground truth then IS the training
+    # target, making "attention sits where the target is large" partly
+    # circular — so with this on, the claim to make is mechanistic (does the
+    # attention range match the cooling/instanton scale?), not existential.
+    TARGET_COOLED = False
+    N_COOL = 35  # from scripts/check_cooling.py
+
+    if TARGET_COOLED:
+        from gelt.topology import cool
+
+        def _target(configs, gaugegroup):
+            return topological_charge_density(
+                cool(configs, gaugegroup, n_steps=N_COOL), gaugegroup
+            )
+    else:
+        _target = topological_charge_density
     # Per-site topological charge density target: q_x has shape (B, *Λ). Paired
     # with ``reduction="none"`` on GELT, the model's per-site readout is
     # supervised directly — every site contributes a sample, and the equivariant
@@ -154,7 +179,8 @@ if __name__ == "__main__":
         "R": R,
         "splits": [0.7, 0.15, 0.15],
         "save": True,
-        "prefix": f"{gaugegroup}_L{L}_D{D}_N{N}_beta{beta}_R{R}_topo",
+        "prefix": f"{gaugegroup}_L{L}_D{D}_N{N}_beta{beta}_R{R}_topo"
+        + ("_cooled" if TARGET_COOLED else ""),
         "structured": True,
         # mcmc_ensemble's registry default for SU(2) is METROPOLIS, whose
         # decorrelation at β=2.4 in 4D is poor. Heat-bath + overrelaxation is
@@ -164,7 +190,7 @@ if __name__ == "__main__":
             sweep_fn=functools.partial(heatbath_overrelaxation_sweep, n_or=4),
         ),
         "beta": beta,
-        "target": topological_charge_density,
+        "target": _target,
         "n_therm": 200,
         "n_skip": 5,
         "dtype": torch.complex64,
@@ -185,7 +211,9 @@ if __name__ == "__main__":
         # converges in far fewer.
         "epochs": 150,
         "patience": 20,
-        "checkpoint_path": f"best_gelt_topo_L{L}_b{beta}_R{R}.pth",
+        "checkpoint_path": f"best_gelt_topo_L{L}_b{beta}_R{R}"
+        + ("_cooled" if TARGET_COOLED else "")
+        + ".pth",
     }
 
     # Debug-capacity GELT for the per-site topological charge density target.
