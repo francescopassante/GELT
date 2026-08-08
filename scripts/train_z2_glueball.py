@@ -44,23 +44,29 @@ from gelt.sampler import mcmc_ensemble, z2_heatbath_sweep
 # ── Tunables (lattice block MUST match z2_beta_scan.py: same cache key) ───────
 L, D, LT = 24, 3, 48
 N_CONFIGS, N_THERM, N_SKIP = 2000, 500, 200
-# Configurations actually used for training. The precomputed transport is
-# ~9.3 MB per configuration (48 slices × 84 offsets × 24² floats), so all 2000
-# would need ~19 GB of host RAM. 800 configs is 38,400 timeslice samples for a
-# ~10k-parameter model — statistics are nowhere near the binding constraint.
-# Raise it if the box has the memory and the fit looks statistics-limited.
-N_USE = 800
+# Configurations actually used for training. Host memory for the precomputed
+# transport is LT · n_off · L² · 4 B per config — at R=12 that is ~34.6 MB, so
+# N_USE is the RAM knob. 400 configs ≈ 14 GB and gives 13,440 timeslice samples
+# for a ~10k-parameter model. Raise it if the box has room and the val loss
+# looks statistics-limited; MAX_PREP_GB below aborts before the OOM.
+N_USE = 400
 PREP_CHUNK = 8  # configs per precompute batch (peak GPU transient)
+MAX_PREP_GB = 24.0  # abort the run rather than OOM halfway through precompute
 SMEAR_ALPHA = 0.5
 gaugegroup = Z2()
 NC = gaugegroup.nc
 
 BETA = float(sys.argv[1]) if len(sys.argv) > 1 else 0.756
 
-# R must exceed ξ_max = 5.28 (see the module docstring): a range statistic
-# bounded below the scale it is meant to track measures the bound, not the
-# physics.
-R = 6
+# R must exceed the scale the attention actually wants, not merely ξ. The R=6
+# readout showed the preferred radius is ≈2ξ — at ξ=1.93 the radial profile
+# peaked at |Δx|≈3–4, and by ξ=2.61 it rose monotonically to the R=6 edge, i.e.
+# already censored. With ξ_max = 5.28 that demands R ≈ 11, so R = 12. A range
+# statistic bounded below the scale it is meant to track measures the bound.
+#
+# Cost grows as R²: the 2D L1 ball holds 2R(R+1)+1 offsets — 85 at R=6, 313 at
+# R=12 — which is what N_USE has to pay for.
+R = 12
 GEMHSA_LAYERS = 4
 NHEAD = 2
 D_QKV = 8  # ≥ 2D = 4 for full RoPE axis coverage, with margin
@@ -150,6 +156,16 @@ def prepare(configs):
     here and indexed thereafter; the training step becomes the model forward,
     which is the only part that actually wants a GPU.
     """
+    n_off = 2 * R * (R + 1) + 1  # 2D L1 ball including the self offset
+    gb_est = len(configs) * LT * (n_off + len(INPUT_SMEAR_LEVELS)) * L * L * 4 / 1e9
+    print(f"precompute will need ≈{gb_est:.1f} GB of host RAM "
+          f"(N_USE={len(configs)}, R={R}, {n_off} offsets)")
+    if gb_est > MAX_PREP_GB:
+        raise SystemExit(
+            f"Refusing to start: {gb_est:.1f} GB exceeds MAX_PREP_GB={MAX_PREP_GB}. "
+            f"Lower N_USE (memory is linear in it) or lower R (quadratic)."
+        )
+
     Ws, Ts = [], []
     for i in tqdm(range(0, len(configs), PREP_CHUNK), desc="precompute W,T"):
         W, T = config_inputs(configs[i : i + PREP_CHUNK])

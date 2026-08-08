@@ -117,11 +117,27 @@ def readout(beta):
         unif = int(m.sum()) / n_off
         print(f"    |Δx|={d}:  {meas:.4f}   uniform {unif:.4f}   ratio {meas / unif:.2f}")
 
-    worst = (ent / ent_unif).max().item()
-    print(f"  VERDICT: max entropy/uniform = {worst:.3f}"
-          + ("  → essentially UNIFORM; ℓ_att is measuring the ball, not the physics"
-             if worst > 0.97 else
-             "  → structured; the ℓ_att trend is worth reading"))
+    # The summary must be the mean and the minimum, not the max: max asks
+    # whether the MOST uniform head is uniform, which says nothing about
+    # whether the map as a whole carries structure. A mix of sharp and diffuse
+    # heads is the normal outcome and is perfectly readable.
+    rel = ent / ent_unif
+    print(f"  VERDICT: entropy/uniform  mean {rel.mean():.3f}  min {rel.min():.3f}"
+          f"  ({int((rel < 0.9).sum())}/{rel.numel()} heads below 0.9)")
+    if rel.min() > 0.95:
+        print("    → every head is essentially UNIFORM; ℓ_att is measuring the")
+        print("      ball geometry, not the physics.")
+    else:
+        print("    → structured heads present; the radial profile is the signal")
+        print("      to read (ℓ_att alone is centred by the ball's geometry).")
+    # Where the profile peaks relative to uniform — the scale the attention
+    # actually prefers, and the number that should track ξ.
+    ratios = torch.tensor(
+        [mean_a[:, :, dist == d].sum(dim=2).mean() / (int((dist == d).sum()) / n_off)
+         for d in range(1, dmax + 1)]
+    )
+    print(f"    peak of profile/uniform at |Δx| = {int(ratios.argmax()) + 1}"
+          f" (ratio {ratios.max():.2f}); censored if this sits at R = {tz.R}")
     return {
         "beta": beta, "mean_alpha": mean_a, "ell": ell, "entropy": ent,
         "ell_uniform": ell_unif, "entropy_uniform": ent_unif, "n_off": n_off,
