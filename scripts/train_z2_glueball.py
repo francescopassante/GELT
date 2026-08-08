@@ -44,6 +44,13 @@ from gelt.sampler import mcmc_ensemble, z2_heatbath_sweep
 # ── Tunables (lattice block MUST match z2_beta_scan.py: same cache key) ───────
 L, D, LT = 24, 3, 48
 N_CONFIGS, N_THERM, N_SKIP = 2000, 500, 200
+# Configurations actually used for training. The precomputed transport is
+# ~9.3 MB per configuration (48 slices × 84 offsets × 24² floats), so all 2000
+# would need ~19 GB of host RAM. 800 configs is 38,400 timeslice samples for a
+# ~10k-parameter model — statistics are nowhere near the binding constraint.
+# Raise it if the box has the memory and the fit looks statistics-limited.
+N_USE = 800
+PREP_CHUNK = 8  # configs per precompute batch (peak GPU transient)
 SMEAR_ALPHA = 0.5
 gaugegroup = Z2()
 NC = gaugegroup.nc
@@ -103,14 +110,17 @@ def ensemble():
     return configs
 
 
-def network_obar(model, U_batch):
-    """Zero-momentum Ō(t) of a config minibatch via the per-timeslice 2D GELT.
+def config_inputs(U_batch):
+    """Smeared plaquette channels W and transport T for a config minibatch.
 
     ``U_batch`` : ``(b, 3, Lt, L, L, 1, 1)``. Mirrors train_glueball.py's
     network_obar with one dimension removed: the spatial slice is 2D, so
     ``U[:, 1:]`` has two directions and the plaquette tensor has one plane.
     Time never enters the network — the transfer-matrix bound that makes the
     converged loss a mass depends on it.
+
+    This is the whole cost of a step and NONE of it depends on the weights,
+    which is why :func:`prepare` runs it once instead of every epoch.
     """
     b = U_batch.shape[0]
     U = U_batch.to(device)
@@ -124,9 +134,41 @@ def network_obar(model, U_batch):
         if U2_first is None:
             U2_first = U2
         Ws.append(plaquette_tensor(U2, gaugegroup))  # (b·Lt, 1, L, L, nc, nc)
-    W = torch.cat(Ws, dim=1)
-    T = build_transport_average(U2_first, R, gaugegroup)
-    O = model(W, T)  # (b·Lt, L, L)
+    return torch.cat(Ws, dim=1), build_transport_average(U2_first, R, gaugegroup)
+
+
+def prepare(configs):
+    """Precompute (W, T) for every configuration, once, held on the CPU.
+
+    Z₂ has nc = 1, so every matmul in the smearing and the transport is 1×1 —
+    there is no arithmetic to speak of, only kernel-launch overhead from
+    ape_smear's Python loop over configs and directions (≈128 tiny launches per
+    batch to reach smearing level 16). Recomputing that every epoch left the
+    GPU at 0% utilization while it waited on dispatches.
+
+    W and T are functions of the configuration alone, so they are computed once
+    here and indexed thereafter; the training step becomes the model forward,
+    which is the only part that actually wants a GPU.
+    """
+    Ws, Ts = [], []
+    for i in tqdm(range(0, len(configs), PREP_CHUNK), desc="precompute W,T"):
+        W, T = config_inputs(configs[i : i + PREP_CHUNK])
+        Ws.append(W.cpu())
+        Ts.append(T.cpu())
+    W_all = torch.cat(Ws).view(len(configs), LT, *Ws[0].shape[1:])
+    T_all = torch.cat(Ts).view(len(configs), LT, *Ts[0].shape[1:])
+    gb = (W_all.numel() + T_all.numel()) * 4 / 1e9
+    print(f"precomputed W {tuple(W_all.shape)} T {tuple(T_all.shape)} — {gb:.1f} GB on CPU")
+    return W_all, T_all
+
+
+def obar_from(model, W, T):
+    """Zero-momentum Ō(t) from precomputed inputs. ``W``/``T``: ``(b, Lt, …)``."""
+    b = W.shape[0]
+    O = model(
+        W.reshape(b * LT, *W.shape[2:]).to(device),
+        T.reshape(b * LT, *T.shape[2:]).to(device),
+    )
     return O.sum(dim=(1, 2)).view(b, LT)
 
 
@@ -139,15 +181,15 @@ def rayleigh_loss(Obar):
     return loss + SCALE_REG * torch.log(C0.clamp_min(EPS)) ** 2
 
 
-def attention_stats(model, configs, n_viz=16):
+def attention_stats(model, W, T, n_viz=16):
     """ℓ_att per (layer, head), and its site-to-site spread, on held-out configs."""
     offsets = model.gemhsa_models[0].offsets
     dist = torch.tensor([sum(abs(c) for c in o) for o in offsets], dtype=torch.float32)
     n_off = len(offsets)
     ells = [[] for _ in model.gemhsa_models]
     with torch.no_grad():
-        for c in tqdm(range(n_viz), desc="attention"):
-            network_obar(model, configs[c : c + 1])
+        for c in tqdm(range(min(n_viz, len(W))), desc="attention"):
+            obar_from(model, W[c : c + 1], T[c : c + 1])
             for l, layer in enumerate(model.gemhsa_models):
                 a = layer._last_alpha.cpu()  # (b·Lt, H, n_off, L, L)
                 ells[l].append(
@@ -159,13 +201,18 @@ def attention_stats(model, configs, n_viz=16):
 
 def main():
     print(f"device: {device} | β = {BETA} | R = {R}")
-    configs = ensemble().to(MODEL_DTYPE)
-    n = configs.shape[0]
+    configs = ensemble()[:N_USE].to(MODEL_DTYPE)
+    W_all, T_all = prepare(configs)
+    del configs
+    n = W_all.shape[0]
     n_tr, n_va = int(TRAIN_FRACTION * n), int(VAL_FRACTION * n)
     # Contiguous, chain-ordered split — never shuffled: neighbouring configs are
     # autocorrelated, so a random split leaks train↔held correlations.
-    train, val, test = configs[:n_tr], configs[n_tr : n_tr + n_va], configs[n_tr + n_va :]
-    print(f"split: train {len(train)} | val {len(val)} | test {len(test)}")
+    sl_tr, sl_va, sl_te = slice(0, n_tr), slice(n_tr, n_tr + n_va), slice(n_tr + n_va, n)
+    W_tr, T_tr = W_all[sl_tr], T_all[sl_tr]
+    W_va, T_va = W_all[sl_va], T_all[sl_va]
+    W_te, T_te = W_all[sl_te], T_all[sl_te]
+    print(f"split: train {len(W_tr)} | val {len(W_va)} | test {len(W_te)}")
 
     model = GELT(
         gaugegroup=gaugegroup, L=L, D=2, R=R, nhead=NHEAD,
@@ -182,11 +229,11 @@ def main():
     best, bad = float("inf"), 0
     for ep in range(EPOCHS):
         model.train()
-        perm = torch.randperm(len(train))
+        perm = torch.randperm(len(W_tr))
         tot = 0.0
-        for i in tqdm(range(0, len(train), BATCH_CONFIGS), desc=f"ep {ep}", leave=False):
-            batch = train[perm[i : i + BATCH_CONFIGS]]
-            loss = rayleigh_loss(network_obar(model, batch))
+        for i in tqdm(range(0, len(W_tr), BATCH_CONFIGS), desc=f"ep {ep}", leave=False):
+            idx = perm[i : i + BATCH_CONFIGS]
+            loss = rayleigh_loss(obar_from(model, W_tr[idx], T_tr[idx]))
             if not torch.isfinite(loss):
                 print("  non-finite loss, skipping batch")
                 continue
@@ -198,10 +245,12 @@ def main():
         model.eval()
         with torch.no_grad():
             vl = float(np.mean([
-                rayleigh_loss(network_obar(model, val[i : i + BATCH_CONFIGS])).item()
-                for i in range(0, len(val), BATCH_CONFIGS)
+                rayleigh_loss(
+                    obar_from(model, W_va[i : i + BATCH_CONFIGS], T_va[i : i + BATCH_CONFIGS])
+                ).item()
+                for i in range(0, len(W_va), BATCH_CONFIGS)
             ]))
-        print(f"  ep {ep:3d}  train {tot / max(1, len(train) // BATCH_CONFIGS):.4f}  val {vl:.4f}")
+        print(f"  ep {ep:3d}  train {tot / max(1, len(W_tr) // BATCH_CONFIGS):.4f}  val {vl:.4f}")
         if vl < best:
             best, bad = vl, 0
             torch.save(model.state_dict(), CHECKPOINT)
@@ -215,14 +264,16 @@ def main():
     model.eval()
     # The converged Rayleigh ratio is a mass estimate: C(1)/C(0) = e^{−m}.
     with torch.no_grad():
-        ob = torch.cat([network_obar(model, test[i : i + BATCH_CONFIGS]).cpu()
-                        for i in range(0, len(test), BATCH_CONFIGS)])
+        ob = torch.cat([
+            obar_from(model, W_te[i : i + BATCH_CONFIGS], T_te[i : i + BATCH_CONFIGS]).cpu()
+            for i in range(0, len(W_te), BATCH_CONFIGS)
+        ])
     d = ob.double() - ob.double().mean()
     r1 = ((d.roll(-1, dims=1) * d).mean() / (d * d).mean()).item()
     m_net = -np.log(max(r1, 1e-12))
     print(f"\nbest val loss {best:.4f} | test C(1)/C(0) = {r1:.4f} → m·a ≈ {m_net:.4f}")
 
-    ell_mean, ell_std, offsets = attention_stats(model, test)
+    ell_mean, ell_std, offsets = attention_stats(model, W_te, T_te)
     print("layer head   ℓ_att")
     for l in range(GEMHSA_LAYERS):
         for h in range(NHEAD):
