@@ -63,6 +63,17 @@ removed pending rewrites; the spec now lives across the notes below.)
   glueball attention study, and the closure of clause 2 (attention range vs
   correlation length) as not measurable at `ξ_s ≲ 1`. The source of truth for
   this program; read before touching `gelt/topology.py`.
+- `notes/attention_as_operator.md` — **design record for the clause-2 rescue**
+  (`scripts/z2_attention_correlator.py`, queued 2026-08-10): why both prior
+  attempts failed for one shared reason — `ℓ_att` is the first radial moment of
+  the attention *averaged over the lattice*, so it is bounded by `R` and centred
+  by the ball geometry, and the averaging discards exactly the site-to-site
+  variation that distinguishes attention from convolution. The proposal: the
+  gauge-invariant score makes any reduction `A(x) = f(α_{x→·})` a **local scalar
+  lattice operator**, so its zero-momentum connected correlator decays with the
+  mass gap and `ξ_A = 1/m_A` should track `ξ(β)` with no ceiling and no
+  geometric offset. Three arms (matched β / cross-β / random init) and what each
+  outcome would license. Not yet run.
 - `notes/resources.md` — curated textbooks, lecture notes, and ML-for-LGT
   papers with suggested reading order.
 - `notes/tunnel-visualization.md` — exploratory notes on visualising

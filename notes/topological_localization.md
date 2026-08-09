@@ -374,6 +374,34 @@ with tests against `tanh β`), the classical Z₂ mass scan and its diagnostics,
 and the gate methodology — cheap classical measurement gating expensive
 training — which saved four overnight SU(2) runs earlier in this program.
 
+### 6.2 Reopened, with a different statistic (2026-08-10)
+
+The methodological lesson above ("a range statistic is bounded by R *and centred
+by the ball geometry*") turns out to indict the statistic rather than the
+question. `ℓ_att` is the first radial moment of the attention **averaged over
+the lattice** — a property of the learned *kernel*, of the same kind as a
+convolution's filter width — and averaging over sites is precisely what discards
+the site-to-site, configuration-to-configuration variation that attention has
+and convolution does not. The R=12 readout already shows the discarded part is
+large: several heads sit at 0.42–0.72 of the uniform entropy ceiling while their
+`ℓ_att` sits on the uniform 8.31.
+
+Keeping the variation instead makes the attention a **lattice operator**: the
+score is gauge invariant, so any reduction `A(x) = f(α_{x→·})` is a local
+gauge-invariant scalar field, and (the operator being per-timeslice) its
+zero-momentum connected correlator has an exact transfer-matrix decomposition.
+It therefore decays with the mass gap, and `ξ_A = 1/m_A` is a length with no
+ceiling at R and no geometric offset. For a fixed convolutional kernel the
+fluctuation vanishes identically and the measurement does not exist — so a
+signal *is* the content-dependence result.
+
+Design record: `notes/attention_as_operator.md`. Runner:
+`scripts/z2_attention_correlator.py` — analysis only, on the ensembles and
+checkpoints this section already produced (training used `configs[:400]`, so
+`configs[400:]` is unseen by every checkpoint). Cross-evaluating one fixed
+network across all five ensembles also removes the confound that closed §6.1:
+operator quality is a property of the row, the physics of the column.
+
 ---
 
 ## 7. Open risks
