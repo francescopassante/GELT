@@ -145,9 +145,16 @@ SMOKE = os.environ.get("ZAC_SMOKE", "0") == "1"
 # Matched to z2_beta_scan.py — the classical ξ these numbers are compared to
 # was produced with exactly these conventions.
 GEVP_T0, GEVP_TD = 1, 2
-FIT_WINDOW = (2, 8)
+FIT_WINDOW = (2, 8)  # upper bound only — the usable window is chosen per arm
+MIN_FIT_POINTS = 4   # below this a 2-parameter cosh fit is not a measurement
 JACK_BLOCK = 20
 SMEAR_LEVELS = [0, 4, 8, 16]
+# Ceiling on the GEVP basis size. C(t0) must be invertible from B configurations
+# and the attention channels are heavily redundant; 24 of them at B ≈ 200 is
+# what produced the first run's all-NaN GEVP arms.
+MAX_GEVP_OPS = 6
+# Per-head numbers are a qualitative table, so they get a coarser jackknife.
+PER_HEAD_BLOCK = 4 * JACK_BLOCK
 
 # The three natural scalars of an attention row. "ell" is deliberately the
 # statistic that failed as a mean — read here as a *field*, which is the whole
@@ -263,52 +270,130 @@ def _standardize(obar):
     return obar / s.view(-1, 1, 1)
 
 
-def _fit(obar, nt):
-    """(m, A₀) from a cosh fit to the GEVP-projected correlator.
+def _prune(obar, max_ops=MAX_GEVP_OPS, rho_max=0.99):
+    """Indices of a well-conditioned sub-basis for the GEVP.
 
-    ``obar`` is ``(n_ch, B, Nt)``. Single-channel input skips the GEVP. Returns
-    NaN rather than raising when the correlator is not positive across the fit
-    window — an unresolved cell must be visible as unresolved, not as a number.
+    A GEVP has to invert C(t0), and 24 channels from 8 heads × 3 reductions are
+    heavily redundant — the entropy and the range of one head measure nearly the
+    same thing. At a few hundred configurations that estimate is not good enough
+    to invert, the eigenvalue floor takes over, and the "ground-state" vector
+    comes back a noise direction whose projected correlator oscillates through
+    zero. (The first run showed exactly this signature: both single-channel arms
+    fitted, both GEVP arms returned NaN.)
+
+    Rank by long-distance signal C(td)/C(0), then add greedily, skipping any
+    channel correlating above ``rho_max`` with one already kept.
     """
+    n = obar.shape[0]
+    if n <= 1:
+        return list(range(n))
+    flat = obar.reshape(n, -1)
+    flat = flat - flat.mean(dim=1, keepdim=True)
+    rho = torch.corrcoef(flat).abs().nan_to_num(0.0)
+    d = obar - obar.mean(dim=(1, 2), keepdim=True)
+    sig = ((d.roll(-GEVP_TD, dims=2) * d).mean(dim=(1, 2))
+           / (d * d).mean(dim=(1, 2)).clamp_min(1e-30))
+    order = torch.argsort(sig, descending=True).tolist()
+    kept = []
+    for i in order:
+        if len(kept) >= max_ops:
+            break
+        if all(rho[i, j] < rho_max for j in kept):
+            kept.append(i)
+    return kept or [order[0]]
+
+
+def _project(obar):
+    """GEVP-projected series, or the channel itself when there is only one."""
     if obar.shape[0] == 1:
-        proj = obar[0]
-    else:
-        try:
-            C = connected_correlator_matrix(obar)
-            v0 = gevp_ground_vector(C, t0=GEVP_T0, td=GEVP_TD)
-            proj = torch.einsum("i,ibt->bt", v0, obar)
-        except Exception:
-            return float("nan"), float("nan")
+        return obar[0], None
+    C = connected_correlator_matrix(obar)
+    v0 = gevp_ground_vector(C, t0=GEVP_T0, td=GEVP_TD)
+    return torch.einsum("i,ibt->bt", v0, obar), v0
+
+
+def _window(Cp, bounds=FIT_WINDOW, min_pts=MIN_FIT_POINTS):
+    """Largest ``[lo, d] ⊆ bounds`` over which the correlator stays positive.
+
+    A fixed window is not survivable at a few hundred configurations: the
+    glueball signal-to-noise falls exponentially, so one noisy point at Δ=8 sent
+    the whole fit to NaN in the first run. The window is chosen **once on the
+    full sample** and then reused inside every jackknife replica — a jackknife
+    whose estimator changes between replicas does not estimate anything.
+    """
+    lo, hi = bounds
+    if not torch.isfinite(Cp[0]) or Cp[0] <= 0:
+        return None
+    d = lo - 1
+    for k in range(lo, min(hi, len(Cp) - 1) + 1):
+        if not torch.isfinite(Cp[k]) or Cp[k] <= 0:
+            break
+        d = k
+    return (lo, d) if d - lo + 1 >= min_pts else None
+
+
+def _fit(obar, nt, window):
+    """(m, A₀) on a *given* window. No positivity veto — least squares tolerates
+    a noisy point, and vetoing here would silently change the estimator between
+    jackknife replicas."""
+    try:
+        proj, _ = _project(obar)
+    except Exception as exc:  # never swallow silently: NaN with no reason is
+        return float("nan"), float("nan"), f"GEVP failed: {exc}"  # undebuggable
     Cp = connected_correlator(proj)
-    lo, hi = FIT_WINDOW
-    win = Cp[lo : hi + 1]
-    if not torch.isfinite(Cp[: hi + 1]).all() or (win <= 0).any() or Cp[0] <= 0:
-        return float("nan"), float("nan")
-    m, A, _chi2 = fit_cosh_correlator(Cp, lo, hi)
+    if not torch.isfinite(Cp[: window[1] + 1]).all() or Cp[0] <= 0:
+        return float("nan"), float("nan"), "non-finite or non-positive C(0)"
+    m, A, _chi2 = fit_cosh_correlator(Cp, *window)
     if not np.isfinite(m) or m <= 0:
-        return float("nan"), float("nan")
+        return float("nan"), float("nan"), "fit returned non-positive m"
     # Morningstar–Peardon ground-state overlap fraction, as in
     # scripts/fit_glueball_overlap.py.
     A0 = A * (1.0 + math.exp(-m * nt)) / Cp[0].item()
-    return float(m), float(A0)
+    return float(m), float(A0), None
 
 
-def _jack(obar, nt, block=JACK_BLOCK):
+def _jack(obar, nt, block=JACK_BLOCK, label=""):
     """Blocked-jackknife (m, A₀) with errors, resampling *configurations*.
 
     Blocks rather than single deletions because τ_int reaches 6.3 near β_c and
     neighbouring configurations are correlated; deleting one at a time would
     understate the error exactly where the interesting points are.
+
+    The sub-basis and the fit window are fixed on the full sample; v₀ is
+    recomputed inside every replica (as in fit_glueball_overlap.py), so the
+    jackknife propagates the projection's own noise.
     """
     obar = _standardize(obar.double())
-    m, a0 = _fit(obar, nt)
+    kept = _prune(obar)
+    obar = obar[kept]
+
+    try:
+        proj, _ = _project(obar)
+        Cp = connected_correlator(proj)
+    except Exception as exc:
+        return {"m": float("nan"), "m_err": float("nan"), "A0": float("nan"),
+                "A0_err": float("nan"), "why": f"GEVP failed: {exc}",
+                "n_ops": len(kept), "window": None, "profile": None}
+
+    prof = (Cp / Cp[0]).tolist() if Cp[0] > 0 else Cp.tolist()
+    window = _window(Cp)
+    out = {"n_ops": len(kept), "kept": kept, "window": window,
+           "profile": [float(x) for x in prof[:12]]}
+    if window is None:
+        out.update({"m": float("nan"), "m_err": float("nan"), "A0": float("nan"),
+                    "A0_err": float("nan"),
+                    "why": f"correlator not positive for {MIN_FIT_POINTS} points "
+                           f"from Δ={FIT_WINDOW[0]} — needs more configurations"})
+        return out
+
+    m, a0, why = _fit(obar, nt, window)
     B = obar.shape[1]
     n_blocks = max(2, B // block)
     ms, a0s = [], []
     for b in range(n_blocks):
         keep = torch.ones(B, dtype=torch.bool)
         keep[b * block : (b + 1) * block] = False
-        mm, aa = _fit(obar[:, keep], nt)
+        mm, aa, _ = _fit(obar[:, keep], nt, window)
         ms.append(mm)
         a0s.append(aa)
     ms = np.array(ms, dtype=float)
@@ -321,8 +406,60 @@ def _jack(obar, nt, block=JACK_BLOCK):
         n = len(good)
         return float(np.sqrt((n - 1) / n * ((good - good.mean()) ** 2).sum()))
 
-    return {"m": m, "m_err": _err(ms), "A0": a0, "A0_err": _err(a0s),
-            "n_resolved": int(np.isfinite(ms).sum()), "n_blocks": n_blocks}
+    out.update({"m": m, "m_err": _err(ms), "A0": a0, "A0_err": _err(a0s), "why": why,
+                "n_resolved": int(np.isfinite(ms).sum()), "n_blocks": n_blocks})
+    return out
+
+
+def _jack_best_single(obar, nt, labels, block=JACK_BLOCK):
+    """Same statistics for the single best channel — no GEVP, no conditioning.
+
+    The GEVP is the variational optimum but it is also the fragile step. One
+    channel is always fittable, so this arm is the floor under the measurement:
+    if it resolves and the GEVP does not, the problem is conditioning, not
+    physics.
+    """
+    obar = _standardize(obar.double())
+    best, best_a0 = None, -np.inf
+    for i in range(obar.shape[0]):
+        Cp = connected_correlator(obar[i])
+        w = _window(Cp)
+        if w is None:
+            continue
+        m, a0, _ = _fit(obar[i : i + 1], nt, w)
+        if np.isfinite(a0) and a0 > best_a0:
+            best, best_a0 = i, a0
+    if best is None:
+        return {"m": float("nan"), "m_err": float("nan"), "A0": float("nan"),
+                "A0_err": float("nan"), "channel": None,
+                "why": "no single channel resolved"}
+    res = _jack(obar[best : best + 1], nt, block=block)
+    res["channel"] = labels[best] if labels else best
+    return res
+
+
+def _diagnose(name, res):
+    """Print why an arm did or did not resolve.
+
+    A bare NaN costs a remote round trip to interpret; the correlator profile
+    and the chosen window say immediately whether the problem is statistics
+    (signal dies inside the window), conditioning (GEVP threw), or physics.
+    """
+    prof = res.get("profile")
+    if prof:
+        print(f"      C(Δ)/C(0) [{name}]: "
+              + " ".join(f"{v:+.3f}" for v in prof[:10]))
+    bits = []
+    if res.get("window"):
+        bits.append(f"window Δ∈{res['window']}")
+    if res.get("n_ops"):
+        bits.append(f"{res['n_ops']} ops")
+    if res.get("n_resolved") is not None and res.get("n_blocks"):
+        bits.append(f"{res['n_resolved']}/{res['n_blocks']} jack replicas")
+    if res.get("why"):
+        bits.append(f"UNRESOLVED: {res['why']}")
+    if bits:
+        print("      " + " | ".join(bits))
 
 
 def _xi(row):
@@ -411,6 +548,7 @@ def measure_ensemble(beta, nets, labels, dist):
     xi_c, xi_ce = _xi(res["classical"])
     print(f"  classical smeared basis:  m = {res['classical']['m']:.4f} "
           f"± {res['classical']['m_err']:.4f}   ξ = {xi_c:.2f} ± {xi_ce:.2f}")
+    _diagnose("classical", res["classical"])
 
     gen = torch.Generator().manual_seed(RANDOM_SEED)
     for name in nets:
@@ -426,10 +564,12 @@ def measure_ensemble(beta, nets, labels, dist):
             res["nets"][name] = {"rel_fluct": rel, "dead": True}
             continue
 
+        kept_labels = [labels[j] for j in range(len(labels)) if keep[j]]
         entry = {
             "rel_fluct": rel,
             "kept": keep,
             "attention": _jack(chan[keep], Nt),
+            "attention_single": _jack_best_single(chan[keep], Nt, kept_labels),
             "output": _jack(out, Nt),
             "shuffled": _jack(_shuffle_time(_standardize(chan[keep].double()), gen), Nt),
             "per_head": {},
@@ -440,16 +580,27 @@ def measure_ensemble(beta, nets, labels, dist):
                 idx = [labels.index(f"L{l + 1}h{h}:{r}") for r in REDUCTIONS]
                 idx = [j for j in idx if keep[j]]
                 if idx:
-                    entry["per_head"][f"L{l + 1}h{h}"] = _jack(chan[idx], Nt)
+                    entry["per_head"][f"L{l + 1}h{h}"] = _jack(
+                        chan[idx], Nt, block=PER_HEAD_BLOCK
+                    )
         res["nets"][name] = entry
 
         xi_a, xi_ae = _xi(entry["attention"])
+        xi_s, _ = _xi(entry["attention_single"])
         xi_o, _ = _xi(entry["output"])
         m_sh = entry["shuffled"]["m"]
+        r_keep = rel[keep]
         print(f"  {name:>14}: ξ_att = {xi_a:6.2f} ± {xi_ae:5.2f}   "
               f"A₀ = {entry['attention']['A0']:.3f} ± {entry['attention']['A0_err']:.3f}   "
-              f"ξ_out = {xi_o:6.2f}   shuffled m = {m_sh:.3f}   "
-              f"δA/A = {rel[keep].mean():.2e}")
+              f"ξ_1ch = {xi_s:6.2f} ({entry['attention_single'].get('channel')})   "
+              f"ξ_out = {xi_o:6.2f}   shuffled m = {m_sh:.3f}")
+        # Mean over channels is dominated by whichever channel has the smallest
+        # mean, so quote the distribution.
+        print(f"      δA/A over {int(keep.sum())} channels: "
+              f"median {r_keep.median():.3f}  min {r_keep.min():.3f}  "
+              f"max {r_keep.max():.3f}")
+        _diagnose(f"{name} attention", entry["attention"])
+        _diagnose(f"{name} shuffled-null", entry["shuffled"])
     return res
 
 
