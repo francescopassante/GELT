@@ -209,6 +209,17 @@ the companion question negatively: `ξ_s ≤ 1.1` spatial lattice spacings acros
 β ∈ [2.1, 2.7], smaller than the integer grid the attention lives on, so the
 attention-range-vs-correlation-length study is not measurable on this lattice
 family (the box is *large* — L/ξ_s ≈ 12 — it is the spacing that is coarse).
+A follow-up attempt to rescue the range question in **3D Z₂ near its critical
+point** (where ξ genuinely reaches 5.3 lattice spacings, unlike SU(2)) also
+closed negative: the operators reproduce the classical mass at R=6 but ℓ_att
+sits on its *uniform* value at both R=6 (4.25/4.54 vs 4.28) and R=12
+(7.4–8.6 vs 8.31), with no trend in ξ. **Methodological lesson: a range
+statistic is bounded by R *and centred by the ball geometry* — always quote
+ℓ_att against Σ_d(4d·d)/n_off.** The attempt did leave an exact, tested Z₂
+heat-bath in `gelt/sampler.py` (`z2_heatbath_sweep`, `P(U=+1)=σ(2βs)`; the
+Metropolis flip proposal's acceptance collapses to 0.02 near β_c) plus
+`scripts/z2_beta_scan.py` / `train_z2_glueball.py` / `z2_attention_readout.py`.
+Full record in `notes/topological_localization.md` §6.1.
 `gelt/topology.py` (`cool`, `cooled_charge_density`) + `tests/test_topology.py`
 + `scripts/check_cooling.py` are the 4D cooling layer for the topology study;
 `glueball.ape_smear` gained a `directions` argument (default unchanged, so the
