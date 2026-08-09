@@ -24,8 +24,29 @@ R=6 is only 84 offsets, so the headroom is nearly free.
 Run (one β per invocation, so phases are failure-isolated):
     python scripts/train_z2_glueball.py 0.756
 
-Writes ``best_z2_glueball_b<beta>.pth`` and appends a row to
-``datasets/z2_attention_rows.pt``.
+**Retraining, 2026-08-10.** The R=12 sweep produced undertrained operators —
+m_net/m_class = 1.18, 1.24, 1.53, 1.55, 2.10, degrading with ξ — because
+N_USE had to be halved to 400 to pay for 313 offsets, giving 70 optimizer
+steps/epoch against the 140 of the R=6/N_USE=800 run that measured 1.02 and
+1.00. The R=12 choice existed only to keep ℓ_att from being censored, and ℓ_att
+is dead (notes/attention_as_operator.md). So go back to the setting that worked:
+
+    Z2G_R=6 Z2G_N_USE=800 python -u scripts/train_z2_glueball.py 0.756
+
+Artifacts from a non-default R get an ``_R<r>`` suffix, so the recorded R=12
+checkpoints are never clobbered. Every run now closes with a **gate** against
+Phase A's classical mass (``datasets/z2_beta_scan.pt``): the transfer-matrix
+bound is one-sided, so m_net/m_class ≥ 1 always and a ratio above 1.10 means the
+operator has not converged. The R=12 run had no such check, which is why a β
+that finished with the second-best val loss of the scan (−0.5358 at β=0.760)
+also produced its worst operator — the loss *is* a mass, and masses are not
+comparable across β.
+
+Environment overrides: ``Z2G_R``, ``Z2G_N_USE``, ``Z2G_EPOCHS``,
+``Z2G_PATIENCE``.
+
+Writes ``best_z2_glueball_b<beta>[_R<r>].pth`` and appends a row to
+``datasets/z2_attention_rows[_R<r>].pt``.
 """
 
 import os
@@ -49,7 +70,16 @@ N_CONFIGS, N_THERM, N_SKIP = 2000, 500, 200
 # N_USE is the RAM knob. 400 configs ≈ 14 GB and gives 13,440 timeslice samples
 # for a ~10k-parameter model. Raise it if the box has room and the val loss
 # looks statistics-limited; MAX_PREP_GB below aborts before the OOM.
-N_USE = 400
+#
+# It was not enough. The R=12 run at N_USE=400 gave 70 optimizer steps/epoch
+# against the 140 of the R=6/N_USE=800 run, and the operators came out at
+# m_net/m_class = 1.18, 1.24, 1.53, 1.55, 2.10 — degrading with ξ. At R=6 the
+# transport is 3.7× smaller, so N_USE=800 fits in the same RAM: prefer
+# ``Z2G_R=6 Z2G_N_USE=800``, which is the configuration that measured 1.02 and
+# 1.00. Nothing downstream of this file needs R > ξ any more (see
+# notes/attention_as_operator.md — the correlator of the attention field is not
+# bounded by R the way ℓ_att is).
+N_USE = int(os.environ.get("Z2G_N_USE", 400))
 PREP_CHUNK = 8  # configs per precompute batch (peak GPU transient)
 MAX_PREP_GB = 24.0  # abort the run rather than OOM halfway through precompute
 SMEAR_ALPHA = 0.5
@@ -66,7 +96,13 @@ BETA = float(sys.argv[1]) if len(sys.argv) > 1 else 0.756
 #
 # Cost grows as R²: the 2D L1 ball holds 2R(R+1)+1 offsets — 85 at R=6, 313 at
 # R=12 — which is what N_USE has to pay for.
-R = 12
+#
+# That reasoning is now obsolete for the study it was written for: ℓ_att failed
+# at BOTH R=6 and R=12 because it is centred by the ball geometry, not because
+# it was censored by R (notes/topological_localization.md §6.1). The replacement
+# statistic — the correlator of the attention *field* — has no R ceiling at all,
+# so R is free to go back to the value where the operators were good.
+R = int(os.environ.get("Z2G_R", 12))
 GEMHSA_LAYERS = 4
 NHEAD = 2
 D_QKV = 8  # ≥ 2D = 4 for full RoPE axis coverage, with margin
@@ -83,8 +119,8 @@ IN_CHANNELS = 1 * len(INPUT_SMEAR_LEVELS)
 
 LR = 3e-3
 WEIGHT_DECAY = 1e-3
-EPOCHS = 40
-PATIENCE = 8
+EPOCHS = int(os.environ.get("Z2G_EPOCHS", 40))
+PATIENCE = int(os.environ.get("Z2G_PATIENCE", 8))
 BATCH_CONFIGS = 4
 LOSS_DELTAS = (1, 2)
 SCALE_REG = 1e-2  # (log C(0))² pin on the Ō → λŌ flat direction — without it
@@ -93,9 +129,26 @@ SCALE_REG = 1e-2  # (log C(0))² pin on the Ō → λŌ flat direction — witho
 EPS = 1e-8
 TRAIN_FRACTION, VAL_FRACTION = 0.7, 0.1
 
+BETA_SCAN = "datasets/z2_beta_scan.pt"  # Phase A: the classical mass to beat
+
+
+def artifact_tag(r=None):
+    """Suffix keeping runs at different R from clobbering each other.
+
+    R=12 keeps the original un-suffixed names, so the recorded R=12 run's
+    checkpoints stay exactly where every existing script looks for them.
+    """
+    r = R if r is None else r
+    return "" if r == 12 else f"_R{r}"
+
+
+def checkpoint_path(beta, r=None):
+    return f"best_z2_glueball_b{beta}{artifact_tag(r)}.pth"
+
+
 CACHE = f"datasets/z2_configs_L{L}_Lt{LT}_b{BETA}_N{N_CONFIGS}.pt"
-CHECKPOINT = f"best_z2_glueball_b{BETA}.pth"
-ROWS = "datasets/z2_attention_rows.pt"
+CHECKPOINT = checkpoint_path(BETA)
+ROWS = f"datasets/z2_attention_rows{artifact_tag()}.pt"
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -215,8 +268,34 @@ def attention_stats(model, W, T, n_viz=16):
     return ell.mean(dim=(1, 3)), ell.std(dim=(1, 3)), offsets  # (layers, H)
 
 
+def classical_mass(beta):
+    """Phase A's classical GEVP mass at this β, or (None, None) if absent.
+
+    The variational bound says a per-timeslice operator can only *over*estimate
+    the mass, so m_net/m_class is a hard quality scale with 1.0 as the floor.
+    Nothing in the loss provides this: β=0.760 finished with the second-best val
+    loss of the R=12 scan (−0.5358) and the worst operator (2.10× the classical
+    mass), because the loss is a mass and masses are not comparable across β.
+    """
+    for path in (BETA_SCAN, os.path.basename(BETA_SCAN)):
+        if os.path.exists(path):
+            scan = torch.load(path, weights_only=False)
+            for b, m, e in zip(scan["betas"], scan["m"], scan["m_err"]):
+                if abs(b - beta) < 1e-9:
+                    return float(m), float(e)
+    return None, None
+
+
+# The R=12 scan's five ratios were 1.18 … 2.10. Anything above this is an
+# operator that has not converged, and reading attention off it compares
+# networks of unequal quality — the confound that closed the ℓ_att study.
+GATE_RATIO = 1.10
+
+
 def main():
-    print(f"device: {device} | β = {BETA} | R = {R}")
+    print(f"device: {device} | β = {BETA} | R = {R} | N_USE = {N_USE} | "
+          f"epochs ≤ {EPOCHS} (patience {PATIENCE})")
+    print(f"artifacts: {CHECKPOINT} | {ROWS}")
     configs = ensemble()[:N_USE].to(MODEL_DTYPE)
     W_all, T_all = prepare(configs)
     del configs
@@ -289,6 +368,23 @@ def main():
     m_net = -np.log(max(r1, 1e-12))
     print(f"\nbest val loss {best:.4f} | test C(1)/C(0) = {r1:.4f} → m·a ≈ {m_net:.4f}")
 
+    # Quality gate against the classical mass. The transfer-matrix bound makes
+    # this one-sided, so the ratio is a pure convergence diagnostic.
+    m_cl, e_cl = classical_mass(BETA)
+    ratio = m_net / m_cl if m_cl else float("nan")
+    gate_pass = bool(m_cl) and ratio <= GATE_RATIO
+    if m_cl:
+        print(f"classical m·a = {m_cl:.4f} ± {e_cl:.4f}  →  m_net/m_class = {ratio:.2f}"
+              f"   [{'PASS' if gate_pass else 'FAIL'} at ≤ {GATE_RATIO}]")
+        if not gate_pass:
+            print("  UNDERTRAINED: the operator is well above the classical mass, so any")
+            print("  attention read off it describes a network that has not converged.")
+            print(f"  Retry with more steps/epoch (raise Z2G_N_USE) or more epochs")
+            print(f"  (Z2G_EPOCHS / Z2G_PATIENCE) before trusting this β.")
+    else:
+        print(f"no {BETA_SCAN} on disk — cannot gate this operator against the"
+              " classical mass")
+
     ell_mean, ell_std, offsets = attention_stats(model, W_te, T_te)
     print("layer head   ℓ_att")
     for l in range(GEMHSA_LAYERS):
@@ -302,6 +398,9 @@ def main():
         "beta": BETA, "m_net": m_net, "xi_net": 1.0 / m_net if m_net > 0 else float("inf"),
         "val_loss": best, "ell_mean": ell_mean, "ell_std": ell_std,
         "R": R, "n_offsets": len(offsets),
+        # Recorded per row so a later analysis can filter on operator quality
+        # instead of rediscovering it from the notes.
+        "m_class": m_cl, "ratio": ratio, "gate_pass": gate_pass, "n_use": N_USE,
     }
     torch.save(rows, ROWS)
     print(f"appended β={BETA} → {ROWS}  ({len(rows)} rows)")

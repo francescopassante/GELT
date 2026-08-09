@@ -130,6 +130,14 @@ BETAS = [0.7450, 0.7520, 0.7560, 0.7585, 0.7600]
 # checkpoint, so the SAME evaluation slice is clean for all 25 matrix cells.
 EVAL_START = tz.N_USE
 N_EVAL = int(os.environ.get("ZAC_N_EVAL", 400))
+# R (and with it N_USE, and with it the unseen slice) must match the checkpoints
+# being read. ZAC_R=6 ZAC_N_USE=800 pairs with the retrained operators; the
+# defaults still read the original R=12 set.
+if "ZAC_R" in os.environ:
+    tz.R = int(os.environ["ZAC_R"])
+if "ZAC_N_USE" in os.environ:
+    tz.N_USE = int(os.environ["ZAC_N_USE"])
+    EVAL_START = tz.N_USE
 CHUNK = int(os.environ.get("ZAC_CHUNK", 1))
 CROSS = os.environ.get("ZAC_CROSS", "1") == "1"
 SMOKE = os.environ.get("ZAC_SMOKE", "0") == "1"
@@ -151,7 +159,7 @@ RANDOM_SEED = 20260810
 # carry no signal and would only make C(t0) singular in the GEVP.
 MIN_REL_FLUCT = 1e-6
 
-_TAG = "" if CROSS else "_diag"
+_TAG = ("" if CROSS else "_diag") + tz.artifact_tag()
 OUT_PT = f"datasets/z2_attention_correlator{_TAG}.pt"
 OUT_PNG = f"z2_attention_correlator{_TAG}.png"
 
@@ -657,6 +665,27 @@ def plot(rows):
     print(f"\nwrote {OUT_PNG}")
 
 
+def operator_quality(beta):
+    """m_net/m_class for the checkpoint at this β, from the training rows.
+
+    Printed up front so an undertrained set of operators is visible *before* the
+    run rather than in the notes afterwards. The cross-evaluation arm survives
+    unequal quality by design (it is a property of the row, the physics of the
+    column) — but the diagonal does not, and A₀ least of all.
+    """
+    if not os.path.exists(tz.ROWS):
+        return None
+    rows = torch.load(tz.ROWS, weights_only=False)
+    r = rows.get(beta)
+    if r is None:
+        return None
+    ratio = r.get("ratio")
+    if ratio is None and r.get("m_net") is not None:
+        m_cl, _ = tz.classical_mass(beta)
+        ratio = float(r["m_net"]) / m_cl if m_cl else None
+    return ratio
+
+
 def selftest():
     """Does the analysis half recover a mass it was given?
 
@@ -698,12 +727,14 @@ def main():
           + ("  [SMOKE]" if SMOKE else ""))
 
     nets_all = {}
+    quality = {}
     for b in BETAS:
-        ck = f"best_z2_glueball_b{b}.pth"
+        ck = tz.checkpoint_path(b)
         if SMOKE:
             nets_all[f"train@{b}"] = build_model(seed=int(b * 1e4))
         elif os.path.exists(ck):
             nets_all[f"train@{b}"] = build_model(ckpt=ck)
+            quality[b] = operator_quality(b)
         else:
             print(f"  no checkpoint {ck} — that row of the matrix will be absent")
     nets_all["random"] = build_model(seed=RANDOM_SEED)
@@ -716,6 +747,15 @@ def main():
                         dtype=tz.MODEL_DTYPE, device=device)
     print(f"{len(nets_all)} networks | {len(labels)} attention channels "
           f"| {len(offsets)} offsets")
+    if quality:
+        q = "  ".join(f"β={b}: {r:.2f}" if r else f"β={b}: ?" for b, r in quality.items())
+        print(f"operator quality m_net/m_class — {q}")
+        bad = [b for b, r in quality.items() if r and r > tz.GATE_RATIO]
+        if bad:
+            print(f"  WARNING: {len(bad)}/{len(quality)} checkpoints are above the "
+                  f"{tz.GATE_RATIO} gate ({bad}).")
+            print("  ξ_A and the row/column control are still readable; the diagonal's")
+            print("  A₀ comparison against the random arm is not, until these converge.")
 
     rows = []
     for beta in BETAS:
