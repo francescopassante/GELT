@@ -402,6 +402,46 @@ checkpoints this section already produced (training used `configs[:400]`, so
 network across all five ensembles also removes the confound that closed §6.1:
 operator quality is a property of the row, the physics of the column.
 
+#### The R=6 retrain (2026-08-11), and a miscalibrated gate
+
+Reverting to the configuration that had worked — R=6, `N_USE=800`, 140
+optimizer steps/epoch — improved every β:
+
+| β | 0.745 | 0.752 | 0.756 | 0.7585 | 0.760 |
+|---|---|---|---|---|---|
+| ξ (classical) | 2.05 | 2.61 | 4.14 | 4.59 | 5.28 |
+| m_net/m_class, R=12 | 1.18 | 1.24 | 1.53 | 1.55 | 2.10 |
+| m_net/m_class, R=6 | **1.045** | **0.995** | 1.224 | 1.181 | 1.440 |
+
+The residual ratios grow monotonically with ξ, which looks like undertraining
+at large ξ and is mostly **an artifact of the gate**. Two defects:
+
+1. **Estimator mismatch.** `m_net = −log[C(1)/C(0)]` is m_eff(Δ=1) — a strict
+   upper bound carrying every excited state — while `m_class` is a cosh fit
+   over Δ ∈ [2,8] of the GEVP-projected correlator. The bias is one-directional
+   and grows in *relative* terms as m₀ → 0, i.e. precisely as ξ grows. Direct
+   evidence: the R=12 β=0.745 operator reads m = 0.5753 (ξ = 1.74) by C(1)/C(0)
+   and ξ = 2.29 by the cosh fit — the *same operator*, 32% apart, and by the
+   matched estimator it beats the classical ξ = 2.05 rather than losing to it.
+2. **No error propagation.** Against the classical errors alone the five points
+   sit at 0.6σ, −0.0σ, 2.9σ, 0.5σ, 2.0σ above 1. β=0.7585's "1.18" is half a
+   sigma from perfect — its classical mass is known only to ±28%.
+
+Fixed in `train_z2_glueball.py`: `fitted_mass` re-fits the network's own
+correlator with the classical scan's window and blocked jackknife, the gate
+propagates both errors, and a β fails only when it is above threshold
+*significantly*. `Z2G_REGATE=1` re-judges an existing checkpoint without
+retraining.
+
+**A free bonus result: ℓ_att does not reproduce across retrainings.** The first
+R=6 sweep reported ℓ_att = 4.25 and 4.54 at β = 0.745 and 0.752; this one, same
+R, same β, more data, reports head-means of 3.95 and 4.06 (head-maxima 4.72 and
+4.61). Retraining alone moves the statistic by 0.3–0.5, against an across-β span
+of 3.95 → 4.57 for the whole scan. So the run-to-run variation of ℓ_att is the
+size of the entire effect it was supposed to measure — an independent
+confirmation, from a reproducibility test the original study never ran, that
+§6.1's negative was about the statistic and not about the physics.
+
 ---
 
 ## 7. Open risks

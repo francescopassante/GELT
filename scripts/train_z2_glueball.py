@@ -42,13 +42,27 @@ that finished with the second-best val loss of the scan (−0.5358 at β=0.760)
 also produced its worst operator — the loss *is* a mass, and masses are not
 comparable across β.
 
+**Gate correction, 2026-08-11.** The first version of the gate compared
+``m_net = −log[C(1)/C(0)]`` against a classical mass obtained from a *cosh fit
+over Δ ∈ [2,8]*. Those are different estimators: m_net is m_eff(Δ=1), a strict
+upper bound still carrying every excited state, and its bias grows in relative
+terms as m₀ → 0 — i.e. exactly as ξ grows. That is the shape of the apparent
+"undertraining at large ξ" in the R=6 rows (ratios 1.05, 1.00, 1.22, 1.18, 1.44
+against ξ = 2.05 … 5.28). The gate now fits the network's own correlator the
+same way the classical scan does, propagates both errors, and fails a β only
+when it is above the threshold *significantly*. Re-judge existing checkpoints
+without retraining:
+
+    Z2G_R=6 Z2G_N_USE=800 Z2G_REGATE=1 python -u scripts/train_z2_glueball.py 0.756
+
 Environment overrides: ``Z2G_R``, ``Z2G_N_USE``, ``Z2G_EPOCHS``,
-``Z2G_PATIENCE``.
+``Z2G_PATIENCE``, ``Z2G_REGATE``.
 
 Writes ``best_z2_glueball_b<beta>[_R<r>].pth`` and appends a row to
 ``datasets/z2_attention_rows[_R<r>].pt``.
 """
 
+import math
 import os
 import sys
 
@@ -57,7 +71,7 @@ import torch
 from tqdm import tqdm
 
 from gelt.blocks_rope import GELT
-from gelt.glueball import ape_smear
+from gelt.glueball import ape_smear, connected_correlator, fit_cosh_correlator
 from gelt.lattice import Z2, build_transport_average, plaquette_tensor
 from gelt.sampler import mcmc_ensemble, z2_heatbath_sweep
 
@@ -121,6 +135,8 @@ LR = 3e-3
 WEIGHT_DECAY = 1e-3
 EPOCHS = int(os.environ.get("Z2G_EPOCHS", 40))
 PATIENCE = int(os.environ.get("Z2G_PATIENCE", 8))
+# Score an existing checkpoint against the (revised) gate without retraining.
+REGATE = os.environ.get("Z2G_REGATE", "0") == "1"
 BATCH_CONFIGS = 4
 LOSS_DELTAS = (1, 2)
 SCALE_REG = 1e-2  # (log C(0))² pin on the Ō → λŌ flat direction — without it
@@ -290,6 +306,56 @@ def classical_mass(beta):
 # operator that has not converged, and reading attention off it compares
 # networks of unequal quality — the confound that closed the ℓ_att study.
 GATE_RATIO = 1.10
+GATE_SIGMA = 2.0  # …and it has to be above the threshold *significantly*
+
+# Estimator for the gate, matched bit-for-bit to z2_beta_scan.py's. This is the
+# whole point: the classical mass is a cosh fit over Δ ∈ [2,8] of the
+# GEVP-projected correlator, so comparing it against m = −log[C(1)/C(0)] — which
+# is m_eff(Δ=1), a strict UPPER bound still carrying every excited state — is
+# not a comparison. The bias is one-directional and grows in *relative* terms as
+# m₀ → 0, i.e. exactly as ξ grows, which is the shape of the apparent
+# "undertraining at large ξ" in the R=6 rows.
+FIT_WINDOW = (2, 8)
+JACK_BLOCK = 20
+MIN_FIT_POINTS = 4
+
+
+def fitted_mass(obar, block=JACK_BLOCK):
+    """(m, err, window) from a cosh fit to the operator's own correlator.
+
+    ``obar`` is ``(B, Nt)``. The window is the largest positive prefix of
+    FIT_WINDOW, fixed on the full sample and reused in every blocked-jackknife
+    replica.
+    """
+    obar = obar.double()
+
+    def _win(C):
+        lo, hi = FIT_WINDOW
+        if not torch.isfinite(C[0]) or C[0] <= 0:
+            return None
+        d = lo - 1
+        for k in range(lo, min(hi, len(C) - 1) + 1):
+            if not torch.isfinite(C[k]) or C[k] <= 0:
+                break
+            d = k
+        return (lo, d) if d - lo + 1 >= MIN_FIT_POINTS else None
+
+    window = _win(connected_correlator(obar))
+    if window is None:
+        return float("nan"), float("nan"), None
+    m = fit_cosh_correlator(connected_correlator(obar), *window)[0]
+    B = obar.shape[0]
+    n_blocks = max(2, B // block)
+    vals = []
+    for b in range(n_blocks):
+        keep = torch.ones(B, dtype=torch.bool)
+        keep[b * block : (b + 1) * block] = False
+        vals.append(fit_cosh_correlator(connected_correlator(obar[keep]), *window)[0])
+    vals = np.array(vals, dtype=float)
+    good = vals[np.isfinite(vals)]
+    err = (float(np.sqrt((len(good) - 1) / len(good) * ((good - good.mean()) ** 2).sum()))
+           if len(good) > 1 else float("nan"))
+    return float(m), err, window
 
 
 def main():
@@ -322,7 +388,17 @@ def main():
 
     opt = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
     best, bad = float("inf"), 0
-    for ep in range(EPOCHS):
+    if REGATE:
+        # Re-judge an existing checkpoint without touching it. The gate changed
+        # (matched estimator + error propagation) after the R=6 sweep had
+        # already run, and re-deciding "is this operator converged?" should not
+        # cost another training run.
+        if not os.path.exists(CHECKPOINT):
+            raise SystemExit(f"Z2G_REGATE set but {CHECKPOINT} does not exist")
+        rows = torch.load(ROWS, weights_only=False) if os.path.exists(ROWS) else {}
+        best = rows.get(BETA, {}).get("val_loss", float("nan"))
+        print(f"REGATE: scoring {CHECKPOINT} as-is, no training")
+    for ep in ([] if REGATE else range(EPOCHS)):
         model.train()
         perm = torch.randperm(len(W_tr))
         tot = 0.0
@@ -368,22 +444,33 @@ def main():
     m_net = -np.log(max(r1, 1e-12))
     print(f"\nbest val loss {best:.4f} | test C(1)/C(0) = {r1:.4f} → m·a ≈ {m_net:.4f}")
 
-    # Quality gate against the classical mass. The transfer-matrix bound makes
-    # this one-sided, so the ratio is a pure convergence diagnostic.
+    # Quality gate against the classical mass, on the MATCHED estimator. The
+    # transfer-matrix bound makes this one-sided, so the ratio is a pure
+    # convergence diagnostic — but only if both sides are fitted the same way.
+    m_fit, e_fit, window = fitted_mass(ob)
+    print(f"cosh fit Δ∈{window}: m·a = {m_fit:.4f} ± {e_fit:.4f}"
+          f"   (vs {m_net:.4f} from C(1)/C(0), which is m_eff(Δ=1) and an upper bound)")
+
     m_cl, e_cl = classical_mass(BETA)
-    ratio = m_net / m_cl if m_cl else float("nan")
-    gate_pass = bool(m_cl) and ratio <= GATE_RATIO
-    if m_cl:
-        print(f"classical m·a = {m_cl:.4f} ± {e_cl:.4f}  →  m_net/m_class = {ratio:.2f}"
-              f"   [{'PASS' if gate_pass else 'FAIL'} at ≤ {GATE_RATIO}]")
+    ratio, sigma, gate_pass = float("nan"), float("nan"), False
+    if m_cl and np.isfinite(m_fit) and m_fit > 0:
+        ratio = m_fit / m_cl
+        rel = (e_fit / m_fit if np.isfinite(e_fit) else 0.0) ** 2 + (e_cl / m_cl) ** 2
+        sigma = ratio * math.sqrt(rel)
+        # Fail only when the operator is both practically and *significantly*
+        # above the bound. A bare threshold on a point estimate called β=0.7585
+        # undertrained at 1.18 when its classical mass is known to ±28%.
+        gate_pass = not (ratio > GATE_RATIO and (ratio - 1.0) > GATE_SIGMA * sigma)
+        print(f"classical m·a = {m_cl:.4f} ± {e_cl:.4f}  →  m_fit/m_class = "
+              f"{ratio:.3f} ± {sigma:.3f}  ({(ratio - 1) / sigma:+.1f}σ above 1)"
+              f"   [{'PASS' if gate_pass else 'FAIL'}]")
         if not gate_pass:
-            print("  UNDERTRAINED: the operator is well above the classical mass, so any")
+            print("  UNDERTRAINED: significantly above the classical mass, so any")
             print("  attention read off it describes a network that has not converged.")
-            print(f"  Retry with more steps/epoch (raise Z2G_N_USE) or more epochs")
-            print(f"  (Z2G_EPOCHS / Z2G_PATIENCE) before trusting this β.")
+            print("  Retry with more steps/epoch (raise Z2G_N_USE) or more epochs")
+            print("  (Z2G_EPOCHS / Z2G_PATIENCE) before trusting this β.")
     else:
-        print(f"no {BETA_SCAN} on disk — cannot gate this operator against the"
-              " classical mass")
+        print(f"no {BETA_SCAN} on disk (or unresolved fit) — cannot gate this operator")
 
     ell_mean, ell_std, offsets = attention_stats(model, W_te, T_te)
     print("layer head   ℓ_att")
@@ -399,8 +486,10 @@ def main():
         "val_loss": best, "ell_mean": ell_mean, "ell_std": ell_std,
         "R": R, "n_offsets": len(offsets),
         # Recorded per row so a later analysis can filter on operator quality
-        # instead of rediscovering it from the notes.
-        "m_class": m_cl, "ratio": ratio, "gate_pass": gate_pass, "n_use": N_USE,
+        # instead of rediscovering it from the notes. m_net is kept (it is the
+        # loss's own estimate) but the gate is on m_fit — the matched one.
+        "m_class": m_cl, "ratio": ratio, "ratio_err": sigma, "gate_pass": gate_pass,
+        "m_fit": m_fit, "m_fit_err": e_fit, "fit_window": window, "n_use": N_USE,
     }
     torch.save(rows, ROWS)
     print(f"appended β={BETA} → {ROWS}  ({len(rows)} rows)")
