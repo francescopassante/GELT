@@ -680,13 +680,23 @@ def measure_ensemble(beta, nets, labels, dist):
             continue
 
         kept_labels = [labels[j] for j in range(len(labels)) if keep[j]]
+        attn_single = _jack_best_single(chan[keep], Nt, kept_labels)
+        # The null must be the SAME operator with time scrambled — nothing else.
+        # Running the null through the full basis machinery let it re-select its
+        # own best channel out of six, and a maximum over six noise series is
+        # positive by construction: it inflated the null's A₀ from 0.005 to 0.23.
+        # Reusing the index chosen on the real data removes the selection
+        # entirely, so any residual overlap is the estimator's own bias.
+        std = _standardize(chan[keep].double())
+        i_best = attn_single.get("idx")
+        null_src = std if i_best is None else std[i_best : i_best + 1]
         entry = {
             "rel_fluct": rel,
             "kept": keep,
             "attention": _jack(chan[keep], Nt),
-            "attention_single": _jack_best_single(chan[keep], Nt, kept_labels),
+            "attention_single": attn_single,
             "output": _jack(out, Nt),
-            "shuffled": _jack(_shuffle_time(_standardize(chan[keep].double()), gen), Nt),
+            "shuffled": _jack(_shuffle_time(null_src, gen), Nt),
             "per_head": {},
         }
         # Per-(layer, head): the three reductions of one head as a mini-basis.
