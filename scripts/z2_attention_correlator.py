@@ -154,6 +154,14 @@ SMEAR_LEVELS = [0, 4, 8, 16]
 # and the attention channels are heavily redundant; 24 of them at B ≈ 200 is
 # what produced the first run's all-NaN GEVP arms.
 MAX_GEVP_OPS = 6
+# Eigenvalue floor for the GEVP whitening, relative to the largest eigenvalue of
+# C(t0). gevp_ground_vector's default 1e-12 is twelve orders of magnitude, i.e.
+# no regularisation at all: with a nested-smearing basis C(t0) has a meaningful
+# range of three or four orders, and a small signal divided by a floored noise
+# eigenvalue produces a spuriously large generalized eigenvalue in a direction
+# that is almost pure noise. 1e-4 keeps the selection inside the resolved
+# subspace; _gevp_is_sane catches whatever slips through.
+GEVP_EPS = 1e-4
 # Per-head numbers are a qualitative table, so they get a coarser jackknife.
 PER_HEAD_BLOCK = 4 * JACK_BLOCK
 
@@ -313,13 +321,50 @@ def _prune(obar, max_ops=MAX_GEVP_OPS, rho_max=0.99):
     return kept or [order[0]]
 
 
-def _project(obar):
+def _signal(series):
+    """C(td)/C(0) of a single zero-momentum series — how much of it is physics.
+
+    The number a variational projection is supposed to maximise, and the one
+    that exposes a projection which has instead maximised noise.
+    """
+    C = connected_correlator(series)
+    return float(C[GEVP_TD] / C[0]) if C[0] > 0 else float("-inf")
+
+
+def _project(obar, eps=GEVP_EPS):
     """GEVP-projected series, or the channel itself when there is only one."""
     if obar.shape[0] == 1:
         return obar[0], None
     C = connected_correlator_matrix(obar)
-    v0 = gevp_ground_vector(C, t0=GEVP_T0, td=GEVP_TD)
+    v0 = gevp_ground_vector(C, t0=GEVP_T0, td=GEVP_TD, eps=eps)
     return torch.einsum("i,ibt->bt", v0, obar), v0
+
+
+def _gevp_is_sane(obar, eps=GEVP_EPS):
+    """Variational self-check on the GEVP projection.
+
+    v₀ maximises the Rayleigh quotient over the *span* of the basis, so the
+    projected operator can never be a worse interpolator than any single member
+    of that basis. When it is, the whitening has selected a near-null direction
+    of an ill-conditioned C(t0): a near-cancelling combination whose C(0) is
+    almost pure noise. The symptom in this study was C(1)/C(0) = 0.039 / 0.020 /
+    0.007 at three β with 36% / 87% / unresolved errors — and central values
+    that did not move at all when the basis went from 2 operators to 4, because
+    the bad direction is the same up to scale and both m and A₀ are
+    scale-invariant.
+
+    Returns ``(use_projection, best_single_index)``. The decision is taken once
+    on the full sample by :func:`_jack` and then held fixed, so the estimator
+    does not drift between jackknife replicas.
+    """
+    if obar.shape[0] == 1:
+        return True, 0
+    best = max(range(obar.shape[0]), key=lambda i: _signal(obar[i]))
+    try:
+        proj, _ = _project(obar, eps)
+    except Exception:
+        return False, best
+    return _signal(proj) >= _signal(obar[best]), best
 
 
 def _window(Cp, bounds=FIT_WINDOW, min_pts=MIN_FIT_POINTS):
@@ -377,6 +422,13 @@ def _jack(obar, nt, block=JACK_BLOCK, label=""):
     kept = _prune(obar)
     obar = obar[kept]
 
+    # Decide the estimator ONCE on the full sample: use the variational
+    # projection only if it actually beats the best single basis operator.
+    use_proj, best_i = _gevp_is_sane(obar)
+    fell_back = not use_proj
+    if fell_back:
+        obar = obar[best_i : best_i + 1]
+
     try:
         proj, _ = _project(obar)
         Cp = connected_correlator(proj)
@@ -387,7 +439,8 @@ def _jack(obar, nt, block=JACK_BLOCK, label=""):
 
     prof = (Cp / Cp[0]).tolist() if Cp[0] > 0 else Cp.tolist()
     window = _window(Cp)
-    out = {"n_ops": len(kept), "kept": kept, "window": window,
+    out = {"n_ops": obar.shape[0], "n_basis": len(kept), "kept": kept,
+           "window": window, "gevp_fell_back": fell_back,
            "profile": [float(x) for x in prof[:12]]}
     if window is None:
         out.update({"m": float("nan"), "m_err": float("nan"), "A0": float("nan"),
