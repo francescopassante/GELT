@@ -73,7 +73,15 @@ removed pending rewrites; the spec now lives across the notes below.)
   lattice operator**, so its zero-momentum connected correlator decays with the
   mass gap and `ξ_A = 1/m_A` should track `ξ(β)` with no ceiling and no
   geometric offset. Three arms (matched β / cross-β / random init) and what each
-  outcome would license. Not yet run.
+  outcome would license. **Run 2026-08-11 — it works** (§6.1): ξ_A tracks the
+  classical ξ over ×2.5 at Pearson 0.92 and 5–7% precision, the time-shuffled
+  null is flat at A₀ = 0.005, and at β = 0.760 the attention field decays cleanly
+  where the classical smeared operator has no signal at all. The random-init arm
+  tracks ξ too — as predicted — so the claim splits: *structural* (equivariant
+  attention maps are lattice operators with a mass) is established by ξ_A,
+  while *learning* rests on A₀ (+0.11 … +0.27, up to 14.7σ) and δA/A (×13 …
+  ×46). "The network discovers ξ" is **not** supportable. §6.2 lists the
+  defects of the first pass (our prune broke the classical reference).
 - `notes/resources.md` — curated textbooks, lecture notes, and ML-for-LGT
   papers with suggested reading order.
 - `notes/tunnel-visualization.md` — exploratory notes on visualising

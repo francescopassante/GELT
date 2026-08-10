@@ -142,6 +142,98 @@ networks.
   the architecture's premise and worth reporting plainly; §6.1's entropy
   numbers make it unlikely but it is the honest null.
 
+## 6.1 Result (2026-08-11) — the attention field has a mass
+
+`ZAC_R=6 ZAC_N_USE=800 ZAC_CROSS=0 ZAC_N_EVAL=1200`, i.e. all 1200
+configurations no checkpoint has seen, on the retrained R=6 operators
+(`z2_attention_rows_R6.pt`, all five passing the corrected gate). ~4 min per
+ensemble. Numbers below are the **best single attention channel**
+(`attention_single`); see the defects in §6.2 for why the multi-channel GEVP arm
+is not the one quoted.
+
+| β | ξ (classical scan, N=2000) | **ξ_A trained** | ξ_A random init | ξ_out |
+|---|---|---|---|---|
+| 0.745 | 2.05 ± 0.16 | 2.24 ± 0.13 | 2.08 | 2.33 |
+| 0.752 | 2.61 ± 0.31 | 2.76 ± 0.13 | 2.46 | 2.92 |
+| 0.756 | 4.14 ± 0.26 | 4.48 ± 0.30 | 4.08 | 4.63 |
+| 0.7585 | 4.59 ± 1.31 | 6.64 ± 0.32 | 5.47 | 6.65 |
+| 0.760 | 5.28 ± 0.82 | 5.60 ± 0.37 | 4.80 | 5.81 |
+
+**Pearson(ξ_A, ξ_scan) = 0.92**, slope 1.25, over ×2.5 of dynamic range, at
+5–7% precision. The claim of §2 holds: the attention map is a lattice operator
+and its correlator decays with the mass gap.
+
+**The null is clean.** The time-shuffled arm returns A₀ = 0.005 ± 0.003 with a
+correlator flat at ±0.005 out to Δ=9, at every β and for both networks.
+
+**Training separates from initialisation at every β:**
+
+| β | δA/A trained | random | ratio | ΔA₀ (uncorrelated errors) |
+|---|---|---|---|---|
+| 0.745 | 0.091 | 0.0067 | ×13 | +0.144 ± 0.059 (2.4σ) |
+| 0.752 | 0.140 | 0.0060 | ×23 | +0.110 ± 0.046 (2.4σ) |
+| 0.756 | 0.246 | 0.0054 | ×46 | +0.204 ± 0.023 (9.0σ) |
+| 0.7585 | 0.113 | 0.0049 | ×23 | +0.267 ± 0.018 (14.7σ) |
+| 0.760 | 0.130 | 0.0046 | ×28 | +0.205 ± 0.020 (10.1σ) |
+
+The random network's site-to-site fluctuation is ≈0.005 independently of β;
+training raises it by one to one-and-a-half orders of magnitude.
+
+**The showpiece is β = 0.760**, the point closest to β_c. Correlator profiles
+C(Δ)/C(0):
+
+```
+classical smeared basis : +1.000 +0.007 +0.009 -0.002 +0.006 …   dead
+trained attention field : +1.000 +0.496 +0.394 +0.329 +0.276 …   clean exponential
+random attention field  : +1.000 -0.002 +0.006 -0.005 +0.004 …   noise
+shuffled null           : +1.000 -0.004 +0.004 +0.005 +0.002 …   flat
+```
+
+The attention field measures the correlation length at a β where the classical
+operator has no signal and an untrained network has none either.
+
+### The caveat that fixes the framing
+
+**The random-init arm also tracks ξ** (Pearson 0.94). This is exactly what §3
+predicted — any local gauge-invariant scalar decays at the gap — and it is not
+a disappointment, it is the correct partition of the two claims:
+
+- *structural*: attention maps in a gauge-**equivariant** network are bona fide
+  lattice operators, with a mass, an overlap and a spectral decomposition.
+  Established by ξ_A ≈ ξ, and true already at initialisation;
+- *learning*: training makes them **good** operators. Established by A₀
+  (+0.11 to +0.27, up to 14.7σ) and δA/A (×13 to ×46), not by ξ_A.
+
+"The network discovers the correlation length" is **not** a supportable claim
+and must not be made.
+
+Known confound on δA/A: α is a softmax output, so a network with larger score
+magnitudes has a sharper — hence more variable — attention regardless of what
+it learned. δA/A is therefore descriptive; the load-bearing learning statistic
+is A₀, which a sharp-but-untrained attention would not raise (it would build a
+UV-dominated field with *poor* ground-state overlap). An entropy-matched random
+arm would close this properly.
+
+## 6.2 Defects in the first pass
+
+1. **The classical reference was broken by our own pruning.** `_prune` cut the
+   four nested APE smearing levels to `n_ops = 2`: they correlate above 0.99
+   *by design*, and extracting the small non-collinear part is precisely what
+   the GEVP is for. Consequence: C(1)/C(0) of 0.039 / 0.020 / 0.007 at
+   β = 0.752 / 0.7585 / 0.760 and an unresolved fit at the last. Fix: prune only
+   when the basis exceeds the cap, so a ≤6-operator basis is passed through
+   untouched, exactly as `z2_beta_scan.py` does.
+2. **The multi-channel attention GEVP is unstable** — three NaN cells and one
+   absurd one (ξ = 4.85 ± 89, A₀ = 0.048 ± 0.852) out of ten. The
+   single-channel arm resolved in all ten and is what the tables above quote.
+3. **ΔA₀ errors are uncorrelated** although both arms run on identical
+   configurations, so the quoted significances are conservative — a shared-block
+   jackknife of the difference is the right statement, and matters at the two
+   2.4σ points.
+4. **β = 0.7585 breaks monotonicity** (ξ_A = 6.64 ± 0.32 against 5.60 ± 0.37 at
+   β = 0.760). That ensemble is the scan's worst point (±28%, τ_int = 6.25), so
+   suspect the ensemble before the measurement — but it is unresolved.
+
 ## 7. Known limitations, stated up front
 
 - Z₂ in 3D, one volume, one lattice family — a statement about the *method*,
