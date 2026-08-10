@@ -120,6 +120,7 @@ from gelt.glueball import (  # noqa: E402
     smearing_operator_basis,
 )
 from gelt.lattice import random_links  # noqa: E402
+from gelt.sampler import integrated_autocorrelation_time  # noqa: E402
 
 
 # ── Tunables ──────────────────────────────────────────────────────────────────
@@ -283,9 +284,18 @@ def _prune(obar, max_ops=MAX_GEVP_OPS, rho_max=0.99):
 
     Rank by long-distance signal C(td)/C(0), then add greedily, skipping any
     channel correlating above ``rho_max`` with one already kept.
+
+    **Only when the basis is over the cap.** The first pass pruned
+    unconditionally and cut the classical reference from its four nested APE
+    smearing levels to two — those correlate above 0.99 *by construction*, and
+    extracting their small non-collinear part is exactly what the GEVP exists
+    to do. It left C(1)/C(0) at 0.039 / 0.020 / 0.007 for the three largest β
+    and one unresolved fit. A basis that already fits under the cap is passed
+    through untouched, so the classical arm is bit-identical to
+    ``z2_beta_scan.py``'s.
     """
     n = obar.shape[0]
-    if n <= 1:
+    if n <= max_ops:
         return list(range(n))
     flat = obar.reshape(n, -1)
     flat = flat - flat.mean(dim=1, keepdim=True)
@@ -435,7 +445,58 @@ def _jack_best_single(obar, nt, labels, block=JACK_BLOCK):
                 "why": "no single channel resolved"}
     res = _jack(obar[best : best + 1], nt, block=block)
     res["channel"] = labels[best] if labels else best
+    res["idx"] = best
+    # τ_int of the chosen channel along the chain. The blocked jackknife is only
+    # honest if the block is longer than the chain's memory, and the Z₂ scan
+    # measured τ_int up to 6.25 (in units of recorded configs) near β_c — i.e.
+    # a block of 20 covers only ~1.6 τ. Worth knowing per β rather than assuming.
+    _, tau, _ = integrated_autocorrelation_time(obar[best].mean(dim=1))
+    res["tau_int"] = float(tau)
     return res
+
+
+def _corr_delta(a, b, nt, block=JACK_BLOCK):
+    """Blocked jackknife of (A₀_a − A₀_b) and (ξ_a − ξ_b) on SHARED configs.
+
+    The trained and random arms are evaluated on the same configurations, so
+    their errors are correlated and quoting the difference as √(σ_a² + σ_b²)
+    throws away the cancellation — the same argument that turned a naive +0.127
+    head ablation into +0.0787 ± 0.0145 in the glueball study. Each arm keeps
+    its own fit window (they are different operators); only the configurations
+    are shared.
+    """
+    wa = _window(connected_correlator(a[0]))
+    wb = _window(connected_correlator(b[0]))
+    if wa is None or wb is None:
+        return None
+
+    def stat(mask):
+        ma, aa, _ = _fit(a[:, mask], nt, wa)
+        mb, ab, _ = _fit(b[:, mask], nt, wb)
+        ok = all(np.isfinite(v) for v in (ma, mb)) and ma > 0 and mb > 0
+        return aa - ab, (1.0 / ma - 1.0 / mb) if ok else float("nan")
+
+    B = a.shape[1]
+    dA, dxi = stat(torch.ones(B, dtype=torch.bool))
+    n_blocks = max(2, B // block)
+    sA, sx = [], []
+    for i in range(n_blocks):
+        keep = torch.ones(B, dtype=torch.bool)
+        keep[i * block : (i + 1) * block] = False
+        u, v = stat(keep)
+        sA.append(u)
+        sx.append(v)
+
+    def _err(vals):
+        good = np.array(vals, dtype=float)
+        good = good[np.isfinite(good)]
+        if len(good) < 2:
+            return float("nan")
+        n = len(good)
+        return float(np.sqrt((n - 1) / n * ((good - good.mean()) ** 2).sum()))
+
+    return {"dA0": dA, "dA0_err": _err(sA), "dxi": dxi, "dxi_err": _err(sx),
+            "n_blocks": n_blocks}
 
 
 def _diagnose(name, res):
@@ -551,6 +612,7 @@ def measure_ensemble(beta, nets, labels, dist):
     _diagnose("classical", res["classical"])
 
     gen = torch.Generator().manual_seed(RANDOM_SEED)
+    best_series = {}
     for name in nets:
         chan = torch.cat(acc[name]["chan"], dim=1)  # (n_ch, B, Nt)
         out = torch.cat(acc[name]["out"], dim=0).unsqueeze(0)  # (1, B, Nt)
@@ -601,6 +663,27 @@ def measure_ensemble(beta, nets, labels, dist):
               f"max {r_keep.max():.3f}")
         _diagnose(f"{name} attention", entry["attention"])
         _diagnose(f"{name} shuffled-null", entry["shuffled"])
+
+        idx = entry["attention_single"].get("idx")
+        if idx is not None:
+            best_series[name] = _standardize(chan[keep].double())[idx : idx + 1]
+            tau = entry["attention_single"].get("tau_int", float("nan"))
+            flag = "" if not np.isfinite(tau) or JACK_BLOCK >= 2 * tau else \
+                "  ← block < 2τ_int, errors understated"
+            print(f"      τ_int({entry['attention_single']['channel']}) = {tau:.2f} "
+                  f"vs jackknife block {JACK_BLOCK}{flag}")
+
+    # Correlated difference on shared configurations — the significance
+    # statement for "training makes the routing a better operator".
+    tr = f"train@{beta}"
+    if tr in best_series and "random" in best_series:
+        dd = _corr_delta(best_series[tr], best_series["random"], Nt)
+        res["delta_vs_random"] = dd
+        if dd:
+            print(f"  trained − random (shared configs): "
+                  f"ΔA₀ = {dd['dA0']:+.3f} ± {dd['dA0_err']:.3f} "
+                  f"({dd['dA0']/dd['dA0_err']:+.1f}σ)   "
+                  f"Δξ = {dd['dxi']:+.2f} ± {dd['dxi_err']:.2f}")
     return res
 
 
