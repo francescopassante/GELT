@@ -239,6 +239,49 @@ is A₀, which a sharp-but-untrained attention would not raise (it would build a
 UV-dominated field with *poor* ground-state overlap). An entropy-matched random
 arm would close this properly.
 
+## 6.1.1 The cross-β control matrix (2026-08-11)
+
+`ZAC_CROSS=1 ZAC_N_EVAL=600`, five trained networks plus the random arm on all
+five ensembles. One cell (`train@0.756` on β=0.752) returned A₀ = 5.76 with
+ξ = 0.39 — a fit that ran to its grid edge — and is masked throughout; the
+`A0_MAX` guard now reports such cells as unresolved.
+
+**The null passes.** With `_scramble_configs`, 26 of 30 cells do not fit at all
+(nothing to fit), and the four that do give |A₀| ≤ 0.0066.
+
+**ξ_A is 11.9× more sensitive to the ensemble than to the training β:** spread
+within a row (across evaluation ensembles) 1.405, spread within a column
+(across training β) 0.118. The column means correlate with the classical ξ at
+**Pearson 0.9983**. The attention reads the configuration in front of it, and a
+fixed kernel has no analogue of this measurement at all.
+
+**The transfer test: no memorisation.** If a network had learned its own
+ensemble rather than physics, the diagonal would dominate its column. It does
+not:
+
+| β | A₀ diagonal | A₀ off-diagonal | advantage | A₀ random |
+|---|---|---|---|---|
+| 0.745 | 0.855 | 0.770 | +0.085 | 0.723 |
+| 0.752 | 0.774 | 0.815 | **−0.041** | 0.656 |
+| 0.756 | 0.697 | 0.687 | +0.010 | 0.484 |
+| 0.7585 | 0.764 | 0.696 | +0.069 | 0.495 |
+| 0.760 | 0.660 | 0.640 | +0.020 | 0.423 |
+
+Mean diagonal advantage **+0.029**, inconsistent in sign, against a mean
+trained − random of **+0.167**: the learning effect is **6× the β-matching
+effect**. Every trained network beats the random arm on every ensemble
+(worst-trained 0.747 / 0.774 / 0.636 / 0.659 / 0.571 against random
+0.723 / 0.656 / 0.484 / 0.495 / 0.423).
+
+What the matrix *does* separate is network quality: ensemble-averaged A₀ per row
+is 0.734 / 0.677 / 0.702 / **0.775** / 0.726 against 0.556 for random.
+`train@0.7585` is the best operator on three of five ensembles including ones it
+never saw — a globally better operator, not a β-specialist.
+
+**So the learning claim is about transferable physics.** The routing did not
+memorise a correlation length; it learned something that works at every ξ in the
+scan.
+
 ## 6.2 Defects, and how each was resolved
 
 1. **The GEVP was selecting a near-null direction — at every β.** First

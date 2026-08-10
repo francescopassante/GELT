@@ -148,6 +148,7 @@ SMOKE = os.environ.get("ZAC_SMOKE", "0") == "1"
 GEVP_T0, GEVP_TD = 1, 2
 FIT_WINDOW = (2, 8)  # upper bound only — the usable window is chosen per arm
 MIN_FIT_POINTS = 4   # below this a 2-parameter cosh fit is not a measurement
+A0_MAX = 1.5         # above this the overlap fraction is a failed fit, not a number
 JACK_BLOCK = 20
 SMEAR_LEVELS = [0, 4, 8, 16]
 # Ceiling on the GEVP basis size. C(t0) must be invertible from B configurations
@@ -404,6 +405,13 @@ def _fit(obar, nt, window):
     # Morningstar–Peardon ground-state overlap fraction, as in
     # scripts/fit_glueball_overlap.py.
     A0 = A * (1.0 + math.exp(-m * nt)) / Cp[0].item()
+    # A₀ is a fraction of C(0): statistical scatter can push it a little past 1
+    # (the SU(2) replication quotes 1.013 ± 0.062), but not to 5.76 — one cell of
+    # the cross-β matrix returned that, with ξ = 0.39 on a Δ ∈ [2,8] window, i.e.
+    # the grid scan ran to its edge. An unphysical overlap is an unresolved fit
+    # and has to be reported as one rather than silently entering a mean.
+    if not (0.0 <= A0 <= A0_MAX):
+        return float("nan"), float("nan"), f"unphysical A₀ = {A0:.2f} (fit failed)"
     return float(m), float(A0), None
 
 
