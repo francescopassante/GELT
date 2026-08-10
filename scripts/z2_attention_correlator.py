@@ -585,16 +585,38 @@ def _xi(row):
 
 
 def _shuffle_time(obar, gen):
-    """Null arm: destroy the temporal ordering, keep everything else.
+    """Zero-mode probe: destroy the temporal ordering, keep everything else.
 
     One independent permutation of the timeslices per configuration, shared
-    across channels (so equal-time cross-channel structure survives and only
-    the correlator in Δt is destroyed). C_A(Δt>0) must come out consistent with
-    zero; if it does not, the pipeline is manufacturing a mass.
+    across channels.
+
+    **This is not a null**, which is what the first three runs assumed. A time
+    permutation preserves each configuration's mean over t, and
+    :func:`connected_correlator` subtracts only the *global* mean, so the
+    residual retains ``Var_config(Ō_c) = C(0)·(2ξ−1)/Nt`` as a flat pedestal at
+    every Δ. Measured plateaux of 0.062 / 0.079 / 0.138 / 0.231 / 0.159 track
+    that prediction at Pearson 0.98 — including the non-monotonic excursion —
+    so the pedestal is the finite-Nt zero mode, i.e. physics.
+
+    Kept because that makes it a useful *consistency check* (the plateau must
+    equal (2ξ−1)/Nt), but the null proper is :func:`_scramble_configs`.
     """
     n_ch, B, Nt = obar.shape
     idx = torch.stack([torch.randperm(Nt, generator=gen) for _ in range(B)])
     return torch.gather(obar, 2, idx.unsqueeze(0).expand(n_ch, -1, -1))
+
+
+def _scramble_configs(obar, gen):
+    """The actual null: each timeslice taken from an independently drawn config.
+
+    Destroys the temporal correlation *and* the per-configuration zero mode
+    together, so C(Δ>0) has expectation zero at every Δ and there is nothing
+    left for a mass to be fitted to. If this arm resolves a mass, the pipeline
+    is manufacturing one.
+    """
+    n_ch, B, Nt = obar.shape
+    idx = torch.stack([torch.randperm(B, generator=gen) for _ in range(Nt)], dim=1)
+    return torch.gather(obar, 1, idx.unsqueeze(0).expand(n_ch, -1, -1))
 
 
 def load_configs(beta):
@@ -697,6 +719,7 @@ def measure_ensemble(beta, nets, labels, dist):
             "attention_single": attn_single,
             "output": _jack(out, Nt),
             "shuffled": _jack(_shuffle_time(null_src, gen), Nt),
+            "scrambled": _jack(_scramble_configs(null_src, gen), Nt),
             "per_head": {},
         }
         # Per-(layer, head): the three reductions of one head as a mini-basis.
@@ -713,19 +736,26 @@ def measure_ensemble(beta, nets, labels, dist):
         xi_a, xi_ae = _xi(entry["attention"])
         xi_s, _ = _xi(entry["attention_single"])
         xi_o, _ = _xi(entry["output"])
-        m_sh = entry["shuffled"]["m"]
+        m_sh = entry["scrambled"]["m"]
         r_keep = rel[keep]
         print(f"  {name:>14}: ξ_att = {xi_a:6.2f} ± {xi_ae:5.2f}   "
               f"A₀ = {entry['attention']['A0']:.3f} ± {entry['attention']['A0_err']:.3f}   "
               f"ξ_1ch = {xi_s:6.2f} ({entry['attention_single'].get('channel')})   "
-              f"ξ_out = {xi_o:6.2f}   shuffled m = {m_sh:.3f}")
+              f"ξ_out = {xi_o:6.2f}   scrambled-null A₀ = {entry['scrambled']['A0']:.4f}")
         # Mean over channels is dominated by whichever channel has the smallest
         # mean, so quote the distribution.
         print(f"      δA/A over {int(keep.sum())} channels: "
               f"median {r_keep.median():.3f}  min {r_keep.min():.3f}  "
               f"max {r_keep.max():.3f}")
         _diagnose(f"{name} attention", entry["attention"])
-        _diagnose(f"{name} shuffled-null", entry["shuffled"])
+        _diagnose(f"{name} scrambled-NULL", entry["scrambled"])
+        # The time-shuffle is no longer a null but a zero-mode check: its
+        # plateau must sit at (2ξ−1)/Nt.
+        xi_a1, _ = _xi(entry["attention_single"])
+        if np.isfinite(xi_a1):
+            plateau = float(np.mean(entry["shuffled"]["profile"][1:8]))
+            print(f"      zero-mode check: time-shuffle plateau {plateau:.3f} "
+                  f"vs (2ξ−1)/Nt = {(2 * xi_a1 - 1) / tz.LT:.3f}")
 
         idx = entry["attention_single"].get("idx")
         if idx is not None:

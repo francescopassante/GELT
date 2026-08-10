@@ -282,18 +282,37 @@ arm would close this properly.
    measurement: the repaired classical operator reproduces the same excursion on
    the same configurations. See §6.1.
 
-5. **The fallback contaminated the shuffled null** (found 2026-08-11, fix
-   pending a re-run). Routing the null through the full basis machinery let it
-   re-select its own best-of-six, and a maximum over six noise series is
-   positive by construction: the null's A₀ rose from 0.005–0.014 to 0.043–0.230,
-   largest exactly where the real signal is largest — the shape of a selection
-   artifact. Measured bias on pure noise: C(td)/C(0) of a fixed channel
-   +0.0009 ± 0.0008 (expectation 0), of the best of six +0.0068 ± 0.0005, i.e.
-   **7.4×**, before the cosh fit amplifies it. The null now reuses the channel
-   index chosen on the real data, so it is the identical operator with its
-   timeslices scrambled and nothing else. ξ, A₀ and ΔA₀ are unaffected — they
-   all come from the best-single arm, whose selection is made on real data
-   either way — so only the null column of §6.1 awaits the re-run.
+5. **A time-shuffle is not a null.** The null's A₀ rose from 0.005–0.014 to
+   0.043–0.230 when the GEVP fallback landed. First suspicion was selection bias
+   (the null re-selecting its own best-of-six; that bias is real and measures
+   7.4× on pure noise, and it was removed by reusing the channel index chosen on
+   the real data). It was not the cause: removing it changed the null by
+   **0.000**.
+
+   The correct explanation is structural. A permutation of timeslices preserves
+   each configuration's mean over t, and `connected_correlator` subtracts only
+   the **global** mean, so the residual retains
+
+       Var_config(Ō_c) = C(0) · (2ξ − 1)/Nt
+
+   as a *flat pedestal at every Δ* — which is exactly what the profiles show
+   (+1.000 +0.236 +0.229 +0.231 +0.234 … at β = 0.7585: no decay at all). The
+   measured plateaux 0.062 / 0.079 / 0.138 / 0.231 / 0.159 track (2ξ−1)/Nt at
+   **Pearson 0.98**, including the non-monotonic excursion. The "null" was
+   measuring the finite-Nt zero mode — physics, not noise — and could never have
+   gone to zero.
+
+   Fixed with `_scramble_configs`: each timeslice is drawn from an
+   independently permuted configuration, which destroys the temporal
+   correlation *and* the zero mode together. Validated on a synthetic operator
+   of known mass (ξ = 5.56 injected): the real arm returns ξ = 5.65 with
+   A₀ = 1.000, the time-shuffle plateau lands at 0.213 against a predicted
+   0.215, and the config-scramble returns ±0.001 with no fittable mass.
+
+   The time-shuffle is retained as a **zero-mode consistency check** — its
+   plateau must equal (2ξ−1)/Nt — which is now a second, independent way the
+   data confirm ξ. ξ, A₀ and ΔA₀ were never affected: they all come from the
+   best-single arm on unshuffled data.
 
 ## 7. Known limitations, stated up front
 
