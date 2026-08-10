@@ -151,30 +151,55 @@ ensemble. Numbers below are the **best single attention channel**
 (`attention_single`); see the defects in §6.2 for why the multi-channel GEVP arm
 is not the one quoted.
 
-| β | ξ (classical scan, N=2000) | **ξ_A trained** | ξ_A random init | ξ_out |
-|---|---|---|---|---|
-| 0.745 | 2.05 ± 0.16 | 2.24 ± 0.13 | 2.08 | 2.33 |
-| 0.752 | 2.61 ± 0.31 | 2.76 ± 0.13 | 2.46 | 2.92 |
-| 0.756 | 4.14 ± 0.26 | 4.48 ± 0.30 | 4.08 | 4.63 |
-| 0.7585 | 4.59 ± 1.31 | 6.64 ± 0.32 | 5.47 | 6.65 |
-| 0.760 | 5.28 ± 0.82 | 5.60 ± 0.37 | 4.80 | 5.81 |
+Classical column below is the **repaired** reference (§6.2 defect 1): measured on
+the same 1200 configurations, with the GEVP falling back to its best single
+smearing level at every β. The N=2000 scan's numbers are kept beside it because
+they disagree at the top two β, and that disagreement is itself a result.
 
-**Pearson(ξ_A, ξ_scan) = 0.92**, slope 1.25, over ×2.5 of dynamic range, at
-5–7% precision. The claim of §2 holds: the attention map is a lattice operator
-and its correlator decays with the mass gap.
+| β | ξ classical (same configs) | **ξ_A trained** | ξ_A random init | ξ_out | ξ scan (N=2000, superseded) |
+|---|---|---|---|---|---|
+| 0.745 | 2.04 ± 0.14 | 2.24 ± 0.13 | 2.08 | 2.33 | 2.05 ± 0.16 |
+| 0.752 | 2.34 ± 0.16 | 2.76 ± 0.13 | 2.46 | 2.92 | 2.61 ± 0.31 |
+| 0.756 | 4.08 ± 0.27 | 4.48 ± 0.30 | 4.08 | 4.63 | 4.14 ± 0.26 |
+| 0.7585 | **5.59 ± 0.34** | **6.64 ± 0.32** | 5.47 | 6.65 | 4.59 ± 1.31 |
+| 0.760 | **4.71 ± 0.34** | **5.60 ± 0.37** | 4.80 | 5.81 | 5.28 ± 0.82 |
 
-**The null is clean.** The time-shuffled arm returns A₀ = 0.005 ± 0.003 with a
-correlator flat at ±0.005 out to Δ=9, at every β and for both networks.
+**Pearson(ξ_A, ξ_classical) = 0.9966**, slope 1.21, over ×2.7 of dynamic range,
+at 5–7% precision on both sides. The claim of §2 holds: the attention map is a
+lattice operator and its correlator decays with the mass gap.
 
-**Training separates from initialisation at every β:**
+**The correlation survives a non-monotonic excursion.** ξ(0.7585) > ξ(0.760) in
+the classical measurement *and* in the attention, on the same configurations,
+from independent operators. This is much stronger evidence than tracking a
+smooth trend would be — two quantities that both rise with β correlate for
+trivial reasons; two that both turn around at the same place do not. The old
+scan's opposite ordering came from its two worst-determined points measured with
+the broken GEVP, and is superseded.
 
-| β | δA/A trained | random | ratio | ΔA₀ (uncorrelated errors) |
-|---|---|---|---|---|
-| 0.745 | 0.091 | 0.0067 | ×13 | +0.144 ± 0.059 (2.4σ) |
-| 0.752 | 0.140 | 0.0060 | ×23 | +0.110 ± 0.046 (2.4σ) |
-| 0.756 | 0.246 | 0.0054 | ×46 | +0.204 ± 0.023 (9.0σ) |
-| 0.7585 | 0.113 | 0.0049 | ×23 | +0.267 ± 0.018 (14.7σ) |
-| 0.760 | 0.130 | 0.0046 | ×28 | +0.205 ± 0.020 (10.1σ) |
+The excursion is a property of the **ensembles**, not of the attention. Both top
+points sit at ξ ≳ L/4 = 6, the scan's own finite-volume guard, so the natural
+reading is that β=0.760 is squeezed hardest. Settling it means L = 32, not more
+statistics — see §7.
+
+**Training separates from initialisation at every β.** ΔA₀ is a blocked
+jackknife of the *difference* on shared configurations (both arms see identical
+configs, so the naive √(σ²+σ²) discards the cancellation — the same argument
+that turned a naive +0.127 head ablation into +0.0787 ± 0.0145 in the glueball
+study):
+
+| β | δA/A trained | random | ratio | **ΔA₀ (correlated)** | Δξ |
+|---|---|---|---|---|---|
+| 0.745 | 0.091 | 0.0067 | ×13 | +0.144 ± 0.017 (**8.4σ**) | +0.17 ± 0.04 |
+| 0.752 | 0.140 | 0.0060 | ×23 | +0.110 ± 0.020 (**5.4σ**) | +0.31 ± 0.07 |
+| 0.756 | 0.246 | 0.0054 | ×46 | +0.204 ± 0.012 (**16.9σ**) | +0.41 ± 0.13 |
+| 0.7585 | 0.113 | 0.0049 | ×23 | +0.267 ± 0.011 (**23.5σ**) | +0.27 ± 0.20 |
+| 0.760 | 0.130 | 0.0046 | ×28 | +0.205 ± 0.012 (**16.9σ**) | +0.80 ± 0.19 |
+
+Δξ > 0 everywhere: the trained attention field is also *less* contaminated by
+excited states than the untrained one, not merely better normalised.
+
+τ_int of the selected channel along the chain: 0.63, 1.13, 2.65, **8.35**, 5.85.
+The jackknife block of 20 clears 2·τ_int at every β, but only just at β=0.7585.
 
 The random network's site-to-site fluctuation is ≈0.005 independently of β;
 training raises it by one to one-and-a-half orders of magnitude.
@@ -214,25 +239,61 @@ is A₀, which a sharp-but-untrained attention would not raise (it would build a
 UV-dominated field with *poor* ground-state overlap). An entropy-matched random
 arm would close this properly.
 
-## 6.2 Defects in the first pass
+## 6.2 Defects, and how each was resolved
 
-1. **The classical reference was broken by our own pruning.** `_prune` cut the
-   four nested APE smearing levels to `n_ops = 2`: they correlate above 0.99
-   *by design*, and extracting the small non-collinear part is precisely what
-   the GEVP is for. Consequence: C(1)/C(0) of 0.039 / 0.020 / 0.007 at
-   β = 0.752 / 0.7585 / 0.760 and an unresolved fit at the last. Fix: prune only
-   when the basis exceeds the cap, so a ≤6-operator basis is passed through
-   untouched, exactly as `z2_beta_scan.py` does.
+1. **The GEVP was selecting a near-null direction — at every β.** First
+   suspicion was our own `_prune` cutting the four nested APE levels to two;
+   fixing that (prune only above the cap) moved the classical masses by
+   **4×10⁻¹⁵**. That non-result *is* the diagnosis: m, A₀ and C(Δ)/C(0) are all
+   invariant under rescaling the projected operator, so identical values mean
+   the same direction was selected either way. Basis size was never the issue.
+
+   The real cause is `gevp_ground_vector`'s eigenvalue floor of `1e-12`
+   relative to the largest — twelve orders of magnitude, i.e. no regularisation.
+   A nested-smearing C(t0) has three or four meaningful orders, and a small
+   signal divided by a floored noise eigenvalue produces a spuriously large
+   generalized eigenvalue pointing into noise: a near-cancelling combination
+   whose C(0) is almost pure noise while C(Δ>0) still carries the physical
+   decay. Symptom: C(1)/C(0) = 0.039 / 0.020 / 0.007 at the three largest β with
+   36% / 87% / unresolved errors — *correct masses, useless error bars*.
+
+   Fixed with `GEVP_EPS = 1e-4` plus a **variational self-check**: v₀ maximises
+   the Rayleigh quotient over the span of the basis, so the projection can never
+   interpolate worse than any single member; when it does, fall back to that
+   member. The decision is taken once on the full sample and held fixed across
+   jackknife replicas. Result: all five β resolve at 6–7%, C(1)/C(0) = 0.39–0.44
+   uniformly, and **the fallback fires at every β** — the four-level variational
+   basis never beats its own best member here. `z2_beta_scan.py` ran the same
+   pathological GEVP and survived on N=2000 statistics; its top two points are
+   the casualties.
+
 2. **The multi-channel attention GEVP is unstable** — three NaN cells and one
-   absurd one (ξ = 4.85 ± 89, A₀ = 0.048 ± 0.852) out of ten. The
-   single-channel arm resolved in all ten and is what the tables above quote.
-3. **ΔA₀ errors are uncorrelated** although both arms run on identical
-   configurations, so the quoted significances are conservative — a shared-block
-   jackknife of the difference is the right statement, and matters at the two
-   2.4σ points.
-4. **β = 0.7585 breaks monotonicity** (ξ_A = 6.64 ± 0.32 against 5.60 ± 0.37 at
-   β = 0.760). That ensemble is the scan's worst point (±28%, τ_int = 6.25), so
-   suspect the ensemble before the measurement — but it is unresolved.
+   absurd one (ξ = 4.85 ± 89, A₀ = 0.048 ± 0.852) out of ten. Now moot: with the
+   self-check it falls back to the single best channel at every β, so
+   `attention` and `attention_single` coincide and the tables quote one number.
+   Informative in itself — the 24 attention channels are redundant enough that a
+   variational combination never helps.
+
+3. **ΔA₀ errors were uncorrelated.** Fixed with `_corr_delta`, a blocked
+   jackknife of the difference on shared configurations. The two weak points
+   went from 2.4σ to 8.4σ and 5.4σ; nothing else moved.
+
+4. **β = 0.7585 breaks monotonicity.** Resolved as *not* a defect of the
+   measurement: the repaired classical operator reproduces the same excursion on
+   the same configurations. See §6.1.
+
+5. **The fallback contaminated the shuffled null** (found 2026-08-11, fix
+   pending a re-run). Routing the null through the full basis machinery let it
+   re-select its own best-of-six, and a maximum over six noise series is
+   positive by construction: the null's A₀ rose from 0.005–0.014 to 0.043–0.230,
+   largest exactly where the real signal is largest — the shape of a selection
+   artifact. Measured bias on pure noise: C(td)/C(0) of a fixed channel
+   +0.0009 ± 0.0008 (expectation 0), of the best of six +0.0068 ± 0.0005, i.e.
+   **7.4×**, before the cosh fit amplifies it. The null now reuses the channel
+   index chosen on the real data, so it is the identical operator with its
+   timeslices scrambled and nothing else. ξ, A₀ and ΔA₀ are unaffected — they
+   all come from the best-single arm, whose selection is made on real data
+   either way — so only the null column of §6.1 awaits the re-run.
 
 ## 7. Known limitations, stated up front
 
@@ -245,4 +306,13 @@ arm would close this properly.
   **≈ 0.39**, not the 3D Ising ν = 0.63: ξ ≤ 5.3 at L = 24 is not the
   asymptotic scaling regime. The exponent may be quoted only as a
   *consistency* check between the attention and the classical scan on the same
-  points — never as a measurement of ν.
+  points — never as a measurement of ν. With the ξ(0.7585) > ξ(0.760) excursion
+  now confirmed on both operators, it should probably not be quoted at all
+  until the volume question is settled.
+- **Finite volume at the top two β is the open physics question.** ξ = 5.6 and
+  4.7 (classical) against L/4 = 6 puts both points at or past
+  `z2_beta_scan.py`'s own guard, and the non-monotonicity is what a
+  volume-squeezed pair looks like. The test is L = 24 → 32 — but GELT is built
+  per-L, so that means new ensembles *and* new checkpoints at all five β
+  (≈2.4× per sweep, ~40 h wall clock), not one point. Worth it only if the
+  excursion is to be reported as physics rather than flagged as unresolved.

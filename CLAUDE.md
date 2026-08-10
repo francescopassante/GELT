@@ -74,14 +74,18 @@ removed pending rewrites; the spec now lives across the notes below.)
   mass gap and `ξ_A = 1/m_A` should track `ξ(β)` with no ceiling and no
   geometric offset. Three arms (matched β / cross-β / random init) and what each
   outcome would license. **Run 2026-08-11 — it works** (§6.1): ξ_A tracks the
-  classical ξ over ×2.5 at Pearson 0.92 and 5–7% precision, the time-shuffled
-  null is flat at A₀ = 0.005, and at β = 0.760 the attention field decays cleanly
-  where the classical smeared operator has no signal at all. The random-init arm
-  tracks ξ too — as predicted — so the claim splits: *structural* (equivariant
-  attention maps are lattice operators with a mass) is established by ξ_A,
-  while *learning* rests on A₀ (+0.11 … +0.27, up to 14.7σ) and δA/A (×13 …
-  ×46). "The network discovers ξ" is **not** supportable. §6.2 lists the
-  defects of the first pass (our prune broke the classical reference).
+  classical ξ at **Pearson 0.9966** over ×2.7, at 5–7% precision on both sides,
+  and the correlation survives a *non-monotonic* excursion — ξ(0.7585) >
+  ξ(0.760) in the attention and in the repaired classical operator alike, on the
+  same configurations. The random-init arm tracks ξ too — as predicted — so the
+  claim splits: *structural* (equivariant attention maps are lattice operators
+  with a mass) is established by ξ_A, while *learning* rests on the correlated
+  ΔA₀ (+0.110 … +0.267, **5.4σ … 23.5σ**) and δA/A (×13 … ×46). "The network
+  discovers ξ" is **not** supportable. §6.2 records the defects and their fixes;
+  the big one was that `gevp_ground_vector`'s 1e-12 eigenvalue floor let the
+  GEVP select a near-null direction of C(t0) **at every β** (correct masses,
+  36–87% errors) — `z2_beta_scan.py` runs the same pathology and survived on
+  N=2000, so its top two points are superseded. Open: finite volume at ξ ≳ L/4.
 - `notes/resources.md` — curated textbooks, lecture notes, and ML-for-LGT
   papers with suggested reading order.
 - `notes/tunnel-visualization.md` — exploratory notes on visualising
