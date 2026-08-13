@@ -25,7 +25,7 @@ the talk and spend the time on the topological-localization clause instead.
 Run:
     python scripts/beta_scan.py
 
-Writes ``beta_scan.png`` and ``datasets/beta_scan.pt``.
+Writes ``results/attention/beta_scan.{png,pt}``.
 """
 
 import functools
@@ -39,6 +39,13 @@ from tqdm import tqdm
 from gelt.glueball import jackknife_gevp_effective_mass, smearing_operator_basis
 from gelt.lattice import SU
 from gelt.sampler import heatbath_overrelaxation_sweep, mcmc_ensemble
+
+# Output artifacts are grouped by study under results/; create the dirs the
+# first time this runs in a fresh clone (they hold generated files only).
+for _d in ("results/sampler", "results/glueball", "results/attention",
+          "results/wilson_regression", "datasets"):
+    os.makedirs(_d, exist_ok=True)
+
 
 
 # ── Tunables ──────────────────────────────────────────────────────────────────
@@ -183,7 +190,7 @@ def main():
     ax[1].grid(True, alpha=0.3)
 
     fig.tight_layout()
-    fig.savefig("beta_scan.png", dpi=130, bbox_inches="tight")
+    fig.savefig("results/attention/beta_scan.png", dpi=130, bbox_inches="tight")
     print("\nSaved beta_scan.png")
 
     torch.save(
@@ -196,9 +203,9 @@ def main():
             "m_eff_curves": [r[5] for r in rows],
             "meta": {"L": L, "Lt": LT, "xi": XI, "N": N_CONFIGS, "quote_delta": QUOTE_DELTA},
         },
-        "datasets/beta_scan.pt",
+        "results/attention/beta_scan.pt",
     )
-    print("Saved datasets/beta_scan.pt")
+    print("Saved results/attention/beta_scan.pt")
 
 
 if __name__ == "__main__":

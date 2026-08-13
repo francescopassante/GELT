@@ -21,7 +21,7 @@ both, with the uniform references printed beside them. No retraining.
 Run (on the box holding the checkpoints and ensembles):
     python scripts/z2_attention_readout.py 0.745 0.752 …
 
-Writes ``datasets/z2_attention_readout.pt``.
+Writes ``results/attention/z2_attention_readout.pt``.
 """
 
 import math
@@ -36,9 +36,16 @@ import train_z2_glueball as tz  # noqa: E402  (path fix must precede the import)
 
 from gelt.blocks_rope import GELT  # noqa: E402
 
+# Output artifacts are grouped by study under results/; create the dirs the
+# first time this runs in a fresh clone (they hold generated files only).
+for _d in ("results/sampler", "results/glueball", "results/attention",
+          "results/wilson_regression", "datasets"):
+    os.makedirs(_d, exist_ok=True)
+
+
 
 N_VIZ = 16  # held-out configs; attention statistics converge fast
-STATS = "datasets/z2_attention_readout.pt"
+STATS = "results/attention/z2_attention_readout.pt"
 
 
 def build_model():

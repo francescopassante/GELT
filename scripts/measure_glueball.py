@@ -42,6 +42,7 @@ import torch
 from gelt.lattice import SU
 from gelt.sampler import heatbath_overrelaxation_sweep, mcmc_ensemble
 from gelt.glueball import (
+
     ape_smear,
     connected_correlator,
     glueball_operator,
@@ -49,6 +50,13 @@ from gelt.glueball import (
     jackknife_gevp_effective_mass,
     smearing_operator_basis,
 )
+
+# Output artifacts are grouped by study under results/; create the dirs the
+# first time this runs in a fresh clone (they hold generated files only).
+for _d in ("results/sampler", "results/glueball", "results/attention",
+          "results/wilson_regression", "datasets"):
+    os.makedirs(_d, exist_ok=True)
+
 
 torch.manual_seed(0)
 np.random.seed(0)
@@ -256,6 +264,6 @@ fig.suptitle(
     fontsize=13,
 )
 fig.tight_layout()
-out = "glueball_validation.png"
+out = "results/glueball/glueball_validation.png"
 fig.savefig(out, dpi=130)
 print(f"Saved {out}")

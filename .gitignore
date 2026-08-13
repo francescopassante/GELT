@@ -8,8 +8,9 @@ __pycache__/
 gelt.egg-info/
 .DS_Store
 
-# downloaded run artifacts (checkpoints, dumps, plots from the V100)
-download/
+# generated run artifacts, grouped by study (figures, checkpoints, dumps).
+# Report figures are resolved from here via \graphicspath in the .tex files.
+results/
 
 # LaTeX build artifacts
 *.aux

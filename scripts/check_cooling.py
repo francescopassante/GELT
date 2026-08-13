@@ -33,6 +33,13 @@ from gelt.lattice import SU, action, topological_charge_density
 from gelt.sampler import heatbath_overrelaxation_sweep, mcmc_ensemble
 from gelt.topology import cool
 
+# Output artifacts are grouped by study under results/; create the dirs the
+# first time this runs in a fresh clone (they hold generated files only).
+for _d in ("results/sampler", "results/glueball", "results/attention",
+          "results/wilson_regression", "datasets"):
+    os.makedirs(_d, exist_ok=True)
+
+
 
 # ── Tunables ──────────────────────────────────────────────────────────────────
 L = 8  # isotropic 4D lattice: 8^4 = 4096 sites (topology needs room for a lump)
@@ -125,8 +132,8 @@ def main():
         f"Cooling pre-flight — SU(2), {L}⁴, β={BETA}, N={N_CONFIGS}", fontsize=13
     )
     fig.tight_layout()
-    fig.savefig("cooling_validation.png", dpi=130, bbox_inches="tight")
-    print("Saved cooling_validation.png")
+    fig.savefig("results/attention/cooling_validation.png", dpi=130, bbox_inches="tight")
+    print("Saved results/attention/cooling_validation.png")
 
 
 if __name__ == "__main__":

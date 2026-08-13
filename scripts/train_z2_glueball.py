@@ -35,7 +35,7 @@ is dead (notes/attention_as_operator.md). So go back to the setting that worked:
 
 Artifacts from a non-default R get an ``_R<r>`` suffix, so the recorded R=12
 checkpoints are never clobbered. Every run now closes with a **gate** against
-Phase A's classical mass (``datasets/z2_beta_scan.pt``): the transfer-matrix
+Phase A's classical mass (``results/attention/z2_beta_scan.pt``): the transfer-matrix
 bound is one-sided, so m_net/m_class ≥ 1 always and a ratio above 1.10 means the
 operator has not converged. The R=12 run had no such check, which is why a β
 that finished with the second-best val loss of the scan (−0.5358 at β=0.760)
@@ -59,7 +59,7 @@ Environment overrides: ``Z2G_R``, ``Z2G_N_USE``, ``Z2G_EPOCHS``,
 ``Z2G_PATIENCE``, ``Z2G_REGATE``.
 
 Writes ``best_z2_glueball_b<beta>[_R<r>].pth`` and appends a row to
-``datasets/z2_attention_rows[_R<r>].pt``.
+``results/attention/z2_attention_rows[_R<r>].pt``.
 """
 
 import math
@@ -74,6 +74,13 @@ from gelt.blocks_rope import GELT
 from gelt.glueball import ape_smear, connected_correlator, fit_cosh_correlator
 from gelt.lattice import Z2, build_transport_average, plaquette_tensor
 from gelt.sampler import mcmc_ensemble, z2_heatbath_sweep
+
+# Output artifacts are grouped by study under results/; create the dirs the
+# first time this runs in a fresh clone (they hold generated files only).
+for _d in ("results/sampler", "results/glueball", "results/attention",
+          "results/wilson_regression", "datasets"):
+    os.makedirs(_d, exist_ok=True)
+
 
 
 # ── Tunables (lattice block MUST match z2_beta_scan.py: same cache key) ───────
@@ -145,7 +152,7 @@ SCALE_REG = 1e-2  # (log C(0))² pin on the Ō → λŌ flat direction — witho
 EPS = 1e-8
 TRAIN_FRACTION, VAL_FRACTION = 0.7, 0.1
 
-BETA_SCAN = "datasets/z2_beta_scan.pt"  # Phase A: the classical mass to beat
+BETA_SCAN = "results/attention/z2_beta_scan.pt"  # Phase A: the classical mass to beat
 
 
 def artifact_tag(r=None):
@@ -159,12 +166,12 @@ def artifact_tag(r=None):
 
 
 def checkpoint_path(beta, r=None):
-    return f"best_z2_glueball_b{beta}{artifact_tag(r)}.pth"
+    return f"results/attention/best_z2_glueball_b{beta}{artifact_tag(r)}.pth"
 
 
 CACHE = f"datasets/z2_configs_L{L}_Lt{LT}_b{BETA}_N{N_CONFIGS}.pt"
 CHECKPOINT = checkpoint_path(BETA)
-ROWS = f"datasets/z2_attention_rows{artifact_tag()}.pt"
+ROWS = f"results/attention/z2_attention_rows{artifact_tag()}.pt"
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

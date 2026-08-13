@@ -10,6 +10,7 @@ Run:
     python scripts/validate_sampler_su2.py
 """
 
+import os
 import math
 
 import matplotlib.pyplot as plt
@@ -17,6 +18,13 @@ import numpy as np
 
 from gelt.lattice import SU, plaquette_tensor
 from gelt.sampler import _re_tr, mcmc_ensemble
+
+# Output artifacts are grouped by study under results/; create the dirs the
+# first time this runs in a fresh clone (they hold generated files only).
+for _d in ("results/sampler", "results/glueball", "results/attention",
+          "results/wilson_regression", "datasets"):
+    os.makedirs(_d, exist_ok=True)
+
 
 gaugegroup = SU(2)
 
@@ -225,6 +233,6 @@ ax.legend(fontsize=8)
 ax.set_xlim(-0.5, MAX_LAG + 0.5)
 
 fig.tight_layout()
-plt.savefig("sampler_validation_su2.png", dpi=150, bbox_inches="tight")
-print("Saved sampler_validation_su2.png")
+plt.savefig("results/sampler/sampler_validation_su2.png", dpi=150, bbox_inches="tight")
+print("Saved results/sampler/sampler_validation_su2.png")
 plt.show()

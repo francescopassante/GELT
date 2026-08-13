@@ -58,6 +58,13 @@ from gelt.glueball import (
 from gelt.lattice import SU, build_transport_average, plaquette_tensor
 from gelt.sampler import heatbath_overrelaxation_sweep, mcmc_ensemble
 
+# Output artifacts are grouped by study under results/; create the dirs the
+# first time this runs in a fresh clone (they hold generated files only).
+for _d in ("results/sampler", "results/glueball", "results/attention",
+          "results/wilson_regression", "datasets"):
+    os.makedirs(_d, exist_ok=True)
+
+
 
 # ── Environment overrides (for unattended batch drivers) ─────────────────────
 # The tunables stay plain constants for interactive use; the overnight driver
@@ -201,7 +208,7 @@ INPUT_SMEAR_LEVELS = (0, 2, 4, 6)  # cumulative APE levels of the plaquette
 #   bound is untouched; GELT becomes a spatially-resolved nonlinear
 #   generalization of the GEVP over the same smearing ladder. The transport T
 #   is built from the FIRST (least smeared) level.
-CHECKPOINT = "best_glueball_gelt" + (
+CHECKPOINT = "results/glueball/best_glueball_gelt" + (
     ""
     if tuple(INPUT_SMEAR_LEVELS) == (0,)
     else "_sm" + "-".join(str(lv) for lv in INPUT_SMEAR_LEVELS)
@@ -642,7 +649,7 @@ def main():
     # re-tunes fit windows and figures on these tiny (B, Nt) arrays without
     # another GPU eval pass. Same stem as the checkpoint, so smear-level
     # variants never overwrite each other's dumps.
-    obar_dump = os.path.join("datasets", CHECKPOINT.replace(".pth", "_test_obars.pt"))
+    obar_dump = CHECKPOINT.replace(".pth", "_test_obars.pt")
     os.makedirs("datasets", exist_ok=True)
     torch.save(
         {
@@ -792,7 +799,7 @@ def main():
         fontsize=13,
     )
     fig.tight_layout()
-    out = "glueball_gelt" + RUN_TAG + ".png"
+    out = "results/glueball/glueball_gelt" + RUN_TAG + ".png"
     fig.savefig(out, dpi=130, bbox_inches="tight")
     print(f"Saved {out}")
 

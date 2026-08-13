@@ -1,5 +1,6 @@
 from functools import partial
 
+import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -9,6 +10,13 @@ from tqdm import tqdm
 from gelt import SU, Z2, haar_ensemble
 from gelt.lattice import plaquette_tensor, rectangular_wilson_loop
 from gelt.lcnn import LCNN, build_axis_transports
+
+# Output artifacts are grouped by study under results/; create the dirs the
+# first time this runs in a fresh clone (they hold generated files only).
+for _d in ("results/sampler", "results/glueball", "results/attention",
+          "results/wilson_regression", "datasets"):
+    os.makedirs(_d, exist_ok=True)
+
 
 """
 ========================================================================================
@@ -189,7 +197,7 @@ if __name__ == "__main__":
         "batch_size": 64,
         "epochs": 3000,
         "patience": 3000,
-        "checkpoint_path": "best_lcnn.pth",
+        "checkpoint_path": "results/wilson_regression/best_lcnn.pth",
     }
 
     # Debug-capacity L-CNN — matches the depth/width used in train_gelt.py
@@ -306,7 +314,7 @@ if __name__ == "__main__":
     plt.title("L-CNN Training and Validation Loss")
     plt.legend()
     plt.grid(True)
-    plt.savefig("lcnn_loss.png", dpi=150, bbox_inches="tight")
+    plt.savefig("results/wilson_regression/lcnn_loss.png", dpi=150, bbox_inches="tight")
     plt.close()
 
     t_flat = all_targets.reshape(-1).numpy()
@@ -321,7 +329,7 @@ if __name__ == "__main__":
     plt.ylabel("Predictions")
     plt.title("L-CNN: True vs Predicted Values (Test Set)")
     plt.grid(True)
-    plt.savefig("lcnn_scatter.png", dpi=150, bbox_inches="tight")
+    plt.savefig("results/wilson_regression/lcnn_scatter.png", dpi=150, bbox_inches="tight")
     plt.close()
 
     results = {

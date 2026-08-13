@@ -24,6 +24,7 @@ Run:
     python scripts/validate_anisotropy.py
 """
 
+import os
 import functools
 import math
 
@@ -33,6 +34,13 @@ import torch
 
 from gelt.lattice import SU, plaquette_tensor, random_links, rectangular_wilson_loop
 from gelt.sampler import heatbath_overrelaxation_sweep, mcmc_ensemble
+
+# Output artifacts are grouped by study under results/; create the dirs the
+# first time this runs in a fresh clone (they hold generated files only).
+for _d in ("results/sampler", "results/glueball", "results/attention",
+          "results/wilson_regression", "datasets"):
+    os.makedirs(_d, exist_ok=True)
+
 
 torch.manual_seed(0)
 np.random.seed(0)
@@ -140,6 +148,6 @@ ax[1].set_ylabel("⟨Re Tr P / nc⟩")
 ax[1].legend()
 
 fig.tight_layout()
-out = "anisotropy_validation.png"
+out = "results/sampler/anisotropy_validation.png"
 fig.savefig(out, dpi=130)
 print(f"Saved {out}")

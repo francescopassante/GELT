@@ -45,7 +45,7 @@ theorem and would be satisfied by an untrained network too:
     the "training taught the routing physics" claim.
 
 Everything the script needs already exists: five Z₂ ensembles (24²×48, N=2000)
-with classical ξ = 2.05 → 5.28 in ``datasets/z2_beta_scan.pt``, and five R=12
+with classical ξ = 2.05 → 5.28 in ``results/attention/z2_beta_scan.pt``, and five R=12
 checkpoints ``best_z2_glueball_b<β>.pth``. Training used ``configs[:400]``, so
 the evaluation slice ``configs[400:]`` is unseen by every checkpoint, diagonal
 included. No sampling, no training — the per-configuration cost (APE smearing
@@ -82,7 +82,7 @@ Environment overrides:
     ZAC_SMOKE=1      tiny random lattice, no caches/checkpoints — runs the
                      synthetic fit self-check plus a plumbing pass in seconds.
 
-Writes ``datasets/z2_attention_correlator[_diag].pt`` (partial results are saved
+Writes ``results/attention/z2_attention_correlator[_diag].pt`` (partial results are saved
 after every ensemble, so an interrupted run keeps what it measured) and the
 matching ``.png``. The two modes write different names and never clobber each
 other.
@@ -121,6 +121,13 @@ from gelt.glueball import (  # noqa: E402
 )
 from gelt.lattice import random_links  # noqa: E402
 from gelt.sampler import integrated_autocorrelation_time  # noqa: E402
+
+# Output artifacts are grouped by study under results/; create the dirs the
+# first time this runs in a fresh clone (they hold generated files only).
+for _d in ("results/sampler", "results/glueball", "results/attention",
+          "results/wilson_regression", "datasets"):
+    os.makedirs(_d, exist_ok=True)
+
 
 
 # ── Tunables ──────────────────────────────────────────────────────────────────
@@ -177,8 +184,8 @@ RANDOM_SEED = 20260810
 MIN_REL_FLUCT = 1e-6
 
 _TAG = ("" if CROSS else "_diag") + tz.artifact_tag()
-OUT_PT = f"datasets/z2_attention_correlator{_TAG}.pt"
-OUT_PNG = f"z2_attention_correlator{_TAG}.png"
+OUT_PT = f"results/attention/z2_attention_correlator{_TAG}.pt"
+OUT_PNG = f"results/attention/z2_attention_correlator{_TAG}.png"
 
 device = tz.device
 
@@ -192,7 +199,7 @@ if SMOKE:
     BETAS = BETAS[:2]
     SMEAR_LEVELS = [0, 2]
     FIT_WINDOW, JACK_BLOCK = (1, 4), 2
-    OUT_PT, OUT_PNG = "datasets/z2_attention_correlator_smoke.pt", "z2_attention_correlator_smoke.png"
+    OUT_PT, OUT_PNG = "results/attention/z2_attention_correlator_smoke.pt", "results/attention/z2_attention_correlator_smoke.png"
 
 
 def build_model(ckpt=None, seed=None):

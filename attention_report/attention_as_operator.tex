@@ -3,7 +3,7 @@
 %
 %  Companion to glueball_report/glueball_spectroscopy.tex; self-contained.
 %  Build: pdflatex (run twice for refs).
-%  Figures are PNGs at the repository root; \graphicspath points one level up.
+%  Figures are PNGs under results/<study>/; \graphicspath lists those dirs.
 % ==============================================================================
 \documentclass[11pt,a4paper]{article}
 
@@ -19,7 +19,7 @@
 \usepackage{xcolor}
 \usepackage[colorlinks=true,linkcolor=blue!50!black,citecolor=blue!50!black,urlcolor=blue!50!black]{hyperref}
 
-\graphicspath{{../}}
+\graphicspath{{../}{../results/}{../results/sampler/}{../results/glueball/}{../results/attention/}{../results/wilson_regression/}}
 
 % ---- shorthand ---------------------------------------------------------------
 \newcommand{\Tr}{\operatorname{Tr}}

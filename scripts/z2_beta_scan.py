@@ -33,7 +33,7 @@ a night for five. The analysis is comparatively cheap: the jackknife is
 Run:
     python scripts/z2_beta_scan.py
 
-Writes ``z2_beta_scan.png`` and ``datasets/z2_beta_scan.pt``.
+Writes ``results/attention/z2_beta_scan.{png,pt}``.
 """
 
 import os
@@ -53,10 +53,18 @@ from gelt.glueball import (
 )
 from gelt.lattice import Z2
 from gelt.sampler import (
+
     integrated_autocorrelation_time,
     mcmc_ensemble,
     z2_heatbath_sweep,
 )
+
+# Output artifacts are grouped by study under results/; create the dirs the
+# first time this runs in a fresh clone (they hold generated files only).
+for _d in ("results/sampler", "results/glueball", "results/attention",
+          "results/wilson_regression", "datasets"):
+    os.makedirs(_d, exist_ok=True)
+
 
 
 # ── Tunables ──────────────────────────────────────────────────────────────────
@@ -260,7 +268,7 @@ def main():
         fontsize=13,
     )
     fig.tight_layout()
-    fig.savefig("z2_beta_scan.png", dpi=130, bbox_inches="tight")
+    fig.savefig("results/attention/z2_beta_scan.png", dpi=130, bbox_inches="tight")
     print("\nSaved z2_beta_scan.png")
 
     torch.save(
@@ -272,9 +280,9 @@ def main():
             "meta": {"L": L, "Lt": LT, "D": D, "N": N_CONFIGS,
                      "n_skip": N_SKIP, "fit_window": FIT_WINDOW, "jack_block": JACK_BLOCK},
         },
-        "datasets/z2_beta_scan.pt",
+        "results/attention/z2_beta_scan.pt",
     )
-    print("Saved datasets/z2_beta_scan.pt")
+    print("Saved results/attention/z2_beta_scan.pt")
 
 
 if __name__ == "__main__":

@@ -1,3 +1,4 @@
+import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -9,6 +10,13 @@ from gelt import haar_ensemble, mcmc_ensemble
 from gelt.blocks_rope import GELT
 from gelt.lattice import topological_charge_density
 from gelt.sampler import heatbath_overrelaxation_sweep
+
+# Output artifacts are grouped by study under results/; create the dirs the
+# first time this runs in a fresh clone (they hold generated files only).
+for _d in ("results/sampler", "results/glueball", "results/attention",
+          "results/wilson_regression", "datasets"):
+    os.makedirs(_d, exist_ok=True)
+
 
 """
 ========================================================================================
@@ -219,7 +227,8 @@ if __name__ == "__main__":
         # converges in far fewer.
         "epochs": 150,
         "patience": 20,
-        "checkpoint_path": f"best_gelt_topo_L{L}_b{beta}_R{R}"
+        # Read back by scripts/topology_attention.py — keep the two in step.
+        "checkpoint_path": f"results/attention/best_gelt_topo_L{L}_b{beta}_R{R}"
         + ("_cooled" if TARGET_COOLED else "")
         + ".pth",
     }
@@ -393,7 +402,7 @@ if __name__ == "__main__":
     plt.title("Training and Validation Loss")
     plt.legend()
     plt.grid(True)
-    plt.savefig("gelt_loss.png", dpi=150, bbox_inches="tight")
+    plt.savefig("results/wilson_regression/gelt_loss.png", dpi=150, bbox_inches="tight")
     plt.close()
 
     # Flatten per-site targets/predictions for the scatter; subsample if dense
@@ -411,7 +420,7 @@ if __name__ == "__main__":
     plt.ylabel("Predictions")
     plt.title("True vs Predicted Values (Test Set)")
     plt.grid(True)
-    plt.savefig("gelt_scatter.png", dpi=150, bbox_inches="tight")
+    plt.savefig("results/wilson_regression/gelt_scatter.png", dpi=150, bbox_inches="tight")
     plt.close()
 
     results = {

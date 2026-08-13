@@ -19,7 +19,7 @@
 # any init reaching the variational bound has found the same optimum.)
 #
 # Phases are independent: a failure is logged and the batch continues.
-# Each phase leaves a test-Ō dump in datasets/*_test_obars.pt — copy those
+# Each phase leaves a test-Ō dump in results/glueball/*_test_obars.pt — copy those
 # to the laptop and run scripts/fit_glueball_overlap.py on each.
 #
 # Run (from the repo root, inside the venv):
@@ -58,4 +58,5 @@ run_phase replication_ens2 env \
   python -u scripts/train_glueball.py
 
 echo "[$(stamp)] batch done. Artifacts:"
-ls -l datasets/*_test_obars.pt best_glueball_gelt*.pth glueball_gelt*.png 2>/dev/null
+ls -l results/glueball/*_test_obars.pt results/glueball/best_glueball_gelt*.pth \
+      results/glueball/glueball_gelt*.png 2>/dev/null

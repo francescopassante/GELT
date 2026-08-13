@@ -50,6 +50,7 @@ Run:
     python scripts/fit_glueball_overlap.py [path/to/…_test_obars.pt]
 """
 
+import os
 import math
 import sys
 
@@ -58,6 +59,7 @@ import numpy as np
 import torch
 
 from gelt.glueball import (
+
     connected_correlator,
     connected_correlator_matrix,
     effective_mass,
@@ -65,11 +67,18 @@ from gelt.glueball import (
     gevp_ground_vector,
 )
 
+# Output artifacts are grouped by study under results/; create the dirs the
+# first time this runs in a fresh clone (they hold generated files only).
+for _d in ("results/sampler", "results/glueball", "results/attention",
+          "results/wilson_regression", "datasets"):
+    os.makedirs(_d, exist_ok=True)
+
+
 # ── Tunables ──────────────────────────────────────────────────────────────────
 DUMP = (
     sys.argv[1]
     if len(sys.argv) > 1
-    else "datasets/best_glueball_gelt_sm0-2-4-6_test_obars.pt"
+    else "results/glueball/best_glueball_gelt_sm0-2-4-6_test_obars.pt"
 )
 FIT_WINDOW = (2, 7)  # shared cosh-fit window [Δmin, Δmax]. Starts at 2 so the
 #                      classical GEVP's residual Δ=1 contamination (the Run-5
@@ -81,7 +90,7 @@ MEFF_DMAX = 10  # last Δ drawn in the m_eff panel
 RHO_DMAX = 8  # last Δ drawn in the overlap panel (cosh_ref shrinks ~e^{−mΔ},
 #               so the ratio's noise blows up beyond the fit window)
 ANCHOR = 0.33  # classical GEVP plateau m·a_t (the Run-3 anchor)
-OUT = "glueball_overlap.png"
+OUT = "results/glueball/glueball_overlap.png"
 
 
 # ── Blocked jackknife of an arbitrary statistic ───────────────────────────────

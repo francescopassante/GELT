@@ -34,7 +34,8 @@ Run (from the repo root):
 
 Env overrides: TRANSPORT_L, TRANSPORT_BETA, TRANSPORT_N, TRANSPORT_R,
 TRANSPORT_EPOCHS, TRANSPORT_GROUP (su2|z2), TRANSPORT_LOOPS (e.g. "1x1,2x2,3x3").
-Writes transport_mode_comparison.png and prints a summary table.
+Writes results/wilson_regression/transport_mode_comparison.{png,json}
+and prints a summary table.
 """
 
 import functools
@@ -54,6 +55,13 @@ from torch.utils.data import DataLoader
 from gelt.blocks_rope import GELT
 from gelt.lattice import SU, Z2, build_transport_average, plaquette_tensor, rectangular_wilson_loop
 from gelt.sampler import heatbath_overrelaxation_sweep, mcmc_ensemble, metropolis_sweep
+
+# Output artifacts are grouped by study under results/; create the dirs the
+# first time this runs in a fresh clone (they hold generated files only).
+for _d in ("results/sampler", "results/glueball", "results/attention",
+          "results/wilson_regression", "datasets"):
+    os.makedirs(_d, exist_ok=True)
+
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -300,7 +308,7 @@ if __name__ == "__main__":
         )
     print("=" * 74)
 
-    with open("transport_mode_comparison.json", "w") as fh:
+    with open("results/wilson_regression/transport_mode_comparison.json", "w") as fh:
         json.dump(results, fh, indent=2)
 
     # --- figure: R² vs loop size per mode, and the speed cost ---------------
@@ -329,5 +337,5 @@ if __name__ == "__main__":
     axes[1].grid(alpha=0.3, axis="y")
 
     fig.tight_layout()
-    fig.savefig("transport_mode_comparison.png", dpi=150)
+    fig.savefig("results/wilson_regression/transport_mode_comparison.png", dpi=150)
     print("wrote transport_mode_comparison.png and transport_mode_comparison.json")

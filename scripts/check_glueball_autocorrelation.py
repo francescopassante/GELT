@@ -17,6 +17,7 @@ Run:
     python scripts/check_glueball_autocorrelation.py
 """
 
+import os
 import functools
 
 import matplotlib.pyplot as plt
@@ -26,11 +27,19 @@ import torch
 from gelt.glueball import ape_smear, glueball_operator
 from gelt.lattice import SU, plaquette_tensor
 from gelt.sampler import (
+
     _re_tr,
     heatbath_overrelaxation_sweep,
     integrated_autocorrelation_time,
     mcmc_ensemble,
 )
+
+# Output artifacts are grouped by study under results/; create the dirs the
+# first time this runs in a fresh clone (they hold generated files only).
+for _d in ("results/sampler", "results/glueball", "results/attention",
+          "results/wilson_regression", "datasets"):
+    os.makedirs(_d, exist_ok=True)
+
 
 torch.manual_seed(0)
 np.random.seed(0)
@@ -104,6 +113,6 @@ ax.set_title(
 ax.legend()
 ax.set_xlim(-0.5, MAX_LAG)
 fig.tight_layout()
-out = "glueball_autocorrelation.png"
+out = "results/glueball/glueball_autocorrelation.png"
 fig.savefig(out, dpi=150)
 print(f"\nSaved {out}")

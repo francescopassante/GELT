@@ -1,5 +1,6 @@
 from functools import partial
 
+import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -7,6 +8,13 @@ from tqdm import tqdm
 
 from gelt import LatticeCNN, haar_ensemble
 from gelt.lattice import rectangular_wilson_loop
+
+# Output artifacts are grouped by study under results/; create the dirs the
+# first time this runs in a fresh clone (they hold generated files only).
+for _d in ("results/sampler", "results/glueball", "results/attention",
+          "results/wilson_regression", "datasets"):
+    os.makedirs(_d, exist_ok=True)
+
 
 """
 ========================================================================================
@@ -139,7 +147,7 @@ if __name__ == "__main__":
         "batch_size": 64,
         "epochs": 300,
         "patience": 30,
-        "checkpoint_path": "best_cnn.pth",
+        "checkpoint_path": "results/wilson_regression/best_cnn.pth",
     }
 
     # Reuse a previously saved dataset if one exists under this prefix;
@@ -271,7 +279,7 @@ if __name__ == "__main__":
     plt.title("Training and Validation Loss")
     plt.legend()
     plt.grid(True)
-    plt.savefig("cnn_loss.png", dpi=150, bbox_inches="tight")
+    plt.savefig("results/wilson_regression/cnn_loss.png", dpi=150, bbox_inches="tight")
     plt.close()
 
     # Flatten per-site targets/predictions for the scatter; subsample if dense
@@ -289,7 +297,7 @@ if __name__ == "__main__":
     plt.ylabel("Predictions")
     plt.title("True vs Predicted Values (Test Set)")
     plt.grid(True)
-    plt.savefig("cnn_scatter.png", dpi=150, bbox_inches="tight")
+    plt.savefig("results/wilson_regression/cnn_scatter.png", dpi=150, bbox_inches="tight")
     plt.close()
 
     results = {

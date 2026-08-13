@@ -42,7 +42,7 @@ Run:
 
 Writes ``glueball_attention.png`` (specialization + validation panels),
 ``glueball_attention_kernels.png`` (per-(layer, head) mean-α offset maps),
-and ``datasets/glueball_attention_stats.pt`` (raw statistics for the thesis
+and ``results/attention/glueball_attention_stats.pt`` (raw statistics for the thesis
 figures).
 """
 
@@ -65,6 +65,13 @@ from gelt.glueball import ape_smear  # noqa: E402
 from gelt.lattice import build_transport_average, plaquette_tensor  # noqa: E402
 from gelt.sampler import heatbath_overrelaxation_sweep, mcmc_ensemble  # noqa: E402
 
+# Output artifacts are grouped by study under results/; create the dirs the
+# first time this runs in a fresh clone (they hold generated files only).
+for _d in ("results/sampler", "results/glueball", "results/attention",
+          "results/wilson_regression", "datasets"):
+    os.makedirs(_d, exist_ok=True)
+
+
 
 # ── Tunables ──────────────────────────────────────────────────────────────────
 VIZ_N = int(os.environ.get("VIZ_N_CONFIGS", 16))  # fresh viz-ensemble size
@@ -80,7 +87,7 @@ CACHE = (
     f"_xi{tg.XI}_N{VIZ_N}_seed{VIZ_SEED}.pt"
 )
 CKPT = sys.argv[1] if len(sys.argv) > 1 else tg.CHECKPOINT
-STATS_DUMP = "datasets/glueball_attention_stats.pt"
+STATS_DUMP = "results/attention/glueball_attention_stats.pt"
 
 
 # ── Per-config input pipeline (mirrors tg.network_obar, kept per-config) ──────
@@ -499,8 +506,8 @@ def main():
         fontsize=13,
     )
     fig.tight_layout()
-    fig.savefig("glueball_attention.png", dpi=130, bbox_inches="tight")
-    print("Saved glueball_attention.png")
+    fig.savefig("results/attention/glueball_attention.png", dpi=130, bbox_inches="tight")
+    print("Saved results/attention/glueball_attention.png")
 
     # ── Figure 2: mean-α offset kernels, Δz = 0 plane per (layer, head) ────────
     fig2, ax2 = plt.subplots(H, n_layers, figsize=(4 * n_layers, 4 * H), squeeze=False)
@@ -528,8 +535,8 @@ def main():
         fontsize=13,
     )
     fig2.tight_layout()
-    fig2.savefig("glueball_attention_kernels.png", dpi=130, bbox_inches="tight")
-    print("Saved glueball_attention_kernels.png")
+    fig2.savefig("results/attention/glueball_attention_kernels.png", dpi=130, bbox_inches="tight")
+    print("Saved results/attention/glueball_attention_kernels.png")
 
     # ── Raw statistics for the thesis figures ──────────────────────────────────
     torch.save(

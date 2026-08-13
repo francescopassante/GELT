@@ -21,7 +21,8 @@ The naive charge's Z < 1 normalization is irrelevant: Spearman is rank-based.
 Run (on the box holding the checkpoint):
     python scripts/topology_attention.py [checkpoint]
 
-Writes ``topology_attention.png`` and ``datasets/topology_attention_stats.pt``.
+Writes ``results/attention/topology_attention.png`` and
+``results/attention/topology_attention_stats.pt``.
 """
 
 import functools
@@ -46,6 +47,13 @@ from gelt.lattice import (  # noqa: E402
 from gelt.sampler import heatbath_overrelaxation_sweep, mcmc_ensemble  # noqa: E402
 from gelt.topology import cool  # noqa: E402
 
+# Output artifacts are grouped by study under results/; create the dirs the
+# first time this runs in a fresh clone (they hold generated files only).
+for _d in ("results/sampler", "results/glueball", "results/attention",
+          "results/wilson_regression", "datasets"):
+    os.makedirs(_d, exist_ok=True)
+
+
 
 # ── Tunables (must match train_gelt.py's physics block) ───────────────────────
 L, D, R = 8, 4, 2
@@ -63,9 +71,13 @@ N_ABL = N_VIZ  # ablation sample = the jackknife's sample size
 # all the mass sits on the site itself".
 COLLAPSE_THRESHOLD = 0.05
 
-CKPT = sys.argv[1] if len(sys.argv) > 1 else f"best_gelt_topo_L{L}_b{BETA}_R{R}.pth"
+CKPT = (
+    sys.argv[1]
+    if len(sys.argv) > 1
+    else f"results/attention/best_gelt_topo_L{L}_b{BETA}_R{R}.pth"
+)
 CACHE = f"datasets/topo_viz_configs_L{L}_b{BETA}_N{N_VIZ}_seed{VIZ_SEED}.pt"
-STATS = "datasets/topology_attention_stats.pt"
+STATS = "results/attention/topology_attention_stats.pt"
 
 # cuda → cpu: cooling projects onto the group with a complex SVD, which MPS
 # cannot do.
@@ -284,8 +296,8 @@ def main():
         fontsize=13,
     )
     fig.tight_layout()
-    fig.savefig("topology_attention.png", dpi=130, bbox_inches="tight")
-    print("Saved topology_attention.png")
+    fig.savefig("results/attention/topology_attention.png", dpi=130, bbox_inches="tight")
+    print("Saved results/attention/topology_attention.png")
 
     torch.save(
         {
