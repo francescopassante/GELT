@@ -1,0 +1,972 @@
+% ==============================================================================
+%  The attention map as a lattice operator — standalone report
+%
+%  Companion to glueball_report/glueball_spectroscopy.tex; self-contained.
+%  Build: pdflatex (run twice for refs).
+%  Figures are PNGs at the repository root; \graphicspath points one level up.
+% ==============================================================================
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=2.6cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{amsmath,amssymb,mathtools}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{caption}
+\usepackage{xcolor}
+\usepackage[colorlinks=true,linkcolor=blue!50!black,citecolor=blue!50!black,urlcolor=blue!50!black]{hyperref}
+
+\graphicspath{{../}}
+
+% ---- shorthand ---------------------------------------------------------------
+\newcommand{\Tr}{\operatorname{Tr}}
+\newcommand{\Obar}{\bar{O}}
+\newcommand{\Abar}{\bar{A}}
+\newcommand{\meff}{m_{\mathrm{eff}}}
+\newcommand{\latt}{\ell_{\mathrm{att}}}
+\newcommand{\xiA}{\xi_A}
+\newcommand{\That}{\hat{T}}
+
+\title{The Attention Map as a Lattice Operator:\\
+Correlation Length from a Gauge-Equivariant Network's Gaze}
+\author{Francesco Passante}
+\date{August 11, 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+A gauge-equivariant attention network computes its attention weights from a
+\emph{gauge-invariant} score. This report takes that observation seriously and
+follows it to its consequence: any reduction of an attention row to a single
+number per site defines a local gauge-invariant scalar field, i.e.\ an ordinary
+lattice operator, and if the network acts on one timeslice at a time then that
+operator's zero-momentum connected correlator has an exact transfer-matrix
+decomposition. \emph{The attention field therefore has a mass}, and that mass is
+the theory's mass gap. We test this in three-dimensional $\mathbb{Z}_2$ gauge
+theory near its second-order point, where the correlation length is tunable over
+$\xi = 2.0 \to 5.6$ lattice spacings, using five ensembles ($24^2\times48$,
+$N=2000$) and five per-timeslice variational operators trained on a
+Rayleigh-quotient loss. On $1200$ configurations no checkpoint has seen, the
+correlation length read out of the attention tracks the classical one at
+\textbf{Pearson $0.9966$} over a factor $2.7$ of dynamic range, at $5$--$7\%$
+precision on both sides, and --- the strongest part of the evidence --- it
+reproduces a \emph{non-monotonic} excursion, $\xi(0.7585) > \xi(0.760)$,
+measured on the same configurations by two independent operators. A cross-$\beta$
+control matrix shows $\xiA$ is $11.9\times$ more sensitive to the evaluation
+ensemble than to the training $\beta$, so nothing was memorised, and an explicit
+configuration-scramble null returns no mass at all.
+
+The result splits into two claims of different strength, and we are careful to
+keep them apart. The \emph{structural} claim --- equivariant attention maps are
+bona fide lattice operators, with a mass, an overlap, and a spectral
+decomposition --- is established by $\xiA \approx \xi$, and holds already at
+random initialisation. The \emph{learning} claim rests instead on the
+ground-state overlap $A_0$: training raises it by $+0.11$ to $+0.27$
+($5.4\sigma$ to $23.5\sigma$, correlated differences on shared configurations)
+and raises the site-to-site fluctuation of the attention by one to one and a
+half orders of magnitude. ``The network discovers the correlation length'' is
+\emph{not} a supportable statement; ``training removes excited-state
+contamination from the attention field'' is. We also record why two earlier
+attempts at the same question failed --- both measured the mean attention
+\emph{kernel}, a statistic bounded by the receptive radius $R$ and centred by
+the ball geometry, rather than the attention \emph{field} --- and the four
+analysis defects that had to be repaired before the numbers above could be
+trusted, the largest being a generalized eigenproblem that was selecting a
+near-null direction at every $\beta$.
+\end{abstract}
+
+\tableofcontents
+
+% ==============================================================================
+\section{The question, and why it is not a trivial one}
+\label{sec:intro}
+% ==============================================================================
+
+The interpretability program of this thesis rests on one premise: in a
+gauge-equivariant network, the attention map is not a diagnostic heat map but a
+\emph{measurement}. The conference abstract commits to two investigations of
+that premise --- whether attention localizes in topologically rich regions, and
+whether the \textbf{attention range correlates with the physical correlation
+length}. This report is about the second.
+
+Stated naively the question is almost too easy to fail: train one operator per
+inverse coupling $\beta$, measure how far each attention head looks, plot it
+against the correlation length $\xi(\beta)$, and see whether the two rise
+together. That programme was run twice and produced a negative both times
+(Section~\ref{sec:failures}). The diagnosis --- that the failures were a property
+of the \emph{statistic} and not of the physics --- is what makes the rest of the
+report possible, so it is worth stating the trap early: a range statistic
+computed from the \emph{lattice-averaged} attention kernel is bounded above by
+the receptive radius $R$ and centred by the geometry of the offset ball, and it
+discards precisely the site-to-site variation that distinguishes attention from
+convolution.
+
+The replacement statistic is the subject of Section~\ref{sec:claim}. Instead of
+asking how \emph{wide} the attention is, we treat the attention itself as a
+field on the lattice and ask what \emph{mass} it has. That question has a sharp,
+falsifiable answer supplied by the transfer matrix, needs no reference to the
+receptive field at all, and --- unlike the range --- does not exist for a
+convolution.
+
+% ==============================================================================
+\section{Theoretical background}
+\label{sec:theory}
+% ==============================================================================
+
+\subsection{Masses, correlators, and the mass gap}
+\label{sec:masses}
+
+Euclidean lattice field theory computes expectation values as statistical
+averages over gauge-field configurations $U$ with weight $e^{-S[U]}$. For a
+lattice with a periodic temporal extent $N_t$ and a transfer matrix
+$\That = e^{-\hat{H}}$, the correlator of a zero-momentum operator
+\begin{equation}
+  \Obar(t) \;=\; \sum_{\vec{x}} O(t,\vec{x})
+\end{equation}
+admits the spectral decomposition
+\begin{equation}
+  C(\Delta) \;=\; \big\langle\, \delta\Obar(t+\Delta)\, \delta\Obar(t) \,\big\rangle
+  \;=\; \sum_{n>0} \big| \langle 0 | \hat{O} | n \rangle \big|^2
+        \Big( e^{-m_n \Delta} + e^{-m_n (N_t - \Delta)} \Big),
+  \label{eq:spectral}
+\end{equation}
+where $\delta\Obar = \Obar - \langle\Obar\rangle$ (the vacuum subtraction is
+mandatory for any operator with the vacuum quantum numbers, which is every
+operator considered here) and the second exponential is the periodic image. At
+large $\Delta$ the lightest state dominates, so
+\begin{equation}
+  C(\Delta) \;\xrightarrow{\ \Delta\ \text{large}\ }\;
+  A\Big( e^{-m_0\Delta} + e^{-m_0(N_t-\Delta)} \Big),
+  \qquad
+  \xi \;=\; \frac{1}{m_0}.
+\end{equation}
+Two derived quantities are used throughout:
+\begin{itemize}
+  \item the \textbf{effective mass} $\meff(\Delta) = \log[C(\Delta)/C(\Delta+1)]$,
+        which converges to $m_0$ from above --- every excited state in
+        Eq.~\eqref{eq:spectral} adds a faster-decaying exponential, so a
+        contaminated correlator decays too fast and reads $m$ \emph{high},
+        hence $\xi$ \emph{low}. This sign matters in
+        Section~\ref{sec:overshoot};
+  \item the \textbf{ground-state overlap fraction}
+        \begin{equation}
+          A_0 \;=\; \frac{A\big(1 + e^{-m_0 N_t}\big)}{C(0)}
+          \;\in\; [0,1],
+          \label{eq:A0}
+        \end{equation}
+        the fraction of the operator's own variance carried by the ground
+        state. This is Morningstar--Peardon's measure of operator quality, and
+        the quantity a variational construction maximises. Two operators
+        measuring the same physics must agree on $m_0$; they may differ
+        arbitrarily on $A_0$, and that is where operator quality lives.
+\end{itemize}
+
+\subsection{The testbed: 3D $\mathbb{Z}_2$ gauge theory}
+\label{sec:z2}
+
+The measurement needs a correlation length that is (i) large compared with one
+lattice spacing, so that a \emph{length} is resolvable at all on an integer
+grid, and (ii) tunable over a real dynamic range, so that a correlation between
+two lengths is more than a two-point coincidence. Three-dimensional
+$\mathbb{Z}_2$ gauge theory delivers both: it is dual to the 3D Ising model and
+has a second-order transition at $\beta_c \approx 0.7614$, where the mass gap
+closes and $\xi = 1/m$ diverges as $\xi \sim (\beta_c-\beta)^{-\nu}$.
+
+This is a deliberate change of system. The $SU(2)$ glueball ensembles on which
+the rest of this thesis's spectroscopy is done have $\xi_s \le 1.1$ spatial
+lattice spacings at every $\beta$ examined (Section~\ref{sec:failures}), which
+makes the question unaskable there for reasons that have nothing to do with
+attention. $\mathbb{Z}_2$ is also the project's declared debug testbed
+($n_c = 1$, links $\pm1$) and is cheap. The price is that every conclusion below
+is a statement about the \emph{method}, not about $SU(N)$.
+
+Five ensembles were generated at
+\begin{equation}
+  \beta \in \{0.7450,\ 0.7520,\ 0.7560,\ 0.7585,\ 0.7600\},
+  \qquad 24^2\times48, \quad N = 2000,
+\end{equation}
+spanning $\xi \approx 2.0 \to 5.6$. Their generation required an exact
+$\mathbb{Z}_2$ heat-bath, $P(U=+1) = \sigma(2\beta s)$ with $s$ the staple sum:
+the single-link Metropolis proposal is the flip $U \to -U$, whose acceptance
+\emph{collapses} to $\approx 0.02$ as the configuration orders near $\beta_c$,
+freezing the chain exactly where $\xi$ is largest. Even with the heat-bath,
+critical slowing down ($\tau \sim \xi^z$, $z\approx2$) drives the integrated
+autocorrelation time to $\tau_{\rm int} \approx 44$ sweeps, which fixes the
+production $n_{\rm skip} = 200$.
+
+\subsection{Gauge-equivariant attention, and why its weights are physical}
+\label{sec:gemhsa}
+
+The GELT block computes, for each query site $x$, a score against every site
+$x+\Delta$ in the $L_1$ ball of Manhattan radius $R$. The key and value matrices
+at $x+\Delta$ are first \emph{parallel-transported} to $x$ along the (averaged)
+shortest lattice paths, and the score is the real trace
+\begin{equation}
+  s^{(\ell,h)}_{x\to x+\Delta}
+  \;=\; \operatorname{Re}\Tr\!\big[\, Q^\dagger(x)\, \tilde{K}(x{+}\Delta) \,\big],
+  \qquad
+  \tilde{K}(x{+}\Delta) \;=\; T_\Delta(x)\, K(x{+}\Delta)\, T_\Delta^\dagger(x),
+  \label{eq:score}
+\end{equation}
+followed by a softmax over $\Delta$ giving the attention weights
+$\alpha^{(\ell,h)}_{x\to x+\Delta}$. Under a local gauge transformation
+$\Omega(x)$, both $Q(x)$ and the transported $\tilde{K}$ conjugate by the
+\emph{same} $\Omega(x)$, so the trace in Eq.~\eqref{eq:score} is
+\textbf{invariant}, and therefore so is $\alpha$.
+
+This is the entire foundation of what follows, and it is a property of the
+architecture rather than of the training. It is also exactly what a
+non-equivariant network does not have: there, the attention weights depend on
+the gauge in which the configuration happens to be written, and no gauge-fixing
+convention makes a gauge-dependent quantity into an observable.
+
+\subsection{The claim: the attention field has a mass}
+\label{sec:claim}
+
+Because $\alpha_{x\to\cdot}$ is gauge invariant at every site, \emph{any}
+reduction of the attention row to a scalar,
+\begin{equation}
+  A(x) \;=\; f\big(\alpha_{x\to\cdot}\big),
+  \label{eq:reduction}
+\end{equation}
+is a gauge-invariant local scalar field built from the links --- a lattice
+operator in the ordinary sense, with all the machinery of
+Section~\ref{sec:masses} available to it. Three reductions are used here, chosen
+to be qualitatively different rather than exhaustive:
+\begin{equation}
+  \underbrace{\alpha_{x\to x}}_{\texttt{self}},
+  \qquad
+  \underbrace{\sum_\Delta |\Delta|_1\, \alpha_{x\to x+\Delta}}_{\texttt{ell}},
+  \qquad
+  \underbrace{-\sum_\Delta \alpha_{x\to x+\Delta}\log\alpha_{x\to x+\Delta}}_{\texttt{ent}}.
+\end{equation}
+Note that \texttt{ell} is the \emph{local, per-site} version of the failed range
+statistic: the trap of Section~\ref{sec:failures} is not the reduction, it is
+the averaging that used to follow it.
+
+The trained operators are \textbf{per-timeslice} by construction --- the
+transfer-matrix bound that makes the Rayleigh loss a mass estimate requires
+$\Obar(t)$ to depend on slice $t$ alone, so the network sees one timeslice at a
+time and has no temporal receptive field. Consequently $A(t,\vec{x})$ depends on
+slice $t$ alone, its zero-momentum sum $\Abar(t) = \sum_{\vec x} A(t,\vec x)$ is
+a legitimate timeslice operator, and Eq.~\eqref{eq:spectral} applies verbatim:
+\begin{equation}
+  C_A(\Delta)
+  \;=\; \big\langle \delta\Abar(t+\Delta)\, \delta\Abar(t) \big\rangle
+  \;=\; \sum_{n>0} \big|\langle 0|\hat{A}|n\rangle\big|^2 e^{-m_n\Delta} + \dots
+  \label{eq:CA}
+\end{equation}
+So the attention field has a mass $m_A$, and
+\begin{equation}
+  \boxed{\ \xiA \;=\; 1/m_A \;\overset{?}{=}\; \xi(\beta)\ }
+\end{equation}
+with \emph{no ceiling at $R$} and \emph{no geometric offset}, because
+Eq.~\eqref{eq:CA} correlates a fluctuation --- zero-mean by construction --- and
+not a moment of a kernel.
+
+Three consequences, in increasing order of interest:
+\begin{enumerate}
+  \item \textbf{$\xiA$ tracks $\xi(\beta)$}: the length the failed statistic was
+        supposed to find, recovered from the fluctuations of the attention
+        rather than from its width.
+  \item \textbf{This measurement does not exist for a convolution.} A fixed
+        kernel has $\delta A \equiv 0$ identically, so $C_A \equiv 0$. The mere
+        \emph{existence} of a signal is the content-dependence result, and it is
+        quantitative: the site-level fluctuation-to-mean ratio $\delta A/A$ is
+        its effect size.
+  \item \textbf{$A_0$ of the attention field} says whether \emph{training}
+        taught the routing to look at the physics, or whether the equivariant
+        construction alone is responsible.
+\end{enumerate}
+
+\subsection{Why this is a measurement and not a tautology}
+\label{sec:tautology}
+
+Point~1 above is, on its own, close to a theorem: \emph{any} local
+gauge-invariant scalar has a correlator that decays at the mass gap, a
+random-init network's attention field included. Finding $\xiA \approx \xi$
+therefore establishes point~2 --- that attention maps in an equivariant network
+are physical fields --- but says nothing whatsoever about learning. The design
+must separate the two, and does so with three arms:
+
+\begin{center}
+\small
+\begin{tabular}{@{}l@{\quad}p{7.6cm}@{}}
+\toprule
+arm & what it isolates \\
+\midrule
+trained network, \textbf{matched} $\beta$ (diagonal)
+  & the headline $\xiA$ vs $\xi$ \\[2pt]
+trained network, \textbf{mismatched} $\beta$ (off-diagonal)
+  & content-dependence vs memorisation: $\xiA$ must follow the
+    \emph{evaluation} ensemble, not the training $\beta$ \\[2pt]
+\textbf{random-init} network, all $\beta$
+  & what equivariance gives \emph{before} learning: the $A_0$ baseline \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The off-diagonal arm also removes the confound that killed the previous attempt
+(Section~\ref{sec:failures}): when one network per $\beta$ is read out on its
+own ensemble, operator quality varies along the very axis being plotted. With
+one fixed network evaluated across five ensembles, operator quality is a
+property of the \emph{row} and the physics being probed is a property of the
+\emph{column}.
+
+% ==============================================================================
+\section{Two prior negatives, and their shared cause}
+\label{sec:failures}
+% ==============================================================================
+
+\subsection{$SU(2)$: the question is unaskable}
+
+A classical GEVP $\beta$-scan on the $12^3\times24$, $\xi=3$ anisotropic
+$SU(2)$ family (the same lattice on which this thesis's glueball result was
+obtained) gives spatial correlation lengths
+\begin{center}
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+$\beta$ & 2.1 & 2.3 & 2.4 & 2.5 & 2.7 \\
+$\xi_s$ [$a_s$] & 0.57 & 0.83 & 1.00 & 1.10 & 1.00 \\
+\bottomrule
+\end{tabular}
+\end{center}
+$\xi_s$ never exceeds $1.1$ lattice spacings. Attention offsets are integers, so
+the entire variation a range statistic would have to track lives inside the
+first offset shell. The box is not the problem --- $L/\xi_s \approx 12$, the
+regime in which finite-volume effects are \emph{absent} --- the spacing is: at
+$\xi=3$ the spatial coupling $\beta_s = \beta/\xi \approx 0.8$ is strong
+coupling, $a_s$ is coarse, and the whole glueball fits inside one grid cell.
+
+\subsection{$\mathbb{Z}_2$: real dynamic range, and the statistic still fails}
+
+Moving to 3D $\mathbb{Z}_2$ bought $\xi = 2.05 \to 5.28$, i.e.\ genuine range.
+One variational operator per $\beta$ was trained, and the mean attention range
+\begin{equation}
+  \latt \;=\; \sum_\Delta |\Delta|_1\, \bar\alpha(\Delta),
+  \qquad
+  \bar\alpha = \text{attention averaged over sites and configurations}
+\end{equation}
+was read out. At $R=6$ it gave $4.25, 4.54$; at $R=12$ it gave
+$8.63, 7.90, 8.13, 7.44, 8.21$ --- scatter, no trend in $\xi$.
+
+The reason is that $\latt$ has a \textbf{uniform reference} that nobody had
+quoted. For attention spread uniformly over the 2D $L_1$ ball,
+\begin{equation}
+  \ell_{\rm uniform} \;=\; \frac{\sum_d 4d\cdot d}{n_{\rm off}}
+  \;=\; 4.28 \ \ (R=6), \qquad 8.31 \ \ (R=12),
+\end{equation}
+and \emph{every measurement landed on that number}. The statistic is bounded
+above by $R$ \emph{and} centred by the ball geometry; only the bound had been
+guarded against. In hindsight the $R=6$ ``trend'' ($4.25 \to 4.54$ about a
+uniform $4.28$) was near-uniform noise and should never have been read as a
+signal. A later reproducibility check settled it independently: retraining at
+the same $R$ and the same $\beta$ with more data moved $\latt$ by $0.3$--$0.5$,
+against an across-$\beta$ span of $3.95 \to 4.57$ for the whole scan. The
+run-to-run variation of the statistic is the size of the entire effect it was
+supposed to measure.
+
+\subsection{The diagnosis}
+
+Both failures share one cause. $\bar\alpha$ is an average \emph{over the
+lattice}, so $\latt$ is a property of the learned \emph{kernel} --- a design
+quantity of the same kind as a convolution's filter width --- and averaging is
+exactly the operation that discards the site-to-site,
+configuration-to-configuration variation that attention has and convolution does
+not.
+
+That the discarded part is large was already visible in the $R=12$ readout: the
+per-head offset entropy relative to its uniform ceiling at $\beta=0.745$ reads
+$0.87$, $0.92$, $0.93$, $0.97$, $\mathbf{0.42}$, $0.73$, $0.97$,
+$\mathbf{0.72}$. Several heads are strongly structured --- while their $\latt$
+sits at $8.3$ against a uniform $8.31$. The attention was doing something; the
+radial first moment was blind to it. \textbf{Keeping the variation instead of
+averaging it away is the whole content of Section~\ref{sec:claim}.}
+
+% ==============================================================================
+\section{What we did}
+\label{sec:method}
+% ==============================================================================
+
+\subsection{Ensembles and trained operators}
+
+Everything the measurement needs already existed when it was designed; no
+sampling and no training were required, only forward passes.
+
+\paragraph{Ensembles.} Five $\mathbb{Z}_2$ ensembles, $24^2\times48$, $N=2000$
+configurations each, exact heat-bath, $n_{\rm skip} = 200$
+(Section~\ref{sec:z2}).
+
+\paragraph{Operators.} One GELT variational operator per $\beta$, trained
+exactly as the $SU(2)$ glueball operator is: \texttt{GELT} with $4$ GEMHSA
+layers, $2$ heads, $d_{\rm model}=16$, $d_{qkv}=8$, RoPE positional encoding,
+receptive radius $R=6$, fed four cumulative APE-smearing levels
+$(0,4,8,16)$ as input channels, and trained on the Rayleigh loss
+$-\overline{C(\Delta)/C(0)}$ over $\Delta\in\{1,2\}$ whose converged value
+\emph{is} (minus the exponential of) the mass. The operator is
+per-timeslice --- 2D here, since 3D $\mathbb{Z}_2$ has two spatial directions
+--- so the transfer-matrix bound of Section~\ref{sec:claim} holds.
+
+Training used \texttt{configs[:800]} at every $\beta$. \textbf{All measurements
+below use \texttt{configs[800:]}}, so the evaluation slice is unseen by every
+checkpoint, the diagonal included.
+
+\paragraph{Operator quality.} $R=6$ with $800$ training configurations was
+chosen after an $R=12$ sweep produced systematically undertrained operators
+(halving the data to pay for $313$ offsets left $70$ optimizer steps/epoch
+instead of $140$). Each checkpoint is gated against the classical mass with
+\emph{matched estimators} --- the network's own correlator re-fitted with the
+classical scan's window and blocked jackknife, with both errors propagated ---
+because the first version of the gate compared $\meff(\Delta{=}1)$ against a
+cosh fit and thereby manufactured an apparent ``undertraining that grows with
+$\xi$'' out of a purely one-sided estimator bias. All five $R=6$ checkpoints
+pass the corrected gate.
+
+\subsection{The measurement pipeline}
+\label{sec:pipeline}
+
+For each (network, ensemble) pair, and for each of the $4\ \text{layers} \times
+3\ \text{reductions} \times 2\ \text{heads} = 24$ attention channels:
+
+\begin{enumerate}
+  \item run the forward pass on the unseen configurations and stash
+        \texttt{\_last\_alpha} per layer (under \texttt{no\_grad});
+  \item reduce each attention row to a scalar per site via
+        Eq.~\eqref{eq:reduction}, and accumulate the site-level first and second
+        moments so the fluctuation-to-mean ratio $\delta A/A$ can be quoted;
+  \item form the zero-momentum series $\Abar(t)$ per configuration;
+  \item project the multi-channel basis onto its GEVP ground-state vector
+        ($t_0=1$, $t_d=2$), with the safeguards of
+        Section~\ref{sec:defects};
+  \item fit the projected connected correlator to the periodic single-state
+        form over $\Delta\in[2,8]$;
+  \item take errors from a \textbf{blocked} jackknife over configurations with
+        block $20$.
+\end{enumerate}
+
+Conventions in steps 4--6 are copied verbatim from the classical
+$\beta$-scan so the two masses are directly comparable, and the classical
+smeared-plaquette basis (levels $0,4,8,16$) is \textbf{re-measured on the same
+configurations}, so $\xiA - \xi_{\rm class}$ can be quoted as a correlated
+difference rather than as two independent numbers.
+
+\paragraph{Reference arms.} Alongside the attention channels we measure the
+network's own output operator $\Obar(t)$ (a check that the checkpoint loaded
+correctly: its mass must reproduce the recorded one) and the classical basis.
+
+\paragraph{Nulls.} Two, and the distinction between them turned out to matter
+(Section~\ref{sec:defects}):
+\begin{itemize}
+  \item \textbf{config-scramble} --- each timeslice is drawn from an
+        independently permuted configuration. This destroys the temporal
+        correlation \emph{and} the per-configuration zero mode, so $C(\Delta>0)$
+        has expectation zero and there is nothing for a mass to be fitted to.
+        This is the null proper.
+  \item \textbf{time-shuffle} --- one independent permutation of the timeslices
+        per configuration. This is \emph{not} a null (it preserves each
+        configuration's mean over $t$); it is retained as a
+        \textbf{zero-mode consistency check}, whose plateau must equal
+        $(2\xi-1)/N_t$.
+\end{itemize}
+
+\paragraph{Cost.} Two runs. The \emph{diagonal} run (matched network + random
+control, $N_{\rm eval} = 1200$ configurations per ensemble) buys precision where
+precision is the point. The \emph{cross} run (all five networks + random on all
+five ensembles, $N_{\rm eval} = 600$) buys the control matrix, where only the
+row/column contrast matters. About four minutes per ensemble per network.
+
+% ==============================================================================
+\section{Results}
+\label{sec:results}
+% ==============================================================================
+
+\subsection{The headline: the attention field carries the mass gap}
+\label{sec:headline}
+
+Table~\ref{tab:headline} is the diagonal run: every trained network on its own
+ensemble, on the $1200$ configurations it never saw, against the classical basis
+measured on those same configurations.
+
+\begin{table}[htbp]
+\centering
+\caption{Correlation lengths from the attention field, from the classical
+smeared basis, and from a randomly initialised network of identical
+architecture. $1200$ unseen configurations per ensemble; errors are blocked
+jackknife (block $20$). ``channel'' is the attention channel the variational
+self-check selected (layer, head, reduction). $\xi_{\rm out}$ is the network's
+own output operator, shown for reference.}
+\label{tab:headline}
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+$\beta$ & $\xi$ classical & $\xiA$ \textbf{trained} & channel
+        & $\xiA$ random init & $\xi_{\rm out}$ \\
+\midrule
+0.7450 & 2.04 (14) & 2.24 (12) & \texttt{L4h0:self} & 2.08 (13) & 2.33 \\
+0.7520 & 2.34 (16) & 2.76 (13) & \texttt{L4h1:self} & 2.46 (16) & 2.92 \\
+0.7560 & 4.08 (27) & 4.48 (30) & \texttt{L4h0:ell}  & 4.08 (26) & 4.63 \\
+0.7585 & \textbf{5.59 (34)} & \textbf{6.64 (32)} & \texttt{L4h0:ent} & 5.47 (31) & 6.65 \\
+0.7600 & \textbf{4.71 (34)} & \textbf{5.60 (37)} & \texttt{L4h1:ent} & 4.80 (34) & 5.81 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{equation}
+  \textrm{Pearson}\big(\xiA,\ \xi_{\rm classical}\big) \;=\; \mathbf{0.9966},
+  \qquad \textrm{slope } 1.21,
+\end{equation}
+over a factor $2.74$ of classical dynamic range, at $5$--$7\%$ precision on both
+sides. The claim of Section~\ref{sec:claim} holds: the attention map is a
+lattice operator, and its correlator decays with the mass gap.
+
+\paragraph{The correlation survives a non-monotonic excursion.} This is the
+strongest single piece of evidence in the report and it deserves to be read
+carefully. $\xi(0.7585) > \xi(0.760)$ --- i.e.\ the point \emph{further} from
+$\beta_c$ has the \emph{larger} correlation length --- in the classical
+measurement \emph{and} in the attention, on the same configurations, from
+independent operators. Two quantities that both rise with $\beta$ correlate for
+trivial reasons; two that both turn around at the same place do not. (An earlier
+$N=2000$ scan had the opposite ordering at these two points; those were its two
+worst-determined points, measured with the defective GEVP of
+Section~\ref{sec:defects}, and they are superseded.) The excursion is a property
+of the \emph{ensembles}, not of the attention: both points sit at
+$\xi \gtrsim L/4 = 6$, the scan's own finite-volume guard --- see
+Section~\ref{sec:limits}.
+
+\paragraph{Correlator profiles.} At $\beta=0.760$, the point closest to
+$\beta_c$, $C(\Delta)/C(0)$ reads
+\begin{center}
+\begin{tabular}{@{}lccccccc@{}}
+\toprule
+ & $\Delta=0$ & 1 & 2 & 3 & 4 & 5 & 6 \\
+\midrule
+classical smeared basis  & $+1.000$ & $+0.404$ & $+0.272$ & $+0.197$ & $+0.163$ & $+0.134$ & $+0.109$ \\
+\textbf{trained attention} & $+1.000$ & $+0.619$ & $+0.470$ & $+0.373$ & $+0.312$ & $+0.260$ & $+0.224$ \\
+random attention         & $+1.000$ & $+0.466$ & $+0.310$ & $+0.226$ & $+0.186$ & $+0.155$ & $+0.128$ \\
+config-scramble null     & $+1.000$ & $+0.005$ & $+0.007$ & $+0.009$ & $+0.010$ & $-0.007$ & $-0.000$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+The trained attention field is a visibly cleaner exponential than either the
+classical basis or the untrained network, and the null is flat at the $10^{-2}$
+level with no fittable mass.
+
+\subsection{Training separates from initialisation at every $\beta$}
+\label{sec:learning}
+
+Table~\ref{tab:learning} is the learning claim. $\Delta A_0$ is a blocked
+jackknife of the \emph{difference} on shared configurations: both arms see
+identical configurations, so the naive $\sqrt{\sigma^2+\sigma^2}$ throws away
+the cancellation.
+
+\begin{table}[htbp]
+\centering
+\caption{Ground-state overlap of the attention field, trained vs randomly
+initialised, and the site-level fluctuation-to-mean ratio $\delta A/A$ (median
+over the $24$ channels). $\Delta A_0$ and $\Delta\xi$ are correlated
+differences on shared configurations.}
+\label{tab:learning}
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}lcccccc@{}}
+\toprule
+$\beta$ & $A_0$ trained & $A_0$ random & $A_0$ classical
+        & $\delta A/A$ (tr / rnd) & $\Delta A_0$ (correlated) & $\Delta\xi$ \\
+\midrule
+0.7450 & 0.848 (41) & 0.704 (42) & 0.578 (39) & 0.091 / 0.0067 ($\times14$) & $+0.144\pm0.017$ (\textbf{8.4$\sigma$})  & $+0.17\pm0.04$ \\
+0.7520 & 0.782 (28) & 0.671 (36) & 0.576 (37) & 0.140 / 0.0060 ($\times23$) & $+0.110\pm0.020$ (\textbf{5.4$\sigma$})  & $+0.31\pm0.07$ \\
+0.7560 & 0.738 (17) & 0.534 (16) & 0.449 (15) & 0.246 / 0.0054 ($\times46$) & $+0.204\pm0.012$ (\textbf{16.9$\sigma$}) & $+0.41\pm0.13$ \\
+0.7585 & 0.753 (11) & 0.486 (14) & 0.413 (13) & 0.113 / 0.0049 ($\times23$) & $+0.267\pm0.011$ (\textbf{23.5$\sigma$}) & $+1.17\pm0.19$ \\
+0.7600 & 0.654 (14) & 0.449 (15) & 0.397 (14) & 0.130 / 0.0046 ($\times28$) & $+0.205\pm0.012$ (\textbf{16.9$\sigma$}) & $+0.80\pm0.19$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Three things to read off it. First, the trained attention field is a
+\emph{better operator than the classical smeared basis} at every $\beta$, by
+$0.20$ to $0.34$ in overlap fraction --- and the classical basis degrades
+towards $\beta_c$ ($0.578 \to 0.397$) faster than the attention does
+($0.848 \to 0.654$). Second, the random network's site-to-site fluctuation is
+$\approx 0.005$ essentially independently of $\beta$, and training raises it by
+one to one and a half orders of magnitude; for a fixed convolutional kernel the
+same quantity is identically zero. Third, $\Delta\xi > 0$ everywhere: the
+trained attention field is also \emph{less} contaminated by excited states than
+the untrained one, not merely better normalised.
+
+\paragraph{Autocorrelation.} $\tau_{\rm int}$ of the selected channel along the
+chain reads $0.63$, $1.13$, $2.65$, $\mathbf{8.35}$, $5.85$ across the five
+$\beta$. The jackknife block of $20$ clears $2\tau_{\rm int}$ at every $\beta$,
+but only just at $\beta=0.7585$.
+
+\paragraph{The zero-mode check.} The time-shuffled arm's plateau matches its
+prediction $(2\xi-1)/N_t$ at every $\beta$: measured $0.062$, $0.079$, $0.138$,
+$0.231$, $0.159$ against predicted $0.073$, $0.094$, $0.166$, $0.256$, $0.212$,
+tracking at Pearson $0.98$ \emph{including} the non-monotonic excursion. This is
+a second, independent confirmation of $\xi$ from the same data.
+
+\subsection{The cross-$\beta$ control matrix: no memorisation}
+\label{sec:cross}
+
+Five trained networks plus the random arm, each evaluated on all five ensembles,
+$600$ unseen configurations per cell. One cell (\texttt{train@0.756} evaluated on
+$\beta=0.752$) returned $A_0 = 5.76$ with $\xi = 0.39$ --- a fit that ran to its
+grid edge --- and is masked throughout; the guard now reports such cells as
+unresolved rather than as numbers.
+
+\begin{table}[htbp]
+\centering
+\caption{$\xiA$ from the cross-evaluation matrix. Rows are the $\beta$ at which
+the network was trained; columns are the ensemble it is evaluated on. The
+masked cell is marked ---.}
+\label{tab:cross}
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+network & \multicolumn{5}{c}{evaluation ensemble $\beta$} \\
+\cmidrule(l){2-6}
+trained at & 0.7450 & 0.7520 & 0.7560 & 0.7585 & 0.7600 \\
+\midrule
+0.7450 & 2.24 & 2.73 & 4.53 & 5.73 & 4.85 \\
+0.7520 & 2.33 & 2.77 & 4.64 & 5.74 & 4.92 \\
+0.7560 & 2.36 & --- & 4.71 & 6.06 & 5.04 \\
+0.7585 & 2.31 & 2.80 & 4.68 & 6.50 & 5.25 \\
+0.7600 & 2.22 & 2.69 & 4.68 & 6.15 & 5.13 \\
+\midrule
+random init & 2.05 & 2.47 & 4.32 & 5.42 & 4.77 \\
+\midrule
+\emph{classical} & 2.05 & 2.36 & 4.21 & 5.48 & 4.73 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The matrix reads across, not down:
+\begin{equation}
+  \frac{\text{spread within a row (across evaluation ensembles)}}
+       {\text{spread within a column (across training $\beta$)}}
+  \;=\; \frac{1.405}{0.118} \;=\; \mathbf{11.9},
+\end{equation}
+and the column means correlate with the classical $\xi$ at \textbf{Pearson
+$0.9983$}. The attention reads the configuration in front of it, and a fixed
+kernel has no analogue of this measurement at all.
+
+\paragraph{The transfer test.} If a network had learned its own ensemble rather
+than physics, the diagonal would dominate its column. It does not:
+
+\begin{center}
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+$\beta$ & $A_0$ diagonal & $A_0$ off-diagonal & advantage & $A_0$ random \\
+\midrule
+0.7450 & 0.855 & 0.770 & $+0.085$ & 0.723 \\
+0.7520 & 0.774 & 0.815 & $\mathbf{-0.041}$ & 0.656 \\
+0.7560 & 0.697 & 0.687 & $+0.010$ & 0.484 \\
+0.7585 & 0.764 & 0.696 & $+0.069$ & 0.495 \\
+0.7600 & 0.660 & 0.640 & $+0.020$ & 0.423 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The mean diagonal advantage is $+0.029$ and is \emph{inconsistent in sign},
+against a mean trained-minus-random of $+0.167$: the learning effect is
+$\mathbf{6\times}$ the $\beta$-matching effect. Every trained network beats the
+random arm on every ensemble --- the worst trained network on each ensemble
+scores $0.747 / 0.774 / 0.636 / 0.659 / 0.571$ against the random arm's
+$0.723 / 0.656 / 0.484 / 0.495 / 0.423$.
+
+What the matrix \emph{does} separate is network quality: ensemble-averaged $A_0$
+per row is $0.734 / 0.677 / 0.702 / \mathbf{0.775} / 0.726$ against $0.556$ for
+random, so \texttt{train@0.7585} is the best operator on three of five
+ensembles, including ones it never saw --- a globally better operator, not a
+$\beta$-specialist. \textbf{The learning claim is therefore about transferable
+physics}: the routing did not memorise a correlation length, it learned
+something that works at every $\xi$ in the scan.
+
+\paragraph{The null passes.} With the config-scramble, $26$ of the $30$ cells do
+not fit at all --- there is nothing to fit --- and the four that do return
+$|A_0| \le 0.0066$.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{z2_attention_correlator_R6.png}
+\caption{The four panels of the cross-evaluation run. \textbf{Top left}: $\xiA$
+against the classical $\xi$ measured on the same configurations, for the matched
+trained network and for random initialisation; the dotted line is $y=x$.
+\textbf{Top right}: the cross-evaluation matrix of Table~\ref{tab:cross} ---
+$\xiA$ follows the column (the physics), not the row (the training $\beta$).
+\textbf{Bottom left}: both lengths against $\beta_c-\beta$ with an effective
+exponent; this is \emph{not} a measurement of $\nu$ (Section~\ref{sec:limits}).
+\textbf{Bottom right}: ground-state overlap $A_0$ for the trained attention, the
+random attention, and the classical basis.}
+\label{fig:main}
+\end{figure}
+
+% ==============================================================================
+\section{Analysis}
+\label{sec:analysis}
+% ==============================================================================
+
+\subsection{What is established, and what is not}
+\label{sec:split}
+
+The random-init arm \emph{also} tracks $\xi$, at Pearson $0.9989$ --- if
+anything more tightly than the trained arm. This is exactly what
+Section~\ref{sec:tautology} predicted, and it is not a disappointment; it is the
+correct partition of two claims of very different strength:
+
+\begin{itemize}
+  \item \textbf{Structural claim (established).} Attention maps in a
+        gauge-\emph{equivariant} network are bona fide lattice operators, with a
+        mass, an overlap, and a spectral decomposition. This is established by
+        $\xiA \approx \xi$, and it is true already at initialisation. It is the
+        premise of the whole interpretability program made quantitative, and it
+        is a property of the \emph{architecture}.
+  \item \textbf{Learning claim (established, but by a different statistic).}
+        Training makes those operators \emph{good}. This is established by
+        $A_0$ ($+0.11$ to $+0.27$, up to $23.5\sigma$), by $\delta A/A$
+        ($\times14$ to $\times46$), and by the transfer test of
+        Section~\ref{sec:cross} --- \emph{not} by $\xiA$.
+\end{itemize}
+
+\begin{quote}
+``The network discovers the correlation length'' is \textbf{not} a supportable
+claim and must not be made.
+\end{quote}
+
+\paragraph{A known confound on $\delta A/A$.} $\alpha$ is a softmax output, so a
+network with larger score magnitudes has a sharper --- hence more variable ---
+attention regardless of what it learned. $\delta A/A$ is therefore
+\emph{descriptive}; the load-bearing learning statistic is $A_0$, which a
+sharp-but-untrained attention would not raise (it would build a UV-dominated
+field with \emph{poor} ground-state overlap). Closing this properly needs an
+entropy-matched random arm, which has not been run.
+
+\subsection{Why the trained $\xiA$ overshoots, and why ``closer to classical'' is the wrong target}
+\label{sec:overshoot}
+
+The natural inference from Section~\ref{sec:learning} is: the trained attention
+has the better ground-state overlap, so its $\xiA$ should sit \emph{closer} to
+the classical $\xi$. The data say the opposite, and the wrong reading here would
+invert the conclusion.
+
+\begin{center}
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+$\beta$ & $\xi$ classical & $\xiA$ trained & $\xiA$ random
+        & $|{\rm trained}-{\rm class}|$ & $|{\rm random}-{\rm class}|$ \\
+\midrule
+0.7450 & 2.04 & 2.24 & 2.08 & 0.20 & \textbf{0.04} \\
+0.7520 & 2.34 & 2.76 & 2.46 & 0.42 & \textbf{0.12} \\
+0.7560 & 4.08 & 4.48 & 4.08 & 0.40 & \textbf{0.00} \\
+0.7585 & 5.59 & 6.64 & 5.47 & 1.05 & \textbf{0.12} \\
+0.7600 & 4.71 & 5.60 & 4.80 & 0.89 & \textbf{0.09} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The \emph{random} arm is the one that agrees with the classical operator, at
+every $\beta$ (fitted slope $0.96$ against the trained arm's $1.21$). This is
+not a contradiction, because \textbf{the classical operator is not ground
+truth}. It is one more operator with its own excited-state contamination, and
+contamination has a \emph{signed} effect: by Eq.~\eqref{eq:spectral}, excited
+states add faster-decaying exponentials, so a contaminated correlator decays
+faster than the true gap and reads $\xi$ \textbf{low}. $A_0$ measures how much
+of an operator's own $C(\Delta)$ is the ground state, so a higher $A_0$ means
+less of that downward bias, and the operator with the highest $A_0$ should read
+the \emph{largest} $\xi$. It does. The observed ordering
+\begin{equation}
+  \xi_{\rm trained} \;>\; \xi_{\rm random} \;\approx\; \xi_{\rm classical}
+\end{equation}
+is precisely the ordering the $A_0$ column predicts, once one stops treating
+``classical'' as the target. The correlator profiles in
+Section~\ref{sec:headline} say the same thing directly: at $\beta=0.760$ the
+classical basis has fallen to $0.404$ by $\Delta=1$ and the random attention to
+$0.466$, while the trained attention still holds $0.619$.
+
+So the natural reading of the whole result is that the trained operator's larger
+$\xi$ is the \emph{candidate} for the value closest to the true gap, and that
+\textbf{learning $=$ removing excited-state contamination} is the physically
+honest gloss of the $A_0$ result. That gloss is stronger than the correlation
+framing, because it says what the training bought in operator terms --- which is
+exactly what a variational-operator audience asks for.
+
+\paragraph{Stated as a candidate, not as a result.} There is no independent
+ground truth for $\xi$ at these $\beta$: the older $N=2000$ scan is superseded
+by the GEVP defect below, and both top points sit at $\xi \gtrsim L/4$ where
+finite volume bites. A $21\%$ systematic in the attention correlator fit would
+look identical. Distinguishing ``de-contamination'' from ``systematic
+overshoot'' needs a reference that is not itself contaminated. Consequently:
+\begin{itemize}
+  \item do \textbf{not} quote $|\xiA - \xi_{\rm classical}|$ as an accuracy
+        metric, and do not present the random arm's smaller residual as the
+        random arm being \emph{better} --- agreement with a contaminated
+        reference is not accuracy;
+  \item the load-bearing statements remain the \emph{correlation} (Pearson
+        $0.9966$, through the non-monotonic excursion) for the structural claim
+        and $A_0$ for the learning claim. The slope $1.21$ is a separate, open
+        quantity.
+\end{itemize}
+
+\subsection{Four defects, and how each was resolved}
+\label{sec:defects}
+
+None of the numbers above survived the first version of the analysis. The
+repairs are recorded because two of them are of general interest.
+
+\paragraph{1. The GEVP was selecting a near-null direction --- at every $\beta$.}
+The first suspicion was our own basis pruning; fixing it moved the classical
+masses by $4\times10^{-15}$. That non-result \emph{is} the diagnosis: $m$, $A_0$
+and $C(\Delta)/C(0)$ are all invariant under rescaling the projected operator,
+so identical values mean the same direction was selected either way. The real
+cause was an eigenvalue floor of $10^{-12}$ relative to the largest in the
+whitening step --- twelve orders of magnitude, i.e.\ no regularisation at all. A
+nested-smearing $C(t_0)$ has three or four meaningful orders, and a small signal
+divided by a floored \emph{noise} eigenvalue produces a spuriously large
+generalized eigenvalue pointing into noise: a near-cancelling combination whose
+$C(0)$ is almost pure noise while $C(\Delta>0)$ still carries the physical
+decay. The symptom was $C(1)/C(0) = 0.039 / 0.020 / 0.007$ at the three largest
+$\beta$ with $36\%$ / $87\%$ / unresolved errors --- \emph{correct masses,
+useless error bars}.
+
+Fixed with a floor of $10^{-4}$ plus a \textbf{variational self-check}: $v_0$
+maximises the Rayleigh quotient over the span of the basis, so the projection
+can never interpolate worse than any single member; when it does, fall back to
+that member. The decision is taken once on the full sample and held fixed across
+jackknife replicas (a jackknife whose estimator changes between replicas does
+not estimate anything). All five $\beta$ then resolve at $6$--$7\%$ with
+$C(1)/C(0) = 0.39$--$0.44$ uniformly --- and the \textbf{fallback fires at every
+$\beta$}, on both the classical and the attention bases.
+
+\paragraph{2. The multi-channel attention GEVP is unstable.} Three NaN cells and
+one absurd one ($\xi = 4.85 \pm 89$) out of ten. Moot after the self-check: it
+falls back to the single best channel at every $\beta$, so the multi-channel and
+best-single arms coincide and the tables quote one number. Informative in
+itself --- the $24$ attention channels are redundant enough that a variational
+combination never helps.
+
+\paragraph{3. $\Delta A_0$ errors were uncorrelated.} Fixed with a blocked
+jackknife of the difference on shared configurations. The two weakest points
+went from $2.4\sigma$ to $8.4\sigma$ and $5.4\sigma$; nothing else moved.
+
+\paragraph{4. A time-shuffle is not a null.} The null's $A_0$ rose from
+$0.005$--$0.014$ to $0.043$--$0.230$ once the GEVP fallback landed. The first
+suspicion was selection bias (the null re-selecting its own best-of-six; that
+bias is real, and measures $7.4\times$ on pure noise). Removing it changed the
+null by $0.000$. The correct explanation is structural: a permutation of
+timeslices preserves each configuration's mean over $t$, while the connected
+correlator subtracts only the \emph{global} mean, so the residual retains
+\begin{equation}
+  \operatorname{Var}_{\rm config}(\Obar_c) \;=\; C(0)\cdot\frac{2\xi-1}{N_t}
+\end{equation}
+as a \emph{flat pedestal at every $\Delta$} --- which is exactly what the
+profiles show ($+1.000$, $+0.236$, $+0.229$, $+0.231$, $+0.234$, \ldots at
+$\beta=0.7585$: no decay at all). The ``null'' was measuring the finite-$N_t$
+zero mode --- physics, not noise --- and could never have gone to zero. Fixed
+with the config-scramble of Section~\ref{sec:pipeline}, and validated on a
+synthetic operator of known mass ($\xi = 5.56$ injected): the real arm returns
+$\xi = 5.65$ with $A_0 = 1.000$, the time-shuffle plateau lands at $0.213$
+against a predicted $0.215$, and the config-scramble returns $\pm0.001$ with no
+fittable mass. The time-shuffle is retained as the zero-mode consistency check
+of Section~\ref{sec:learning}.
+
+\subsection{Limitations, stated up front}
+\label{sec:limits}
+
+\begin{enumerate}
+  \item \textbf{One theory, one volume, one lattice family.} 3D $\mathbb{Z}_2$
+        at $24^2\times48$. This is a statement about the \emph{method}, not
+        about $SU(N)$. The natural next test is the $SU(2)$ glueball operator,
+        where the same readout machinery already exists.
+  \item \textbf{Finite volume at the top two $\beta$ is the open physics
+        question.} $\xi = 5.6$ and $4.7$ against $L/4 = 6$ puts both points at
+        or past the scan's own guard, and the non-monotonic excursion is what a
+        volume-squeezed pair looks like. The test is $L = 24 \to 32$ --- but
+        GELT is built per-$L$, so that means new ensembles \emph{and} new
+        checkpoints at all five $\beta$ ($\approx2.4\times$ per sweep, tens of
+        hours), not one point. Worth it only if the excursion is to be reported
+        as physics rather than flagged as unresolved. It is flagged as
+        unresolved here.
+  \item \textbf{The effective exponent is not $\nu$.} Fitting
+        $\xi \sim (\beta_c-\beta)^{-\nu}$ to these five points returns
+        $0.35$--$0.48$ depending on the arm and the configuration budget
+        ($0.43$ classical and $0.48$ attention on the diagonal run, $0.37$ and
+        $0.35$ on the cross run of Figure~\ref{fig:main}), against the 3D Ising
+        $\nu = 0.63$: $\xi \le 5.6$ at $L=24$ is not the asymptotic scaling
+        regime, and the non-monotonic excursion sits inside the fit. It may be
+        quoted only as a \emph{consistency} check between the attention and the
+        classical scan on the same points --- and with the excursion now
+        confirmed on both operators, it should probably not be quoted at all
+        until the volume question is settled.
+  \item \textbf{Operator quality is uneven across the five checkpoints.} The
+        cross-evaluation design makes this a nuisance parameter rather than a
+        confound (quality is a property of the row, physics of the column), but
+        the diagonal alone would still inherit it.
+  \item \textbf{The $\delta A/A$ confound} of Section~\ref{sec:split}: no
+        entropy-matched random arm has been run.
+  \item \textbf{One masked cell} in the cross matrix (Section~\ref{sec:cross}),
+        excluded by an automatic guard rather than by hand, but excluded
+        nonetheless.
+\end{enumerate}
+
+% ==============================================================================
+\section{Conclusions}
+\label{sec:conclusions}
+% ==============================================================================
+
+The question the conference abstract poses --- does the attention range track
+the physical correlation length? --- was closed negative twice, and both
+negatives were about the statistic rather than the physics. $\latt$, the first
+radial moment of the \emph{lattice-averaged} attention, is bounded above by the
+receptive radius and centred by the geometry of the offset ball; it is a
+property of the learned kernel, of the same kind as a convolution's filter
+width, and the averaging that defines it discards exactly what distinguishes
+attention from convolution. \textbf{Any range statistic must be quoted against
+its uniform reference}, and this one never survives that comparison.
+
+Keeping the site-to-site variation instead turns the question into a
+well-posed one. Because the equivariant score is gauge invariant, any reduction
+of an attention row is a local gauge-invariant scalar field; because the trained
+operator is per-timeslice, that field's zero-momentum correlator has an exact
+transfer-matrix decomposition. The attention field therefore \emph{has a mass},
+and it is the theory's mass gap. Measured on $1200$ unseen configurations per
+ensemble across five 3D $\mathbb{Z}_2$ ensembles:
+
+\begin{itemize}
+  \item $\xiA$ tracks the classical $\xi$ at \textbf{Pearson $0.9966$} over
+        $\times2.7$ of dynamic range at $5$--$7\%$ precision on both sides, and
+        reproduces a non-monotonic excursion in $\beta$ that two independent
+        operators see on the same configurations;
+  \item $\xiA$ is $\mathbf{11.9\times}$ more sensitive to the evaluation
+        ensemble than to the training $\beta$, with column means correlating
+        with the classical $\xi$ at Pearson $0.9983$, so the networks read the
+        configuration in front of them rather than recalling their own;
+  \item a config-scramble null returns no mass in $26$ of $30$ cells and
+        $|A_0| \le 0.0066$ in the rest;
+  \item training raises the ground-state overlap of the attention field by
+        $+0.11$ to $+0.27$ ($5.4\sigma$ to $23.5\sigma$) over random
+        initialisation, and raises its site-level fluctuation by one to one and
+        a half orders of magnitude --- while the same fluctuation is identically
+        zero for a fixed convolutional kernel, so this measurement has no
+        analogue there at all.
+\end{itemize}
+
+The honest partition of these results is that the \emph{structural} claim
+--- gauge-equivariant attention maps are lattice operators, with a mass, an
+overlap, and a spectral decomposition --- is established, and holds already at
+initialisation; while the \emph{learning} claim is established by $A_0$ rather
+than by $\xiA$, and is best stated as \emph{training removes excited-state
+contamination from the attention field}. The trained attention field is, by that
+measure, a better operator than the hand-built smeared basis at every $\beta$
+examined, and increasingly so towards the critical point.
+
+What remains open is a volume: both of the largest-$\xi$ ensembles sit at
+$\xi \gtrsim L/4$, so the excursion that makes the correlation persuasive is
+also the one feature that an $L=32$ run could reassign to finite-volume
+squeezing. Until then the excursion is reported, not explained. Beyond that, the
+natural extensions are an entropy-matched random control to close the
+$\delta A/A$ confound, and the same readout applied to the $SU(2)$ glueball
+operator, where the machinery already exists and only the correlation length
+does not.
+
+\end{document}
