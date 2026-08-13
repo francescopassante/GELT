@@ -308,10 +308,13 @@ Library lives in `gelt/`; entry-point scripts in `scripts/`; pytest in
     equivariance tests.
   - `l1_ball_offsets(D, R)` → list of signed Δx tuples with
     `1 ≤ |Δx|_1 ≤ R`, ordered by `|Δx|_1`.
-  - `build_transport_average(U, R, group)` — DP routine that materialises
-    transports `T_Δx(x)` over the full signed L1-ball, averaged over all
-    shortest paths (rotation-symmetric). Expects batched links
-    `(N, D, *Λ, nc, nc)`.
+  - `build_transport_average(U, R, group, mode="average")` — DP routine that
+    materialises transports `T_Δx(x)` over the full signed L1-ball. Expects
+    batched links `(N, D, *Λ, nc, nc)`. `mode="average"` (default) is the
+    shortest-path-averaged transport (rotation-symmetric, the architecture's
+    default); `mode="single"` is a single-canonical-path variant (rotation
+    symmetry broken — for A/B testing whether averaging dilutes a
+    specific-path target).
 - **`sampler.py`** — `staple_sum`, `metropolis_sweep` (checkerboard-
   vectorised single-site Metropolis; the proposal is routed by
   `_PROPOSAL_FN[type(group)]` — `_z2_proposal` (`U → −U`) and
@@ -361,7 +364,8 @@ Library lives in `gelt/`; entry-point scripts in `scripts/`; pytest in
   this module) to split color axes for the CNN baseline — real groups
   give `(D · nc², *Λ)`, complex groups split real/imag for
   `(2 · D · nc², *Λ)`. With `R` set, the transport is precomputed per config
-  via `build_transport_average` and the splits yield `(X, T, y)` triples. `save=True` writes to `datasets/`;
+  via `build_transport_average` (honoring `transport_mode`) and the splits
+  yield `(X, T, y)` triples. `save=True` writes to `datasets/`;
   `load_plaquette_datasets(prefix, datasets_dir="datasets")` reloads them.
 - **`cnn_baseline.py`** — `LatticeCNN(L, D, in_channels, hidden_channels,
   kernel_size=3)`. Non-equivariant CNN baseline; uses `Conv2d`/`Conv3d` for
@@ -549,7 +553,7 @@ loop inline (there is no shared `gelt/train.py`). Device order: cuda → mps
 - **Wilson action:** `S = β Σ_p (1 − Re Tr P / nc)`. β defaults to 1.0,
   reproducing the legacy unnormalised form `n_plaq − Σ P` for Z₂.
 - **Parallel transport:** sum over **all** shortest lattice paths in the
-  L1-ball — never a single axis-aligned path.
+  L1-ball — never a single axis-aligned path (unless `mode="single"`).
   `build_transport_average` expects batched links `(N, D, *Λ, nc, nc)` and
   materialises the full signed L1-ball in one `|Δx|_1`-ordered DP pass,
   using `U_μ(x)` for `Δx_μ > 0` steps and `U†_μ(x − ê_μ)` for `Δx_μ < 0`
