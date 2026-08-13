@@ -81,7 +81,13 @@ removed pending rewrites; the spec now lives across the notes below.)
   claim splits: *structural* (equivariant attention maps are lattice operators
   with a mass) is established by ξ_A, while *learning* rests on the correlated
   ΔA₀ (+0.110 … +0.267, **5.4σ … 23.5σ**) and δA/A (×13 … ×46). "The network
-  discovers ξ" is **not** supportable. §6.2 records the defects and their fixes;
+  discovers ξ" is **not** supportable. §6.1.2: the trained arm *overshoots* the
+  classical ξ (slope 1.21) while the random arm agrees with it — expected, since
+  the classical operator is itself contaminated and contamination biases ξ
+  **low**, so "closer to classical" is not an accuracy metric; the honest gloss
+  of the A₀ result is *learning = removing excited-state contamination*, with
+  the trained ξ a candidate for the true gap pending an uncontaminated reference
+  (L = 32). §6.2 records the defects and their fixes;
   the big one was that `gevp_ground_vector`'s 1e-12 eigenvalue floor let the
   GEVP select a near-null direction of C(t0) **at every β** (correct masses,
   36–87% errors) — `z2_beta_scan.py` runs the same pathology and survived on

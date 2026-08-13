@@ -232,6 +232,11 @@ a disappointment, it is the correct partition of the two claims:
 "The network discovers the correlation length" is **not** a supportable claim
 and must not be made.
 
+Note also that the trained arm is *not* the one closer to the classical ξ — the
+random arm is. That is expected once A₀ is read as excited-state contamination;
+see §6.1.2, which also says why "closer to classical" is the wrong accuracy
+target here.
+
 Known confound on δA/A: α is a softmax output, so a network with larger score
 magnitudes has a sharper — hence more variable — attention regardless of what
 it learned. δA/A is therefore descriptive; the load-bearing learning statistic
@@ -281,6 +286,69 @@ never saw — a globally better operator, not a β-specialist.
 **So the learning claim is about transferable physics.** The routing did not
 memorise a correlation length; it learned something that works at every ξ in the
 scan.
+
+## 6.1.2 Why the trained ξ_A overshoots — and why "closer to classical" is the wrong target (2026-08-10)
+
+The natural inference from §6.1 is: the trained attention has the better
+ground-state overlap, so its ξ_A should sit *closer* to the classical ξ than the
+random arm's does. **The data say the opposite**, and it is worth recording why,
+because the wrong reading here would invert the conclusion.
+
+| β | ξ classical | ξ_A trained | ξ_A random | |trained − class| | |random − class| |
+|---|---|---|---|---|---|
+| 0.745 | 2.04 | 2.24 | 2.08 | 0.20 | **0.04** |
+| 0.752 | 2.34 | 2.76 | 2.46 | 0.42 | **0.12** |
+| 0.756 | 4.08 | 4.48 | 4.08 | 0.40 | **0.00** |
+| 0.7585 | 5.59 | 6.64 | 5.47 | 1.05 | **0.12** |
+| 0.760 | 4.71 | 5.60 | 4.80 | 0.89 | **0.09** |
+
+The *random* arm is the one that agrees with the classical operator, at every β.
+The trained arm overshoots systematically — that is the slope 1.21 of the
+Pearson fit, and the Δξ column of §6.1 (+0.17 … +0.80) restated against the
+classical reference instead of against the random one.
+
+This is not a contradiction, because **the classical operator is not ground
+truth.** It is one more operator with its own excited-state contamination, and
+contamination has a *signed* effect: excited states add faster-decaying
+exponentials, so a contaminated correlator decays faster than the true gap and
+reads ξ **low**. A₀ measures how much of an operator's own C(Δ) is the ground
+state — so higher A₀ means less of that downward bias, and the operator with the
+highest A₀ should read the *largest* ξ. It does. The ordering
+ξ_trained > ξ_random ≈ ξ_classical is exactly the ordering the A₀ column
+predicts, once you stop treating "classical" as the target.
+
+So the natural reading of the whole result is:
+
+- the classical smeared basis is badly contaminated at these β — at β = 0.760 it
+  has essentially no signal at all (C(1)/C(0) ≈ 0.007, the "dead" profile in
+  §6.1);
+- the random attention field is contaminated to a *similar* degree, and its
+  agreement with the classical ξ is two comparably-biased operators landing in
+  the same place, not two accurate ones;
+- training removes contamination — that is what A₀ = +0.11 … +0.27 *is* — and
+  the trained operator's larger ξ is therefore the candidate for the value
+  closest to the true gap.
+
+**Stated as a candidate, not as a result.** We have no independent ground truth
+for ξ at these β: the N=2000 scan is superseded by the GEVP defect (§6.2), and
+both top points sit at ξ ≳ L/4 where finite volume bites (§7). A 21% systematic
+in the attention correlator fit would look identical. Distinguishing
+"de-contamination" from "systematic overshoot" needs a reference that is not
+itself contaminated — i.e. the L = 32 run of §7, or a classical basis good
+enough at β = 0.760 to have a signal at all.
+
+Consequences for how this is written up:
+
+- Do **not** quote |ξ_A − ξ_classical| as an accuracy metric, and do not present
+  the random arm's smaller residual as the random arm being *better*. Agreement
+  with a contaminated reference is not accuracy.
+- The load-bearing statements stay the two of §6.1: the *correlation* (Pearson
+  0.9966, through the non-monotonic excursion) for the structural claim, and
+  A₀ for the learning claim. The slope is a separate, open quantity.
+- "Learning = removing excited-state contamination" is the physically honest
+  gloss of the A₀ result, and it is stronger than the correlation framing: it
+  says what the training bought in operator terms, which is exactly what a
+  variational-operator audience asks for.
 
 ## 6.2 Defects, and how each was resolved
 
