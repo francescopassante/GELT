@@ -92,6 +92,22 @@ removed pending rewrites; the spec now lives across the notes below.)
   GEVP select a near-null direction of C(t0) **at every β** (correct masses,
   36–87% errors) — `z2_beta_scan.py` runs the same pathology and survived on
   N=2000, so its top two points are superseded. Open: finite volume at ξ ≳ L/4.
+- `notes/dual_ground_truth.md` — **design record for closing the one question
+  `attention_as_operator.md` §6.1.2 leaves open**: the trained attention field
+  reads ξ 21% above the classical operator, and that can only be called a
+  *candidate* for the true gap "pending an uncontaminated reference". The note
+  argues the reference already exists and is exact — 3D Z₂ gauge theory is
+  Kramers–Wannier–Wegner dual to the 3D Ising model (β* = −½ ln tanh β), the
+  0⁺⁺ mass gap *is* the Ising mass gap, and in the broken phase the Ising order
+  parameter σ interpolates it with near-unit overlap while being the **non-local
+  't Hooft operator** on the gauge side, hence outside any smeared-loop
+  variational basis. Contains the parameter-free duality check
+  `⟨P⟩ = tanh β + [1 − ⟨ss⟩(β*)]/sinh 2β` used to validate the whole chain
+  before any physics is read off it, the two-volume design (matched 48×24² =
+  the accuracy yardstick; large 96×48² = §7's finite-volume question without
+  the ~40 h L=32 gauge run), and **pre-registered outcomes** — including the
+  one that would force retracting §6.1.2's reading. Read before touching
+  `gelt/ising.py`.
 - `notes/resources.md` — curated textbooks, lecture notes, and ML-for-LGT
   papers with suggested reading order.
 - `notes/tunnel-visualization.md` — exploratory notes on visualising
@@ -410,6 +426,20 @@ Library lives in `gelt/`; entry-point scripts in `scripts/`; pytest in
     dependency-free, no convergence failures, safe to re-run inside every
     jackknife sample; diagonal χ² only, errors come from jackknifing the whole
     fit). The ground-state overlap fraction is `A₀ = A·(1+e^(−m·Nt))/C(0)`.
+- **`ising.py`** — the 3D Ising model, i.e. the **exact dual** of 3D Z₂ gauge
+  theory, used as uncontaminated ground truth for the mass gap (see
+  `notes/dual_ground_truth.md`). `dual_beta` / `gauge_beta` (β* = −½ ln tanh β,
+  an involution); `ISING_BETA_C` (Ferrenberg–Xu–Landau 0.221654626) and the
+  `GAUGE_BETA_C = 0.761413292` it implies — the nine-digit version of the
+  scripts' hardcoded 0.7614; `predicted_plaquette(beta, ⟨ss⟩)`, the
+  parameter-free duality relation `⟨P⟩ = tanh β + [1 − ⟨ss⟩(β*)]/sinh 2β`;
+  `heatbath_sweep` (exact checkerboard, `P(s=+1) = σ(2βh)` — the spin analogue
+  of `z2_heatbath_sweep`, batched over replicas as `(R, *Λ)`); `wall_observables`
+  (zero-momentum `m` = sign-fixed wall magnetisation, `e_t` = temporal-bond
+  energy — the literal dual of the spatial-plaquette glueball operator — and
+  `e_s`); and `ising_measure`, which returns everything already in the `(B, Nt)`
+  layout `glueball.connected_correlator` expects, so the dual analysis runs
+  through the gauge side's own code path unchanged.
 - **`lcnn.py`** — Favoni et al. L-CNN (gauge-equivariant baseline):
   `build_axis_transports` (axis-aligned link products `U^(k)_μ(x)`, the
   L-CNN transport input — distinct from GELT's L1-ball `T`); `LConv`,
@@ -492,6 +522,20 @@ loop inline (there is no shared `gelt/train.py`). Device order: cuda → mps
   (`python -u`, `TQDM_MININTERVAL=30`) so progress is watchable with
   `tail -f`; each leaves a `datasets/*_test_obars.pt` dump for
   `fit_glueball_overlap.py`.
+- **`dual_ground_truth.py`** — exact ground truth for the Z₂ mass gap from the
+  dual Ising model (`gelt.ising`), closing `attention_as_operator.md` §6.1.2.
+  Per β: runs the dual Ising at β* on the **matched** (48×24²) and **large**
+  (96×48²) volumes, fits ξ from both the order parameter and the temporal-bond
+  energy through the gauge side's own `connected_correlator` /
+  `fit_cosh_correlator` on the same Δ ∈ [2,8] window and blocked jackknife,
+  then prints three things: the parameter-free duality check against ⟨P⟩
+  measured on the cached gauge ensembles, the accuracy table (classical vs
+  attention-trained vs attention-random against the matched-volume truth, with
+  the gauge numbers read from `results/attention/z2_attention_correlator_diag_R6.pt`),
+  and the finite-volume verdict on the ξ(0.7585) > ξ(0.760) excursion.
+  `DGT_THERM_CHECK=1` re-runs the cold-vs-hot thermalisation test that fixed
+  `N_THERM`; `DGT_SMOKE=1` is a 2-minute plumbing run (its physics is
+  meaningless — 12³ boxes at ξ ≈ 5). Writes `results/dual/dual_ground_truth.{png,pt}`.
 - **`check_glueball_autocorrelation.py`** — step-1 pre-flight before
   `measure_glueball.py`: runs a long `n_skip=1` heat-bath+OR chain, builds the
   plaquette and the thin/smeared glueball operator per config, and reports
@@ -524,6 +568,20 @@ loop inline (there is no shared `gelt/train.py`). Device order: cuda → mps
   `validate_sampler_su2.py`'s 2D panel). Plus **anisotropy**: `xi = 1`
   reproduces the isotropic sweep bit-for-bit, and overrelaxation conserves the
   *anisotropic* action (and heat-bath stays on the group) for `xi ≠ 1`.
+- **`test_ising.py`** — the dual-Ising ground-truth layer. The load-bearing
+  case is `test_duality_predicts_gauge_plaquette`: a *parameter-free* prediction
+  for the gauge ⟨P⟩ computed from an Ising run, checked against a Z₂ gauge run
+  by unrelated code, asserted against the measured statistical resolution rather
+  than a magic constant. Nothing is fitted, so it can only pass if the sweep,
+  the duality map and the free-energy derivation are simultaneously right. The
+  sweep is pinned independently by **exact enumeration** of the 2^16 states of a
+  4×4 lattice (the code is D-generic, so 2D pins the 3D path), and the algebra
+  independently by the fact that the Ising low-T series 1 − ⟨ss⟩ ≈ 4t⁶ pushed
+  through the duality returns the gauge strong-coupling series t + 2t⁵ — the 2
+  counting cubes per plaquette in 3D. Plus involution of β ↔ β*, the symmetric
+  form sinh 2β·sinh 2β* = 1, `GAUGE_BETA_C` matching the scripts' 0.7614,
+  odd-extent rejection, spins staying on the group, and wall-observable
+  shapes / sign fixing.
 - **`test_glueball.py`** — classical glueball baseline correctness: APE
   smearing is gauge covariant (`smear(Uᵍ) == (smear U)ᵍ`) and stays on the
   group (SU(2) + Z₂); the glueball operator is gauge invariant; the
@@ -581,6 +639,7 @@ python scripts/validate_anisotropy.py  # anisotropic-lattice checks (ξ=1 regres
 python scripts/check_glueball_autocorrelation.py  # τ_int of the glueball operator (set n_skip)
 python scripts/measure_glueball.py     # anisotropic 0⁺⁺ glueball baseline (correlator + GEVP m_eff)
 python scripts/fit_glueball_overlap.py # cosh fits + overlap A₀ (offline, from train_glueball.py's test-Ō dump)
+python scripts/dual_ground_truth.py    # exact ξ from the dual Ising model (~30 min, GPU)
 python -m gelt.cnn_baseline            # torchsummary for a 5×5 CNN
 pytest tests                           # unit tests
 ```
