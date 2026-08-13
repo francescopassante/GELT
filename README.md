@@ -1,7 +1,7 @@
 # GELT — Gauge-Equivariant Lattice Transformer
 
-Master's thesis: a gauge-equivariant graph-attention network (GELT) for
-SU(N_c) lattice gauge theory. The architecture is built on the L-CNN framework
+Master's thesis: a gauge-equivariant attention network (GELT) for SU(N_c)
+lattice gauge theory. The architecture is built on the L-CNN framework
 ([Favoni et al., 2021](https://arxiv.org/abs/2012.12901)) with two departures:
 
 - **Matrix-bilinear value path.** The standard scalar-weighted value is replaced
@@ -17,8 +17,32 @@ the natural matrix generalisation of the standard inner product `q†k`, and a
 well-known observable in lattice QCD (glueball propagators, Polyakov-loop
 correlators, string-tension measurements).
 
-The CNN in `gelt/cnn_baseline.py` serves as a non-equivariant reference.
-The GELT is not yet implemented; the codebase is at Phase 0 of the roadmap.
+---
+
+## Results so far
+
+**0⁺⁺ glueball spectroscopy.** Trained as a variational operator on the Rayleigh
+loss `−C(1)/C(0)`, GELT saturates the transfer-matrix bound on an anisotropic
+SU(2) lattice (L=12, Lt=24, β=2.4, ξ=3.0) and **beats the classical multi-level
+GEVP on ground-state overlap**: ΔA₀ = +0.078 ± 0.022 (3.6σ), combining the
+original run with an independent fresh-ensemble replication, at a consistent
+mass. Multi-level smeared input channels were the enabler — with thin-plaquette
+input the operator only relearns APE×2's staple content. Written up in
+`glueball_report/`.
+
+**Attention as a lattice operator.** Because the attention score is gauge
+invariant, any reduction of the attention map is a local scalar lattice
+operator — so its connected correlator has a mass. Measured on 3D Z₂ near
+criticality, `ξ_A = 1/m_A` tracks the classical correlation length at Pearson
+**0.9966** over a factor 2.7 in ξ, surviving a non-monotonic excursion. The
+random-init control also tracks ξ, so the *structural* claim is established
+while the *learning* claim rests on the correlated ΔA₀ (5.4σ–23.5σ). Written up
+in `attention_report/`.
+
+Both reports also record the negative results, which are part of the record:
+attention does **not** localize on topological charge, and the attention-*range*
+statistic `ℓ_att` is bounded by R and centred by the ball geometry, making it
+unusable as a correlation-length probe. See `notes/topological_localization.md`.
 
 ---
 
@@ -28,59 +52,58 @@ The GELT is not yet implemented; the codebase is at Phase 0 of the roadmap.
 Input: link configuration U  (D, *Λ, N_c, N_c)
           │
           ▼
-    Preprocessing
-    ├── Plaq:    1×1 plaquettes  →  D(D-1)/2 W-channels
-    └── Poly:   Polyakov loops   →  D extra W-channels  [optional]
+    Preprocessing:  1×1 plaquettes  →  D(D-1)/2 W-channels
           │
           ▼  (×n_blocks)
-    G-Attn block
+    GEMHSA block
     ├── Augment W → [𝟙, W, W†]
-    ├── Q, K, V projections  (per-site, per-head, gauge-covariant)
+    ├── Q, Q_v, K, V projections  (per-site, per-head, gauge-covariant)
     ├── build_transport_average(U, R)  →  T_Δx(x) for |Δx|₁ ≤ R (U batched)
-    │        (DP over positive octant; negatives via octant trick)
     ├── K̃, Ṽ = T_Δx · K · T_Δx†    (parallel transport to site x)
-    ├── score = Re Tr[Q† · K̃] / √(N_c · d)  +  learned position bias
+    ├── score = Re Tr[Q† · K̃]  +  RoPE rotation *or* learned offset bias
     ├── α = softmax(scores)
-    ├── W_out += Σ_y  α_{x→y} · Q†_x · Ṽ_{y→x}   (multiplicative value)
+    ├── W_out += Σ_y  α_{x→y} · Q_v†_x · Ṽ_{y→x}   (matrix-bilinear value)
     ├── channel mix  →  C_out W-channels
-    └── residual + L-Act
+    └── residual + L-Act gate
           │
           ▼
-    Readout
-    └── Re Tr head → MLP → scalar
+    Readout:  Re Tr → per-site MLP → spatial reduction
 ```
+
+`_last_score` / `_last_alpha` are stashed per layer under `no_grad` — the hook
+the interpretability program reads the attention out through.
 
 ---
 
 ## Repository layout
 
 ```
-gelt/                   library (install editable via pyproject.toml)
-  lattice.py            GaugeGroup ABC + Z2; plaquette, action, link_gauge_transformation
-  sampler.py            Metropolis sweep (checkerboard); mcmc_ensemble, haar_ensemble
-  data.py               build_link_datasets, build_plaquette_datasets
-  cnn_baseline.py       LatticeCNN — non-equivariant reference, D=2/3/4+
-  train.py              train_model, full_pipeline (early stopping, R²)
+gelt/                    library (installed editable via pyproject.toml)
+  lattice.py             GaugeGroup ABC + Z2/SU(N); plaquettes, Wilson action
+                         (anisotropic), topological charge, Wilson loops,
+                         l1_ball_offsets, build_transport_average
+  sampler.py             Metropolis (Z2 + SU(2)), Z2 heat-bath, SU(2)
+                         heat-bath + overrelaxation, mcmc_ensemble,
+                         haar_ensemble, integrated_autocorrelation_time
+  blocks_rope.py         GELT with rotary positional encoding  ← the trained one
+  blocks_bias.py         GELT with a learned offset bias       ← the tested one
+  lcnn.py                Favoni et al. L-CNN — equivariant baseline
+  cnn_baseline.py        LatticeCNN — non-equivariant reference (2D only)
+  glueball.py            0⁺⁺ spectroscopy: APE smearing, correlators, m_eff,
+                         multi-level GEVP, cosh fits, overlap A₀, jackknife
+  topology.py            cooling + cooled charge density
+  data.py                dataset construction and splits
 
-scripts/
-  main.py               single-(L, β) CNN run
-  L_scan.py             replay saved L-scan; absolute-MSE + R² panels
-  lr_scan.py            learning-rate sweep at fixed L
-  validate_sampler.py   Z₂ Metropolis sanity check (4-panel)
-  visualize.py          2D lattice visualisation
-
-tests/
-  test_lattice.py       gauge-invariance unit tests (plaquette, action, link_gauge_transformation)
-  test_data_model.py    split validation + CNN shape guards
-
-notes/
-  architecture.md       full GELT spec (§10 build-order checklist)
-  roadmap.md            phased plan — Z₂ through SU(3), plus novel directions
-  papers_review.md      literature review: L-CNN, CovResNet, CASK
-  sampling.md           MC sampler strategy
-  resources.md          curated reading list
-  tunnel-visualization.md  exploratory notes on topological-charge visualisation
+scripts/                 entry points (each self-contained; see CLAUDE.md)
+tests/                   pytest — gauge invariance/equivariance, sampler
+                         exactness, transport, glueball arithmetic
+notes/                   design records and the run-by-run experimental log
+glueball_report/         LaTeX write-up of the spectroscopy result
+attention_report/        LaTeX write-up of the attention-as-operator result
 ```
+
+**`CLAUDE.md` is the maintained source of truth** for module-by-module detail,
+conventions, current status, and known caveats. This README is the summary.
 
 ---
 
@@ -90,12 +113,7 @@ notes/
 git clone git@github.com:francescopassante/GELT.git
 cd GELT
 uv venv && source .venv/bin/activate
-uv pip install -e ".[dev]"
-```
-
-Or with plain pip:
-```bash
-pip install -e ".[dev]"
+uv pip install -e .
 ```
 
 ---
@@ -103,21 +121,33 @@ pip install -e ".[dev]"
 ## Usage
 
 ```bash
-# CNN baseline: single (L, β) run
-python scripts/main.py
+# Sampler validation (four-panel, one per group)
+python scripts/validate_sampler_z2.py
+python scripts/validate_sampler_su2.py
+python scripts/validate_anisotropy.py
 
-# Replay saved L-scan and generate R² plots
-python scripts/L_scan.py
+# Classical 0⁺⁺ baseline: correlator + GEVP effective mass
+python scripts/measure_glueball.py
 
-# Validate the Z₂ Metropolis sampler
-python scripts/validate_sampler.py
+# Train GELT as a variational glueball operator (V100-scale)
+python scripts/train_glueball.py
+
+# Cosh fits + ground-state overlap A₀ (offline, CPU)
+python scripts/fit_glueball_overlap.py
+
+# Attention readouts
+python scripts/visualize_glueball_attention.py
+python scripts/z2_attention_correlator.py
+
+# Quick gauge-invariance check on the full model
+python scripts/check_gelt_invariance.py
 
 # Unit tests
 pytest tests/
-
-# CNN architecture summary (5×5, D=2)
-python -m gelt.cnn_baseline
 ```
+
+Device order is cuda → mps → cpu. `datasets/`, `*.pth`, `*.png` and `download/`
+are gitignored; the training scripts cache their ensembles under `datasets/`.
 
 ---
 
@@ -128,30 +158,15 @@ python -m gelt.cnn_baseline
 | Links U | `(D, *Λ, N_c, N_c)` | direction first, color last |
 | Plaquettes P | `(D(D-1)/2, *Λ, N_c, N_c)` | (μ,ν) pairs, μ < ν |
 | W-channels | `(B, C, *Λ, N_c, N_c)` | batch and channel first |
+| Transport T | `(N, n_offsets, *Λ, N_c, N_c)` | offsets in `l1_ball_offsets` order |
 
 - Periodic BCs via `torch.roll` throughout — no manual index arithmetic.
 - Color axes are always present, even for Z₂ (`N_c = 1`), so every matmul
-  ports verbatim to U(1)/SU(N).
-- Wilson action: `S = β Σ_p (1 − Re Tr P_p / N_c)`.
-
----
-
-## Roadmap
-
-| Phase | Setting | Goal |
-|---|---|---|
-| **0** | 2D Z₂ | Implementation validation; gauge-invariance unit tests |
-| **1** | 3D Z₂ | 3D Ising duality; critical exponents (ν, β_c) |
-| **2** | 4D U(1) | First continuous group; monopole condensation |
-| **3** | 4D SU(2) | Replicate L-CNN benchmarks; matched-parameter shootout |
-| **4** | 4D SU(2) + fermions | SLHMC surrogate action (CASK comparison) |
-| **5** | 4D SU(3) | String tension, glueball mass, topological susceptibility |
-| **6** | Various | Cross-β transfer, attention-as-ξ, trivializing flows, … |
-
-Current position: **Phase 0** (post-refactor, GELT not yet implemented).
-The next concrete step is `build_transport_average(U, R)` — the DP routine for
-shortest-path-averaged parallel transport (expects batched links; see
-`notes/architecture.md` §10).
+  ports verbatim to U(1)/SU(N). Never broadcast across color axes implicitly.
+- Wilson action: `S = β Σ_p (1 − Re Tr P_p / N_c)`. Anisotropic when `ξ ≠ 1`
+  (temporal plaquettes weighted `β·ξ`, spatial `β/ξ`); `ξ = 1` is bit-exact.
+- Time is lattice axis 0 throughout the spectroscopy code.
+- Float32 for training; float64/complex128 for gauge-invariance unit tests.
 
 ---
 
@@ -165,8 +180,7 @@ With plaquettes as input, R² ≈ 0.99: the task collapses to a linear sum.
 
 The GELT closes this gap by construction: the matrix-bilinear value path
 `Q† · Ṽ` directly encodes multiplicative loop content, and the attention scores
-weight neighbors by physical relevance — in principle learning to look exactly
-as far as the correlation length demands.
+weight neighbors by physical relevance.
 
 ---
 
