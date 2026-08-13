@@ -18,10 +18,13 @@ Verification strategy:
     dagger bugs are invisible there; the complex case is the real audit.
 """
 
+import math
+
 import pytest
 import torch
 
 from gelt.lattice import (
+    SU,
     Z2,
     GaugeGroup,
     build_transport_average,
@@ -399,4 +402,131 @@ def test_gauge_covariance_complex(R):
         expected = omega @ T[i] @ gaugegroup.dagger(omega_xdx)
         assert torch.allclose(T_prime[i], expected, atol=1e-9), (
             f"Complex gauge covariance violated for dx={dx}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Group membership: T·T† = 𝟙 ?
+#
+# The covariance tests above pass for every mode, because a linear combination
+# of paths transforms exactly like a single path. Covariance is therefore blind
+# to whether T is still a group element -- and plain "average" is not one on any
+# multi-path offset. These tests pin that down per mode so the property cannot
+# silently disappear again.
+# ---------------------------------------------------------------------------
+
+
+def _max_unitarity_defect(T, gaugegroup, offsets, multi_path_only):
+    """max |T·T† − 𝟙| over the offsets selected by ``multi_path_only``."""
+    nc = T.shape[-1]
+    worst = 0.0
+    for i, dx in enumerate(offsets):
+        n_paths = math.factorial(sum(abs(d) for d in dx))
+        for d in dx:
+            n_paths //= math.factorial(abs(d))
+        if multi_path_only and n_paths == 1:
+            continue
+        if not multi_path_only and n_paths != 1:
+            continue
+        tt = T[i] @ gaugegroup.dagger(T[i])
+        eye = torch.eye(nc, dtype=T.dtype).expand_as(tt)
+        worst = max(worst, (tt - eye).abs().max().item())
+    return worst
+
+
+@pytest.mark.parametrize("gaugegroup", [Z2(), SU(2)], ids=["Z2", "SU(2)"])
+def test_single_is_in_the_group(gaugegroup):
+    """"single" keeps T·T† = 𝟙 on *every* offset — it is a plain product of links.
+
+    ("projected" also restores it, but only where the projection is well
+    defined; see the SU(2)/Z₂ pair of tests below.)
+    """
+    L, D, R = 6, 2, 2
+    dtype = torch.float64 if gaugegroup.nc == 1 else torch.complex128
+    torch.manual_seed(11)
+    U = random_links(L=L, D=D, gaugegroup=gaugegroup, dtype=dtype)
+    offsets = l1_ball_offsets(D=D, R=R)
+
+    T = build_transport_average(
+        U.unsqueeze(0), R=R, gaugegroup=gaugegroup, mode="single"
+    )[0]
+    defect = max(
+        _max_unitarity_defect(T, gaugegroup, offsets, multi_path_only=False),
+        _max_unitarity_defect(T, gaugegroup, offsets, multi_path_only=True),
+    )
+    assert defect < 1e-10, f"mode='single' left the group: max|T·T†−𝟙| = {defect}"
+
+
+@pytest.mark.parametrize("gaugegroup", [Z2(), SU(2)], ids=["Z2", "SU(2)"])
+def test_average_leaves_the_group_on_multi_path_offsets(gaugegroup):
+    """Characterisation test: "average" is in the group *only* on single-path offsets.
+
+    Not a bug report -- averaging is a deliberate design choice -- but the
+    property is load-bearing for the interpretation of T as a parallel
+    transport, so it is asserted rather than assumed.
+    """
+    L, D, R = 6, 2, 2
+    dtype = torch.float64 if gaugegroup.nc == 1 else torch.complex128
+    torch.manual_seed(11)
+    U = random_links(L=L, D=D, gaugegroup=gaugegroup, dtype=dtype)
+    offsets = l1_ball_offsets(D=D, R=R)
+    T = build_transport_average(
+        U.unsqueeze(0), R=R, gaugegroup=gaugegroup, mode="average"
+    )[0]
+
+    # Axis-aligned offsets have one shortest path, so the average is that path.
+    assert (
+        _max_unitarity_defect(T, gaugegroup, offsets, multi_path_only=False) < 1e-10
+    )
+    # Diagonal offsets average >1 path and leave the group by an O(1) amount.
+    assert _max_unitarity_defect(T, gaugegroup, offsets, multi_path_only=True) > 0.1
+
+
+def test_projected_is_in_the_group_and_covariant_su2():
+    """"projected" restores T·T† = 𝟙 *and* stays gauge covariant for SU(N).
+
+    The polar projection is equivariant under left/right unitary multiplication,
+    project(Ω M Ω'†) = Ω project(M) Ω'†, so covariance survives it.
+    """
+    gaugegroup = SU(2)
+    L, D, R = 6, 2, 2
+    torch.manual_seed(11)
+    U = random_links(L=L, D=D, gaugegroup=gaugegroup, dtype=torch.complex128)
+    omega = gaugegroup.random((L, L), dtype=torch.complex128)
+    offsets = l1_ball_offsets(D=D, R=R)
+
+    T = build_transport_average(
+        U.unsqueeze(0), R=R, gaugegroup=gaugegroup, mode="projected"
+    )[0]
+    T_prime = build_transport_average(
+        link_gauge_transformation(U, omega, gaugegroup).unsqueeze(0),
+        R=R,
+        gaugegroup=gaugegroup,
+        mode="projected",
+    )[0]
+
+    assert _max_unitarity_defect(T, gaugegroup, offsets, multi_path_only=True) < 1e-10
+    for i, dx in enumerate(offsets):
+        omega_xdx = torch.roll(
+            omega, shifts=tuple(-d for d in dx), dims=tuple(range(D))
+        )
+        expected = omega @ T[i] @ gaugegroup.dagger(omega_xdx)
+        assert torch.allclose(T_prime[i], expected, atol=1e-10), (
+            f"projected-mode covariance violated for dx={dx}"
+        )
+
+
+def test_projected_refuses_z2_rather_than_breaking_covariance():
+    """Z₂ averages cancel to exactly 0, where "nearest group element" is a tie.
+
+    project(0) has to pick a sign, and any fixed choice violates covariance
+    (project(ω·0·ω') = +1 ≠ ω·(+1)·ω' when ωω' = −1). The builder must refuse
+    rather than return a silently non-covariant transport.
+    """
+    gaugegroup = Z2()
+    torch.manual_seed(11)
+    U = random_links(L=6, D=2, gaugegroup=gaugegroup, dtype=torch.float64)
+    with pytest.raises(ValueError, match="ill-defined"):
+        build_transport_average(
+            U.unsqueeze(0), R=2, gaugegroup=gaugegroup, mode="projected"
         )

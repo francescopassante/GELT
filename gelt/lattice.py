@@ -474,8 +474,18 @@ def build_transport_average(
     equivariance is **broken** — the path picks a preferred direction order.
     No normalisation (a single path, not a mean).
 
-    Either way, normalising / not normalising by a scalar preserves gauge
-    covariance: under site-local Ω,
+    ``mode="projected"`` (average, then mapped back onto the group).
+    The ``"average"`` result is passed through ``gaugegroup.project`` — the
+    same nearest-group-element map APE smearing uses on averaged staples.
+    This keeps the rotation symmetry of the average *and* restores
+    ``T·T† = I``, which plain ``"average"`` loses on every multi-path offset:
+    a sum of group elements is not a group element (for two paths,
+    ``T·T† = (𝟙 + Re W)/2`` with ``W`` the Wilson loop enclosed by the two
+    paths, so it equals 𝟙 only when that loop is trivial). Projection is a
+    left/right-unitary-equivariant map — ``project(Ω M Ω'†) = Ω project(M) Ω'†``
+    for the polar/sign projectors used here — so gauge covariance survives it.
+
+    All three modes preserve gauge covariance: under site-local Ω,
 
         T_Δx(x)  →  Ω(x) · T_Δx(x) · Ω†(x+Δx)
 
@@ -519,8 +529,15 @@ def build_transport_average(
     :func:`l1_ball_offsets` ``(D, R)``: sorted by ``|Δx|₁`` then
     lexicographically. Use that helper to look up the index for a given Δx.
     """
-    if mode not in ("average", "single"):
-        raise ValueError(f"mode must be 'average' or 'single', got {mode!r}")
+    if mode not in ("average", "single", "projected"):
+        raise ValueError(
+            f"mode must be 'average', 'single' or 'projected', got {mode!r}"
+        )
+    if mode == "projected" and not hasattr(gaugegroup, "project"):
+        raise ValueError(
+            f"mode='projected' needs {type(gaugegroup).__name__}.project, which is "
+            "not defined on this group."
+        )
     if U.ndim < 6:
         raise ValueError(
             "U must be batched with shape (N, D, *Λ, nc, nc). "
@@ -610,5 +627,27 @@ def build_transport_average(
     bcast_shape = [1] * stacked.ndim
     bcast_shape[1] = -1
     stacked = stacked / norms.view(bcast_shape)
+
+    # Map the average back onto the group. The normalisation above is a positive
+    # scalar, so it cannot change the projection's result — it is kept anyway so
+    # that "projected" is literally "average, then project".
+    if mode == "projected":
+        # Guard the one case where "nearest group element" has no answer: an
+        # average that vanishes identically is equidistant from several group
+        # elements, and *any* tie-break breaks gauge covariance. Concretely for
+        # Z₂, project(0) = +1 by convention, but covariance demands
+        # project(ω·0·ω') = ω·project(0)·ω', which fails whenever ωω' = −1.
+        # This is not a corner case: on a Z₂ L1-ball at R=6 roughly a fifth of
+        # the offsets average to exactly zero (paths cancel pairwise).
+        vanishing = (stacked.abs().amax(dim=(-2, -1)) == 0).any()
+        if vanishing:
+            raise ValueError(
+                "mode='projected' is ill-defined for this configuration: some "
+                "path-averaged transports vanish identically, and projecting a "
+                "zero matrix onto the group requires an arbitrary tie-break that "
+                "violates gauge covariance. This happens generically for Z₂ "
+                "(cancelling ±1 paths); use mode='single' or mode='average' there."
+            )
+        stacked = gaugegroup.project(stacked)
 
     return stacked
