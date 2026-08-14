@@ -111,10 +111,17 @@ import torch
 from gelt.glueball import connected_correlator, fit_cosh_correlator
 from gelt.ising import (
     GAUGE_BETA_C,
+    ISING_BETA_C,
     dual_beta,
     ising_measure,
     predicted_plaquette,
 )
+
+# 3D Ising correlation-length exponent, Kos–Poland–Simmons-Duffin–Vichi
+# conformal bootstrap (2016): ν = 0.629971(4). Quoted to six digits because the
+# scaling test below is a *prediction*, not a fit, and the input has to be
+# better determined than the thing it is testing.
+NU_ISING = 0.629971
 from gelt.lattice import Z2, plaquette_tensor
 from gelt.sampler import integrated_autocorrelation_time
 
@@ -262,7 +269,12 @@ def gauge_plaquette(beta):
         P = plaquette_tensor(cfg[i : i + 100], g)[..., 0, 0].real
         per_cfg.append(P.mean(dim=tuple(range(1, P.dim()))))
     per_cfg = torch.cat(per_cfg).double()
-    return float(per_cfg.mean()), float(per_cfg.std() / per_cfg.numel() ** 0.5)
+    # τ-corrected, like the dual side: the gauge chains reach τ_int ≈ 6–8 near
+    # β_c (notes/attention_as_operator.md §6.1), so std/√N understates the error
+    # by a factor of ~4 exactly where the duality check is most interesting.
+    tau = float(integrated_autocorrelation_time(per_cfg)[1])
+    n_eff = per_cfg.numel() / max(1.0, 2.0 * tau)
+    return float(per_cfg.mean()), float(per_cfg.std() / n_eff**0.5)
 
 
 # --------------------------------------------------------------------------
@@ -292,18 +304,107 @@ def load_gauge_side():
 
 
 # --------------------------------------------------------------------------
-def measure(beta, shape, label):
-    """Run the dual Ising at β* and fit both operators."""
+# Sampling adequacy. The 2026-08-14 run failed here and it is worth being
+# explicit about why, because the failure was invisible in every observable
+# except the duality check.
+#
+# In the *broken* phase the slowest mode is not the critical one. Tunnelling
+# between the two magnetisation sectors has a barrier set by the interface
+# area, so its τ is exponential in the volume rather than ξ^z: measured on
+# 48×24² at β = 0.760, ξ² ≈ 76 sweeps against τ_int(M) = 1575. Thermalising for
+# 1500 sweeps was therefore *one* autocorrelation time, the cold start had not
+# relaxed, ⟨ss⟩ read high, and the duality check went to −18σ at exactly the
+# three β where τ(M) blew up. The tell in the ξ table was that the matched
+# volume came out *above* the large volume at two β — incoherent, since finite
+# volume can only squeeze ξ.
+#
+# So the run gates on τ_int of the magnetisation and escalates itself rather
+# than reporting a cell it cannot support. τ is measured in units of
+# measurements; ×n_skip converts to sweeps.
+THERM_TAU = 20.0  # require n_therm ≥ 20·τ(M)
+SKIP_TAU = 2.0  # require n_skip  ≥  2·τ(M)
+MAX_ESCALATIONS = int(os.environ.get("DGT_MAX_ESCALATE", 3))
+
+
+def _sampling_verdict(tau_mag_sweeps, n_therm, n_skip):
+    """(ok, needed_therm, needed_skip) against the τ(M) gate."""
+    need_t = int(math.ceil(THERM_TAU * tau_mag_sweeps))
+    need_s = int(math.ceil(SKIP_TAU * tau_mag_sweeps))
+    return (n_therm >= need_t and n_skip >= need_s), need_t, need_s
+
+
+def _run_once(beta, shape, n_therm, n_skip, n_measure, tag=0):
     bs = dual_beta(beta)
     out = ising_measure(
         bs, shape,
-        n_replicas=N_REPLICAS, n_measure=N_MEASURE,
-        n_therm=N_THERM, n_skip=N_SKIP,
-        device=device, seed=abs(hash((round(beta, 6), shape))) % (2**31),
+        n_replicas=N_REPLICAS, n_measure=n_measure,
+        n_therm=n_therm, n_skip=n_skip,
+        device=device,
+        seed=abs(hash((round(beta, 6), shape, tag))) % (2**31),
         ordered_start=True, progress=True,
     )
+    mg = out["magnetisation"].reshape(N_REPLICAS, n_measure)
+    e = out["bond_energy"].reshape(N_REPLICAS, n_measure)
+    taus = {}
+    for key, series in (("tau_int", e), ("tau_int_mag", mg)):
+        taus[key] = float(
+            np.mean([
+                float(integrated_autocorrelation_time(series[r])[1])
+                for r in range(N_REPLICAS)
+            ])
+        )
+    return out, mg, taus
 
-    res = {"beta": beta, "beta_star": bs, "shape": shape, "label": label}
+
+def measure(beta, shape, label):
+    """Run the dual Ising at β*, fit both operators, escalate if undersampled.
+
+    The escalation loop is the point: a first pass at the configured settings
+    measures τ(M), and if the gate fails the *same* β is re-run with n_therm and
+    n_skip taken from the measured τ (capped by MAX_ESCALATIONS). Cost therefore
+    scales with the β that need it rather than with the worst one, which matters
+    because τ(M) spans 25 → 1575 sweeps across this scan.
+    """
+    n_therm, n_skip, n_measure = N_THERM, N_SKIP, N_MEASURE
+    history = []
+    for attempt in range(MAX_ESCALATIONS + 1):
+        out, mg, taus = _run_once(beta, shape, n_therm, n_skip, n_measure, attempt)
+        tau_sw = taus["tau_int_mag"] * n_skip
+        ok, need_t, need_s = _sampling_verdict(tau_sw, n_therm, n_skip)
+        history.append(
+            {"n_therm": n_therm, "n_skip": n_skip, "n_measure": n_measure,
+             "tau_mag_sweeps": tau_sw, "ok": ok}
+        )
+        if ok or attempt == MAX_ESCALATIONS:
+            break
+        # Keep the chain length bounded: buying decorrelation is worth more than
+        # buying samples once the samples are correlated anyway.
+        n_therm, n_skip = need_t, need_s
+        n_measure = max(100, N_MEASURE // 2 ** (attempt + 1))
+        print(
+            f"    ↑ escalating β={beta}: τ(M)={tau_sw:.0f} sweeps →"
+            f" n_therm={n_therm} n_skip={n_skip} n_measure={n_measure}"
+        )
+
+    res = {"beta": beta, "beta_star": dual_beta(beta), "shape": shape,
+           "label": label, "sampling": history, "sampling_ok": history[-1]["ok"],
+           "n_therm": n_therm, "n_skip": n_skip, "n_measure": n_measure}
+    res.update(taus)
+    res["tau_mag_sweeps"] = history[-1]["tau_mag_sweeps"]
+
+    # Measurements that straddle a magnetisation sign flip are the ones the
+    # sign-fixed σ correlator cannot represent: the wall array is flipped
+    # wholesale by the global sign, so a configuration caught mid-tunnelling
+    # contributes a spurious large fluctuation. Dropping the neighbours of every
+    # flip is cheap; the effect of dropping them is *reported* rather than
+    # assumed negligible.
+    flip = torch.sign(mg[:, 1:]) != torch.sign(mg[:, :-1])
+    res["tunnel_rate"] = float(flip.double().mean())
+    keep = torch.ones_like(mg, dtype=torch.bool)
+    keep[:, 1:] &= ~flip
+    keep[:, :-1] &= ~flip
+    keep = keep.reshape(-1)
+
     for op in ("m", "e_t"):
         m, me, a0, a0e = _jack(out[op], FIT_WINDOW)
         xi, xie = _xi(m, me)
@@ -311,31 +412,17 @@ def measure(beta, shape, label):
                    "A0": a0, "A0_err": a0e}
         m2, me2, _, _ = _jack(out[op], LATE_WINDOW)
         res[op]["xi_late"], res[op]["xi_late_err"] = _xi(m2, me2)
-        res[op]["profile"] = (
-            connected_correlator(out[op].double())[:10]
-            / connected_correlator(out[op].double())[0]
-        ).tolist()
+        if keep.sum() > JACK_BLOCK * 4 and keep.sum() < keep.numel():
+            mc, mce, _, _ = _jack(out[op][keep], FIT_WINDOW)
+            res[op]["xi_notunnel"], res[op]["xi_notunnel_err"] = _xi(mc, mce)
+        C = connected_correlator(out[op].double())
+        res[op]["profile"] = (C[:10] / C[0]).tolist()
 
-    # diagnostics: τ_int of each chain observable, and tunnelling.
-    # Both are reported because they are different modes: the energy is fast,
-    # the magnetisation is the *slow* mode of the broken phase and is what sets
-    # whether n_skip was enough. Under-decorrelation inflates errors rather than
-    # biasing ξ (the jackknife blocks absorb it), but it has to be visible.
-    mg = out["magnetisation"].reshape(N_REPLICAS, N_MEASURE)
-    e = out["bond_energy"].reshape(N_REPLICAS, N_MEASURE)
-    for key, series in (("tau_int", e), ("tau_int_mag", mg)):
-        res[key] = float(
-            np.mean([
-                float(integrated_autocorrelation_time(series[r])[1])
-                for r in range(N_REPLICAS)
-            ])
-        )
-    flips = (torch.sign(mg[:, 1:]) != torch.sign(mg[:, :-1])).double().mean()
-    res["tunnel_rate"] = float(flips)
     res["bond_energy"] = float(out["bond_energy"].mean())
-    res["bond_energy_err"] = float(
-        out["bond_energy"].std() / out["bond_energy"].numel() ** 0.5
-    )
+    # τ-corrected: the naive std/√N ignores that consecutive measurements are
+    # correlated, and quoting it turned a ~0.6% systematic into "−18σ".
+    n_eff = out["bond_energy"].numel() / max(1.0, 2.0 * res["tau_int"])
+    res["bond_energy_err"] = float(out["bond_energy"].std() / n_eff**0.5)
     res["pred_plaquette"] = predicted_plaquette(beta, res["bond_energy"])
     res["pred_plaquette_err"] = res["bond_energy_err"] / math.sinh(2 * beta)
     return res
@@ -394,9 +481,37 @@ def main():
                 f" [A₀={r['m']['A0']:.3f}]"
                 f"  ξ(ε_t)={r['e_t']['xi']:.3f}±{r['e_t']['xi_err']:.3f}"
                 f" [A₀={r['e_t']['A0']:.3f}]"
-                f"  τ(ε)={r['tau_int']:.1f} τ(M)={r['tau_int_mag']:.1f}"
+                f"  τ(M)={r['tau_mag_sweeps']:.0f}sw"
                 f" tun={r['tunnel_rate']:.3f}"
+                f" {'' if r['sampling_ok'] else '  ⚠ UNDERSAMPLED'}"
             )
+
+    # ------------------------------------------------------- sampling gate
+    print(f"\n{'=' * 74}\nSAMPLING GATE — τ_int of the MAGNETISATION (the slow"
+          f" mode of the broken phase)\n{'=' * 74}")
+    print(f"{'volume':>9} {'β':>8} {'τ(M) sweeps':>12} {'n_therm/τ':>10}"
+          f" {'n_skip/τ':>9} {'tunnel':>8} {'verdict':>14}")
+    any_bad = False
+    for name, rows in results.items():
+        for r in rows:
+            tau = max(r["tau_mag_sweeps"], 1e-9)
+            any_bad |= not r["sampling_ok"]
+            print(
+                f"{name:>9} {r['beta']:>8} {tau:>12.0f} {r['n_therm'] / tau:>10.1f}"
+                f" {r['n_skip'] / tau:>9.1f} {r['tunnel_rate']:>8.3f}"
+                f" {'ok' if r['sampling_ok'] else 'UNDERSAMPLED':>14}"
+            )
+    if any_bad:
+        print(
+            "\n  ⚠ Cells above marked UNDERSAMPLED did not reach"
+            f" n_therm ≥ {THERM_TAU:.0f}τ(M) and n_skip ≥ {SKIP_TAU:.0f}τ(M)"
+            " even after escalation."
+            "\n    Their ξ is NOT usable: a cold start that has not relaxed"
+            " reads too ordered, which biases"
+            "\n    ⟨ss⟩ high and ξ(σ) long. Raise DGT_MAX_ESCALATE, or accept"
+            " that the matched volume"
+            "\n    cannot be sampled at that β with a local algorithm."
+        )
 
     # ---------------------------------------------------------------- checks
     print(f"\n{'=' * 74}\nDUALITY CHECK — parameter-free, vs the gauge ensembles"
@@ -475,6 +590,8 @@ def main():
             print(f"  {name:>8}: {'monotonic in β' if mono else 'NON-monotonic'}"
                   f"  ({', '.join(f'{x:.2f}' for x in xis)})")
 
+    scaling_test(results)
+
     torch.save(
         {"results": results, "gauge": gauge, "betas": BETAS,
          "beta_c": GAUGE_BETA_C, "volumes": VOLUMES,
@@ -485,6 +602,52 @@ def main():
     )
     plot(results, gauge)
     print(f"\nwrote {RESULTS}/dual_ground_truth.{{png,pt}}")
+
+
+def scaling_test(results):
+    """Do the dual measurements reproduce 3D Ising criticality? A prediction.
+
+    Near β*_c, ξ = ξ₀ · t*^(−ν) with t* = (β* − β*_c)/β*_c and ν = 0.629971 known
+    from the conformal bootstrap to six digits. Fixing ξ₀ from the **single
+    lowest-β point** — the one furthest from criticality, hence least affected
+    by finite volume — turns every other point into a parameter-free
+    prediction. This is the strongest available validation of the dual
+    measurements, and it is independent of the gauge side entirely.
+
+    It is also the sharpest available *diagnosis*: a point that misses the
+    prediction badly while its neighbours hit it is a point whose chain, fit
+    window or box has failed, not a point that has discovered new physics.
+
+    A two-parameter fit is reported alongside, but only as a consistency check
+    — with ξ ≤ L/4 enforced at just a few points, an effective exponent here is
+    not a measurement of ν and must not be quoted as one (the same caution
+    `notes/attention_as_operator.md` §7 already applies to the gauge scan).
+    """
+    print(f"\n{'=' * 74}\nSCALING TEST — is the dual reproducing 3D Ising"
+          f" criticality?\n{'=' * 74}")
+    for name, rows in results.items():
+        ok = [r for r in rows if r["sampling_ok"] and np.isfinite(r["m"]["xi"])]
+        if len(ok) < 3:
+            print(f"  {name}: fewer than 3 usable points — skipped")
+            continue
+        t = np.array([
+            (dual_beta(r["beta"]) - ISING_BETA_C) / ISING_BETA_C for r in ok
+        ])
+        xi = np.array([r["m"]["xi"] for r in ok])
+        err = np.array([r["m"]["xi_err"] for r in ok])
+        amp = xi[0] * t[0] ** NU_ISING  # fixed from the lowest-β point alone
+        print(f"\n  {name}:  ξ₀ = {amp:.4f} fixed from β = {ok[0]['beta']},"
+              f" ν = {NU_ISING} (bootstrap)")
+        print(f"  {'β':>8} {'t*':>10} {'ξ predicted':>12} {'ξ measured':>18}"
+              f" {'dev':>8}")
+        for r, ti, xm, xe in zip(ok, t, xi, err):
+            p = amp * ti**-NU_ISING
+            print(f"  {r['beta']:>8} {ti:>10.6f} {p:>12.3f}"
+                  f" {xm:>11.3f}±{xe:.3f} {100 * (xm - p) / p:>+7.1f}%")
+        # unweighted log-log slope, consistency only
+        nu_fit = -np.polyfit(np.log(t), np.log(xi), 1)[0]
+        print(f"  effective exponent from a two-parameter fit: {nu_fit:.3f}"
+              f"  (bootstrap {NU_ISING}) — consistency only, not a measurement")
 
 
 def plot(results, gauge):

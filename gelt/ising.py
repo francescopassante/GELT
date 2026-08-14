@@ -196,12 +196,28 @@ def heatbath_sweep(
     links. Same-parity sites share no bond, so their updates commute and each
     half-sweep needs one neighbour-sum evaluation.
 
-    Rejection-free matters for the same reason it did on the gauge side: these
-    measurements live at ξ up to ~6, where a Metropolis flip proposal's
-    acceptance is collapsing. Critical slowing down (τ ~ ξ^z, z ≈ 2) is handled
-    by ``n_skip`` and by running many independent replicas, not by clustering —
-    at ξ ≲ 6 a local sweep is cheap enough that the simple exact algorithm wins
-    on total wall clock and carries no correctness risk.
+    Rejection-free matters for the same reason it did on the gauge side: the
+    Metropolis flip proposal's acceptance collapses as the system orders.
+
+    **Cost of the slow mode — read this before choosing n_therm/n_skip.** The
+    first version of this docstring argued that clustering was unnecessary
+    because critical slowing down (τ ~ ξ^z, z ≈ 2) is only ~ξ² sweeps and
+    ``n_skip`` plus many replicas would absorb it. That reasoning is wrong in
+    the **broken** phase, and the 2026-08-14 production run paid for it. The
+    slowest mode there is not the critical one, it is **tunnelling between the
+    two magnetisation sectors**, whose barrier gives a τ that is exponential in
+    the interface area rather than power-law in ξ. Measured on 48×24² at
+    β = 0.760: ξ² ≈ 76 sweeps but τ_int(M) = **1575 sweeps**, a factor 20, with
+    3.4% of consecutive measurements straddling a sign flip. Under-thermalising
+    against *that* leaves the chain too ordered, which biases ⟨ss⟩ high and is
+    directly visible as a failure of the duality check.
+
+    So: **fix n_therm and n_skip from τ_int of the magnetisation, never from
+    ξ^z or from τ_int of the energy** (the energy is fast — 3.4 vs 31.5
+    measurements at the same point). `scripts/dual_ground_truth.py` reports
+    both and gates on the magnetisation. The tunnelling barrier grows with
+    volume, so the *larger* lattice is the better-behaved one here, which
+    inverts the usual intuition.
     """
     shape = tuple(s.shape[1:])
     if any(L % 2 for L in shape):
