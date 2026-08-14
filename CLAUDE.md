@@ -97,10 +97,19 @@ removed pending rewrites; the spec now lives across the notes below.)
   three operators read 50–58% low together (measuring the box, not the gap), and
   it was the entire source of the non-monotonic excursion. Dropping it costs no
   dynamic range (β = 0.7585 already carries the largest clean ξ, 6.36) and
-  raises Pearson(ξ_A, **exact truth**) from 0.744 to **0.9946**. §8.1 withdraws
+  raises Pearson(ξ_A, **exact truth**) from 0.744 to **0.9946**. Accuracy against
+  the dual (rerun, §7.7): trained **+3.8%**, classical **−8.9%**, random
+  **−8.0%** — the trained arm is the only one consistent with the exact answer.
+  Two traps recorded there: the τ(M) gate must be measured in a **pilot at
+  n_skip = 1** (τ_int is per-measurement and floors at ½, so re-measuring it
+  inside an escalation loop makes the criterion unsatisfiable and it ran a cell
+  to n_skip = 207361), and the **matched volume is unavailable at β ≥ 0.756** —
+  it tunnels between magnetisation sectors at 6–48%, which is a real light state
+  in the σ channel, not a sampling artefact, so more sweeps cannot fix it and
+  the large volume is the reference. §8.1 withdraws
   §7's ν caveat: the "effective exponent 0.39, not 0.63" was that one point —
   the same fit on four β gives 0.622 (classical) / 0.656 (attention) against the
-  dual's 0.626. The **non-monotonic-excursion argument must be deleted from the
+  dual's 0.60 (rerun value). The **non-monotonic-excursion argument must be deleted from the
   paper** (§8.2 lists all five required changes). Figures/tables regenerate
   offline with `ZAC_REPLOT=<dump.pt> python scripts/z2_attention_correlator.py`
   — no GPU, no ensembles, no checkpoints, since dropping a β changes no per-β

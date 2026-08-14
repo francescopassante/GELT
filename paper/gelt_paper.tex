@@ -71,9 +71,9 @@ to the 3D Ising model, this can be checked against ground truth rather than
 against another operator: measured in the dual --- where the order parameter,
 which is the non-local 't~Hooft operator on the gauge side and therefore
 unavailable to any smeared-loop basis, interpolates the same mass gap with
-near-unit overlap --- the trained attention field is unbiased ($+1.2\%$) while
-the classical smeared basis and the untrained network read $11\%$ and $10\%$
-low. The structural statement holds already at random initialization; what
+near-unit overlap --- the trained attention field is the only arm consistent with it
+($+3.8\%$) while the classical smeared basis and the untrained network read
+$9\%$ and $8\%$ low. The structural statement holds already at random initialization; what
 training adds is ground-state purity, $\Delta A_0=+0.11$ to $+0.27$
 ($5.4\sigma$--$23.5\sigma$), and it is that purity the dual confirms as
 accuracy. Equivariant attention maps are therefore not diagnostics but
@@ -1005,7 +1005,7 @@ measured on the same configurations, for the matched trained network and for
 random initialization; dotted line is $y=x$. Top right: the cross-evaluation
 matrix --- $\xiA$ follows the column (the physics), not the row (the training
 $\beta$). Bottom left: both lengths against $\beta_c-\beta$; the effective
-exponents, $0.62$ classical and $0.66$ attention, agree with the $0.626$
+exponents, $0.62$ classical and $0.66$ attention, agree with the $0.60$
 returned by the dual ground truth fitted identically on the same four couplings
 (see text --- this is a consistency check, not a measurement of $\nu$). Bottom
 right:
@@ -1132,53 +1132,82 @@ bootstrap~\cite{Kos2016}, every other point becomes a prediction:
 \toprule
 $\beta$ & $0.7450$ & $0.7520$ & $0.7560$ & $0.7585$\\
 \midrule
-$\xi$ predicted & (fixes $\xi_0$) & $3.048$ & $4.331$ & $6.410$\\
-$\xi$ measured & $2.137(18)$ & $3.051(22)$ & $4.279(33)$ & $6.355(108)$\\
-deviation & --- & $\bm{+0.1\%}$ & $\bm{-1.2\%}$ & $\bm{-0.9\%}$\\
+$\xi$ predicted & (fixes $\xi_0$) & $3.015$ & $4.285$ & $6.341$\\
+$\xi$ measured & $2.114(45)$ & $2.962(50)$ & $4.251(62)$ & $6.021(78)$\\
+deviation & --- & $-1.8\%$ & $-0.8\%$ & $-5.1\%$\\
 \bottomrule
 \end{tabular}
 \end{center}
+Anchoring on the coupling furthest from $\beta_c$ minimizes finite-volume
+contamination but maximizes corrections to scaling, so the residual at the
+closest coupling should not be over-read; a two-parameter fit to the same four
+points returns $\nu=0.60$, against the bootstrap $0.630$. What the test
+establishes is that the dual is on the 3D Ising scaling curve to a few percent,
+which is the precision the comparison below needs, not that it measures $\nu$.
 
-\paragraph{Sampling.} One caution is worth stating because it cost us a run. In
-the broken phase the slowest mode is \emph{not} the critical one: tunnelling
+\paragraph{Sampling, and why the matched volume is unavailable near $\beta_c$.}
+In the broken phase the slowest mode is \emph{not} the critical one: tunnelling
 between magnetization sectors has a barrier set by the interface area, so its
 autocorrelation time is exponential in the volume rather than $\xi^z$. At
 $\beta=0.760$ on the matched volume, $\xi^2\approx76$ sweeps against a measured
-$\tau_{\rm int}(M)=1575$. Thermalization and decorrelation must therefore be
-fixed from $\tau_{\rm int}$ of the magnetization, not of the energy and not from
-$\xi^z$; we require $n_{\rm therm}\ge20\,\tau_{\rm int}(M)$ and
-$n_{\rm skip}\ge2\,\tau_{\rm int}(M)$ and discard any cell that fails. It also
-makes the \emph{larger} lattice the better-behaved one, inverting the usual
+$\tau_{\rm int}(M)\approx1.6\times10^3$. Thermalization and decorrelation must
+therefore be fixed from $\tau_{\rm int}$ of the magnetization, not of the energy
+and not from $\xi^z$; we require $n_{\rm therm}\ge20\,\tau_{\rm int}(M)$ and
+$n_{\rm skip}\ge2\,\tau_{\rm int}(M)$. Because $\tau_{\rm int}$ is returned per
+\emph{measurement} and floors at $1/2$ for a decorrelated chain, it has to be
+determined once in a pilot at $n_{\rm skip}=1$, where it is directly in sweeps;
+re-measuring it inside a loop that adjusts $n_{\rm skip}$ makes the criterion
+self-referential and unsatisfiable.
+
+This is also where the matched volume runs out. At $\beta\ge0.756$ that box
+tunnels on $6\%$ to $48\%$ of consecutive measurements, and the consequence is
+not a sampling error to be averaged away: a box in which the broken phase is not
+cleanly broken admits the tunnelling mode into the $\sigma$ correlator as a
+genuine light state, which inflates $\xi$ --- visibly, since the matched volume
+then reads \emph{above} the large one ($7.80$ against $6.02$ at $\beta=0.7585$)
+where finite volume can only squeeze. More sweeps sample that mode better rather
+than removing it. We therefore take the reference from the large volume wherever
+$\sigma$ tunnels, and note that $\varepsilon_t$, being $\Zt$-even, is blind to
+the sector and unaffected throughout. The tunnelling barrier grows with volume,
+so the \emph{larger} lattice is the better-behaved one here, inverting the usual
 intuition.
 
 \subsection{Which operator is right}
 
-Table~\ref{tab:dual} is the comparison. The trained attention field is unbiased
-against the exact answer; the classical smeared basis and the untrained network
-are low by $11\%$ and $10\%$, and the ordering is exactly the one their $A_0$
-predicts.
+Table~\ref{tab:dual} is the comparison. The trained attention field is the only
+arm consistent with the exact answer; the classical smeared basis and the
+untrained network are low by $9\%$ and $8\%$, and the ordering is exactly the one
+their $A_0$ predicts. The single coupling that discriminates most sharply is
+$\beta=0.7520$, where the classical basis is $3.6\sigma$ low; at $0.7450$ and
+$0.7560$ the gauge error bars ($\pm0.13$ to $\pm0.30$) are too wide to separate a
+$5\%$ effect, so the statement rests on two of the four points.
 
 \begin{table}[t]
 \caption{Fractional deviation of each gauge-side operator from the dual ground
-truth, with the significance of the deviation in parentheses. $\beta=0.7600$ is
-excluded: its true $\xi\approx10$ exceeds what $L=24$ can hold, so all three
-operators are $50$--$58\%$ low together and the point discriminates nothing.}
+truth, with the significance of the deviation in parentheses. The reference is
+the large-volume measurement: near $\beta_c$ the matched box tunnels between
+magnetization sectors (below), so the $\sigma$ correlator there is not measuring
+the $\sigma$ particle. Since finite volume can only push the gauge values
+\emph{down}, this choice cannot manufacture the trained arm's agreement, though
+it can inflate the deficits of the other two. $\beta=0.7600$ is excluded: its
+true $\xi\approx10$ exceeds what $L=24$ can hold, so all three operators are
+$50$--$58\%$ low together and the point discriminates nothing.}
 \label{tab:dual}
 \begin{ruledtabular}
 \begin{tabular}{lcccc}
 $\beta$ & $\xi$ exact & classical & attention & attention\\
         &             &           & trained   & random\\
 \colrule
-$0.7450$ & $2.137(18)$ & $-4.6\%\,(0.7\sigma)$ & $+5.0\%\,(0.8\sigma)$
-         & $-2.9\%\,(0.5\sigma)$\\
-$0.7520$ & $3.051(22)$ & $-23.2\%\,(4.3\sigma)$ & $-9.4\%\,(2.1\sigma)$
-         & $-19.4\%\,(3.8\sigma)$\\
-$0.7560$ & $4.279(33)$ & $-4.7\%\,(0.7\sigma)$ & $+4.8\%\,(0.7\sigma)$
-         & $-4.7\%\,(0.8\sigma)$\\
-$0.7585$ & $6.355(108)$ & $-12.0\%\,(2.2\sigma)$ & $+4.4\%\,(0.8\sigma)$
-         & $-13.9\%\,(2.7\sigma)$\\
+$0.7450$ & $2.114(45)$ & $-3.5\%\,(0.5\sigma)$ & $+6.1\%\,(1.0\sigma)$
+         & $-1.8\%\,(0.3\sigma)$\\
+$0.7520$ & $2.962(50)$ & $-20.9\%\,(3.6\sigma)$ & $-6.7\%\,(1.4\sigma)$
+         & $-17.0\%\,(3.1\sigma)$\\
+$0.7560$ & $4.251(62)$ & $-4.1\%\,(0.6\sigma)$ & $+5.5\%\,(0.8\sigma)$
+         & $-4.1\%\,(0.7\sigma)$\\
+$0.7585$ & $6.021(78)$ & $-7.1\%\,(1.2\sigma)$ & $+10.2\%\,(1.9\sigma)$
+         & $-9.2\%\,(1.7\sigma)$\\
 \colrule
-\emph{mean} & & $\bm{-11.1\%}$ & $\bm{+1.2\%}$ & $\bm{-10.2\%}$\\
+\emph{mean} & & $\bm{-8.9\%}$ & $\bm{+3.8\%}$ & $\bm{-8.0\%}$\\
 \end{tabular}
 \end{ruledtabular}
 \end{table}
@@ -1198,10 +1227,10 @@ swapped:
 \toprule
 $\beta$ & $0.7450$ & $0.7520$ & $0.7560$ & $0.7585$\\
 \midrule
-$A_0(\sigma)$ & $0.94$ & $0.95$ & $0.93$ & $0.98$\\
-$A_0(\varepsilon_t)$ & $0.60$ & $0.50$ & $0.41$ & $0.35$\\
+$A_0(\sigma)$ & $0.95$ & $0.95$ & $0.96$ & $0.97$\\
+$A_0(\varepsilon_t)$ & $0.61$ & $0.49$ & $0.40$ & $0.36$\\
 $\xi(\varepsilon_t)/\xi(\sigma)-1$
-  & $-8.9\%$ & $-16.2\%$ & $-37.3\%$ & $-44.9\%$\\
+  & $-10.4\%$ & $-13.6\%$ & $-19.1\%$ & $-31.5\%$\\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -1222,7 +1251,7 @@ configurations, and the argument is withdrawn. Second, the effective exponent
 from a scan including that point is $0.43$ (classical) and $0.48$ (attention),
 which we would have reported as evidence that $L=24$ is not the asymptotic
 scaling regime. It is not: with the out-of-box point removed the same fit gives
-$0.622$ and $0.656$, against $0.626$ from the dual fitted identically on the same
+$0.622$ and $0.656$, against $0.60$ from the dual fitted identically on the same
 four couplings. The dual arm returns $0.63$ either way, being the only arm
 measured at a volume that can hold $\xi\approx11$ --- which is what distinguishes
 "outside the scaling window", where the dual would have moved too, from "one
@@ -1349,9 +1378,9 @@ The third thread is that in this theory the two can be checked against something
 external. Because 3D $\Zt$ is exactly dual to the 3D Ising model, the same mass
 gap is measurable with the dual order parameter --- an operator that is non-local
 in the gauge variables and so could never have been a member of the basis being
-compared --- and the trained attention field turns out to be unbiased against it
-while the classical smeared basis and the untrained network are $11\%$ and
-$10\%$ low. That converts $\Delta A_0$ from a statement about operator quality
+compared --- and the trained attention field turns out to be the only arm consistent
+with it while the classical smeared basis and the untrained network are $9\%$
+and $8\%$ low. That converts $\Delta A_0$ from a statement about operator quality
 into a statement about accuracy, and it is the sense in which the learned
 operator is not merely different from the standard one but better. The same
 reference cost us two claims we would otherwise have made

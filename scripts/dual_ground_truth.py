@@ -96,7 +96,8 @@ Run:
     DGT_SMOKE=1 python scripts/dual_ground_truth.py  # 2 min, tiny lattices
 
 Environment overrides: ``DGT_REPLICAS``, ``DGT_MEASURE``, ``DGT_SKIP``,
-``DGT_THERM``, ``DGT_VOLUMES`` (``matched``/``large``/``both``), ``DGT_SMOKE``.
+``DGT_THERM``, ``DGT_VOLUMES`` (``matched``/``large``/``both``), ``DGT_SMOKE``,
+``DGT_PILOT`` (pilot length in sweeps), ``DGT_MAX_SWEEPS``, ``DGT_TUNNEL_MAX``.
 
 Writes ``results/dual/dual_ground_truth.{png,pt}``.
 """
@@ -116,14 +117,14 @@ from gelt.ising import (
     ising_measure,
     predicted_plaquette,
 )
+from gelt.lattice import Z2, plaquette_tensor
+from gelt.sampler import integrated_autocorrelation_time
 
 # 3D Ising correlation-length exponent, Kos–Poland–Simmons-Duffin–Vichi
 # conformal bootstrap (2016): ν = 0.629971(4). Quoted to six digits because the
 # scaling test below is a *prediction*, not a fit, and the input has to be
 # better determined than the thing it is testing.
 NU_ISING = 0.629971
-from gelt.lattice import Z2, plaquette_tensor
-from gelt.sampler import integrated_autocorrelation_time
 
 RESULTS = "results/dual"
 os.makedirs(RESULTS, exist_ok=True)
@@ -324,19 +325,60 @@ def load_gauge_side():
 # volume came out *above* the large volume at two β — incoherent, since finite
 # volume can only squeeze ξ.
 #
-# So the run gates on τ_int of the magnetisation and escalates itself rather
-# than reporting a cell it cannot support. τ is measured in units of
-# measurements; ×n_skip converts to sweeps.
+# The gate is therefore on τ_int of the magnetisation. **It must be measured in
+# a pilot at fixed small n_skip, never re-measured inside an escalation loop.**
+# The first attempt at this did the latter and it cannot work: τ_int is returned
+# in units of *measurements* and floors at 1/2 for a decorrelated chain
+# (τ_int = ½ + Σρ with ρ ≡ 0), so τ_sweeps = τ_meas·n_skip ≥ n_skip/2 no matter
+# how well sampled the chain is. The condition n_skip ≥ 2·τ_sweeps then reduces
+# to n_skip ≥ n_skip — marginal by construction, failed by any noise, and every
+# escalation doubles n_skip and hence doubles τ_sweeps. The 2026-08-14 rerun
+# escalated β = 0.756 to n_skip = 21014 and β = 0.760 to n_skip = 207361 chasing
+# this; eight of nine cells had τ_meas ∈ [0.47, 0.62], i.e. were already
+# decorrelated on the *first* pass.
 THERM_TAU = 20.0  # require n_therm ≥ 20·τ(M)
 SKIP_TAU = 2.0  # require n_skip  ≥  2·τ(M)
-MAX_ESCALATIONS = int(os.environ.get("DGT_MAX_ESCALATE", 3))
+# The pilot runs at n_skip = 1, so its τ_int is directly in sweeps. It can only
+# resolve τ up to about PILOT_LEN/20; beyond that the cell is declared
+# unresolvable rather than escalated into.
+PILOT_LEN = int(os.environ.get("DGT_PILOT", 20000))
+PILOT_REPLICAS = int(os.environ.get("DGT_PILOT_REPLICAS", 8))
+# Above this fraction of sign flips between consecutive measurements the
+# sign-fixed σ correlator is not measuring the σ particle: the box is small
+# enough that the broken phase is not cleanly broken and the tunnelling mode
+# enters as a light state, inflating ξ. This is a property of the volume, not of
+# the chain, so no amount of sampling fixes it — see §7.4 of the note.
+TUNNEL_MAX = float(os.environ.get("DGT_TUNNEL_MAX", 0.05))
+# Hard ceiling on sweeps per cell, so an unresolvable cell costs a bounded
+# amount instead of 19 hours.
+MAX_SWEEPS = int(os.environ.get("DGT_MAX_SWEEPS", 400_000))
 
 
-def _sampling_verdict(tau_mag_sweeps, n_therm, n_skip):
-    """(ok, needed_therm, needed_skip) against the τ(M) gate."""
-    need_t = int(math.ceil(THERM_TAU * tau_mag_sweeps))
-    need_s = int(math.ceil(SKIP_TAU * tau_mag_sweeps))
-    return (n_therm >= need_t and n_skip >= need_s), need_t, need_s
+def pilot_tau(beta, shape):
+    """τ_int(M) in **sweeps**, from a short chain at n_skip = 1.
+
+    Measuring at n_skip = 1 is the whole point: the returned τ_int is then in
+    sweeps directly, with no n_skip factor to make the answer depend on the
+    question. Half the pilot is discarded as thermalisation, and τ is taken from
+    the second half, so the pilot doubles as its own thermalisation check.
+
+    Returns ``(tau_sweeps, resolved)``. ``resolved`` is False when τ approaches
+    the length of the pilot, where the Madras–Sokal window has nothing to
+    integrate over and the estimate is meaningless.
+    """
+    out = ising_measure(
+        dual_beta(beta), shape,
+        n_replicas=PILOT_REPLICAS, n_measure=PILOT_LEN,
+        n_therm=PILOT_LEN // 2, n_skip=1,
+        device=device, seed=abs(hash(("pilot", round(beta, 6), shape))) % (2**31),
+        ordered_start=True, progress=True,
+    )
+    mg = out["magnetisation"].reshape(PILOT_REPLICAS, PILOT_LEN)
+    tau = float(np.mean([
+        float(integrated_autocorrelation_time(mg[r])[1])
+        for r in range(PILOT_REPLICAS)
+    ]))
+    return tau, tau < PILOT_LEN / 20.0
 
 
 def _run_once(beta, shape, n_therm, n_skip, n_measure, tag=0):
@@ -363,40 +405,42 @@ def _run_once(beta, shape, n_therm, n_skip, n_measure, tag=0):
 
 
 def measure(beta, shape, label):
-    """Run the dual Ising at β*, fit both operators, escalate if undersampled.
+    """Pilot for τ(M), then one production run at settings derived from it.
 
-    The escalation loop is the point: a first pass at the configured settings
-    measures τ(M), and if the gate fails the *same* β is re-run with n_therm and
-    n_skip taken from the measured τ (capped by MAX_ESCALATIONS). Cost therefore
-    scales with the β that need it rather than with the worst one, which matters
-    because τ(M) spans 25 → 1575 sweeps across this scan.
+    Two passes, never more. The pilot measures τ in sweeps at n_skip = 1 (see
+    :func:`pilot_tau` for why that is the only way to get an answer that does
+    not depend on the question), the production run uses
+    ``n_therm = 20τ``, ``n_skip = 2τ``, and ``n_measure`` shrinks if the budget
+    demands it. A cell whose τ the pilot cannot resolve, or whose cost exceeds
+    ``MAX_SWEEPS``, is reported as unresolved instead of escalated into.
     """
-    n_therm, n_skip, n_measure = N_THERM, N_SKIP, N_MEASURE
-    history = []
-    for attempt in range(MAX_ESCALATIONS + 1):
-        out, mg, taus = _run_once(beta, shape, n_therm, n_skip, n_measure, attempt)
-        tau_sw = taus["tau_int_mag"] * n_skip
-        ok, need_t, need_s = _sampling_verdict(tau_sw, n_therm, n_skip)
-        history.append(
-            {"n_therm": n_therm, "n_skip": n_skip, "n_measure": n_measure,
-             "tau_mag_sweeps": tau_sw, "ok": ok}
-        )
-        if ok or attempt == MAX_ESCALATIONS:
-            break
-        # Keep the chain length bounded: buying decorrelation is worth more than
-        # buying samples once the samples are correlated anyway.
-        n_therm, n_skip = need_t, need_s
-        n_measure = max(100, N_MEASURE // 2 ** (attempt + 1))
-        print(
-            f"    ↑ escalating β={beta}: τ(M)={tau_sw:.0f} sweeps →"
-            f" n_therm={n_therm} n_skip={n_skip} n_measure={n_measure}"
-        )
+    tau_sw, resolved = pilot_tau(beta, shape)
+    n_therm = max(N_THERM, int(math.ceil(THERM_TAU * tau_sw)))
+    n_skip = max(1, int(math.ceil(SKIP_TAU * tau_sw)))
+    n_measure = N_MEASURE
+    # Trim samples before declaring defeat: with decorrelated draws, fewer of
+    # them costs precision, whereas a short n_skip costs correctness.
+    while n_therm + n_measure * n_skip > MAX_SWEEPS and n_measure > 50:
+        n_measure //= 2
+    budget = n_therm + n_measure * n_skip
+    within_budget = budget <= MAX_SWEEPS
+    print(
+        f"    pilot β={beta}: τ(M)={tau_sw:.0f} sweeps"
+        f"{'' if resolved else ' [UNRESOLVED — longer than the pilot can measure]'}"
+        f" → n_therm={n_therm} n_skip={n_skip} n_measure={n_measure}"
+        f" ({budget} sweeps/chain)"
+    )
+    if not (resolved and within_budget):
+        print(f"    ✗ β={beta} on {label}: refusing to report"
+              f" ({'τ unresolved' if not resolved else 'over budget'})")
+
+    out, mg, taus = _run_once(beta, shape, n_therm, n_skip, n_measure)
 
     res = {"beta": beta, "beta_star": dual_beta(beta), "shape": shape,
-           "label": label, "sampling": history, "sampling_ok": history[-1]["ok"],
-           "n_therm": n_therm, "n_skip": n_skip, "n_measure": n_measure}
+           "label": label, "n_therm": n_therm, "n_skip": n_skip,
+           "n_measure": n_measure, "tau_mag_sweeps": tau_sw,
+           "tau_resolved": resolved, "sampling_ok": resolved and within_budget}
     res.update(taus)
-    res["tau_mag_sweeps"] = history[-1]["tau_mag_sweeps"]
 
     # Measurements that straddle a magnetisation sign flip are the ones the
     # sign-fixed σ correlator cannot represent: the wall array is flipped
@@ -406,6 +450,16 @@ def measure(beta, shape, label):
     # assumed negligible.
     flip = torch.sign(mg[:, 1:]) != torch.sign(mg[:, :-1])
     res["tunnel_rate"] = float(flip.double().mean())
+    # …but above TUNNEL_MAX the problem is not which measurements to drop. A box
+    # that tunnels freely is a box in which the broken phase is not cleanly
+    # broken, so the tunnelling mode enters the σ correlator as a genuine light
+    # state and inflates ξ. That is physics of the volume; more sweeps make it
+    # *better* sampled, not smaller. σ is marked unusable and ε_t — which is
+    # Z₂-even and therefore blind to the sector entirely — carries the cell.
+    res["sigma_ok"] = res["tunnel_rate"] <= TUNNEL_MAX
+    if not res["sigma_ok"]:
+        print(f"    ! β={beta} on {label}: tunnelling {res['tunnel_rate']:.1%}"
+              f" > {TUNNEL_MAX:.0%} — σ is not measuring the σ particle here")
     keep = torch.ones_like(mg, dtype=torch.bool)
     keep[:, 1:] &= ~flip
     keep[:, :-1] &= ~flip
@@ -490,6 +544,7 @@ def main():
                 f"  τ(M)={r['tau_mag_sweeps']:.0f}sw"
                 f" tun={r['tunnel_rate']:.3f}"
                 f" {'' if r['sampling_ok'] else '  ⚠ UNDERSAMPLED'}"
+                f"{'' if r['sigma_ok'] else '  ⚠ σ TUNNELS'}"
             )
 
     # ------------------------------------------------------- sampling gate
@@ -497,26 +552,39 @@ def main():
           f" mode of the broken phase)\n{'=' * 74}")
     print(f"{'volume':>9} {'β':>8} {'τ(M) sweeps':>12} {'n_therm/τ':>10}"
           f" {'n_skip/τ':>9} {'tunnel':>8} {'verdict':>14}")
-    any_bad = False
+    any_bad = any_tunnel = False
     for name, rows in results.items():
         for r in rows:
             tau = max(r["tau_mag_sweeps"], 1e-9)
             any_bad |= not r["sampling_ok"]
+            any_tunnel |= not r["sigma_ok"]
+            verdict = ("ok" if r["sampling_ok"] else "UNDERSAMPLED")
+            if not r["sigma_ok"]:
+                verdict = "σ TUNNELS"
             print(
                 f"{name:>9} {r['beta']:>8} {tau:>12.0f} {r['n_therm'] / tau:>10.1f}"
                 f" {r['n_skip'] / tau:>9.1f} {r['tunnel_rate']:>8.3f}"
-                f" {'ok' if r['sampling_ok'] else 'UNDERSAMPLED':>14}"
+                f" {verdict:>14}"
             )
     if any_bad:
         print(
-            "\n  ⚠ Cells above marked UNDERSAMPLED did not reach"
-            f" n_therm ≥ {THERM_TAU:.0f}τ(M) and n_skip ≥ {SKIP_TAU:.0f}τ(M)"
-            " even after escalation."
-            "\n    Their ξ is NOT usable: a cold start that has not relaxed"
-            " reads too ordered, which biases"
-            "\n    ⟨ss⟩ high and ξ(σ) long. Raise DGT_MAX_ESCALATE, or accept"
-            " that the matched volume"
-            "\n    cannot be sampled at that β with a local algorithm."
+            "\n  ⚠ UNDERSAMPLED: the pilot could not resolve τ(M) within"
+            f" {PILOT_LEN} sweeps, or reaching"
+            f"\n    n_therm ≥ {THERM_TAU:.0f}τ and n_skip ≥ {SKIP_TAU:.0f}τ"
+            f" would exceed DGT_MAX_SWEEPS = {MAX_SWEEPS}. Raise DGT_PILOT /"
+            "\n    DGT_MAX_SWEEPS, or accept that a local algorithm cannot"
+            " sample that cell."
+        )
+    if any_tunnel:
+        print(
+            f"\n  ⚠ σ TUNNELS: sign flips above {TUNNEL_MAX:.0%}. This is NOT a"
+            " sampling failure and more"
+            "\n    sweeps will not help — the box is small enough that the"
+            " broken phase is not cleanly"
+            "\n    broken, so the tunnelling mode enters the σ correlator as a"
+            " light state and inflates ξ."
+            "\n    Those cells fall back to the larger volume; ε_t (Z₂-even,"
+            " sector-blind) is unaffected."
         )
 
     # ---------------------------------------------------------------- checks
@@ -629,10 +697,15 @@ def accuracy_table(results, gauge):
     for b in sorted(by_beta):
         cells = by_beta[b]
         m, lg = cells.get("matched"), cells.get("large")
-        # guard 1: prefer matched, fall back to large if it is not sampled
-        if m is not None and m["sampling_ok"]:
+
+        def usable(r):
+            return r is not None and r["sampling_ok"] and r.get("sigma_ok", True)
+
+        # guard 1: prefer matched, fall back to large if it is not usable —
+        # which near β_c it will not be, because the matched box tunnels
+        if usable(m):
             truth, src = m, "matched"
-        elif lg is not None and lg["sampling_ok"]:
+        elif usable(lg):
             truth, src = lg, "large*"
         else:
             print(f"{b:>8}   no adequately sampled reference — skipped")
@@ -671,7 +744,8 @@ def accuracy_table(results, gauge):
     print(f"\n  closest to the dual ground truth: **{best}**")
     if any(
         by_beta[b].get("matched") is not None
-        and not by_beta[b]["matched"]["sampling_ok"]
+        and not (by_beta[b]["matched"]["sampling_ok"]
+                 and by_beta[b]["matched"]["sigma_ok"])
         for b in by_beta
     ):
         print("  * large-volume substitution used at one or more β — the"
@@ -702,7 +776,8 @@ def scaling_test(results):
     print(f"\n{'=' * 74}\nSCALING TEST — is the dual reproducing 3D Ising"
           f" criticality?\n{'=' * 74}")
     for name, rows in results.items():
-        ok = [r for r in rows if r["sampling_ok"] and np.isfinite(r["m"]["xi"])]
+        ok = [r for r in rows if r["sampling_ok"] and r["sigma_ok"]
+              and np.isfinite(r["m"]["xi"])]
         if len(ok) < 3:
             print(f"  {name}: fewer than 3 usable points — skipped")
             continue

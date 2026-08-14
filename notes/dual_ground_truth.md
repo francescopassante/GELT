@@ -346,16 +346,78 @@ Note this is a *second*, independent recovery of ν, and a stronger one than
 §7.1: there the bootstrap ν was an input and only the amplitude was fitted; here
 both are free and the answer still lands on 0.63.
 
-### 7.7 What the rerun must settle
+### 7.7 The rerun (2026-08-14, later): the gate was wrong, and one number moved
 
-1. **Matched-volume σ at β ≥ 0.756**, so the accuracy table has a same-box
-   yardstick and the finite-volume argument of §7.3 becomes a measurement. The
-   escalation should reach it; if `MAX_ESCALATIONS` is exhausted the honest
-   conclusion is that a local algorithm cannot sample that cell and a cluster
-   update is required.
-2. **β = 0.760 at large volume with a sound chain** (it was 3.6 τ), to confirm
-   the +10.4% scaling miss is the box and the marginal chain rather than
-   something real.
+The τ(M)-gated rerun of §7.4 was killed part-way. Two things came out of it, one
+embarrassing and one that closes a question.
+
+**The escalating gate cannot ever pass.** `integrated_autocorrelation_time`
+returns τ in units of *measurements*, and for a decorrelated chain it floors at
+½ (τ_int = ½ + Σρ with ρ ≡ 0). Converting with `τ_sweeps = τ_meas · n_skip` then
+gives τ_sweeps ≥ n_skip/2 **however well sampled the chain is**, so the condition
+`n_skip ≥ 2·τ_sweeps` reduces to `n_skip ≥ n_skip` — marginal by construction,
+failed by any noise, and every escalation doubles n_skip and therefore doubles
+τ_sweeps. The rerun escalated β = 0.756 to n_skip = 21014 and β = 0.760 to
+n_skip = 207361 (a 19-hour cell) chasing a fixed point that does not exist.
+Eight of nine cells had τ_meas ∈ [0.47, 0.62] — already decorrelated on the
+*first* pass.
+
+Fixed with a **pilot**: one short chain at `n_skip = 1`, where τ_int is directly
+in sweeps and cannot depend on the question being asked; then a single
+production run at `n_therm = 20τ`, `n_skip = 2τ`. Two passes, never more. A cell
+whose τ the pilot cannot resolve (τ > PILOT_LEN/20) or whose cost exceeds
+`MAX_SWEEPS` is reported unresolved rather than escalated into. Verified: the
+gate now lands on exactly 20.0 and 2.0 at every cell.
+
+**The matched volume is unavailable near β_c, for a physics reason.** Tunnelling
+on the matched box reaches 5.9% / 48% / 45% at β = 0.756 / 0.7585 / 0.760. That
+is not a sampling failure to be averaged away: a box in which the broken phase is
+not cleanly broken admits the tunnelling mode into the σ correlator as a genuine
+light state, which inflates ξ — visibly, since matched then reads *above* large
+(7.80 vs 6.02 at β = 0.7585) where finite volume can only squeeze. **More sweeps
+sample that mode better rather than removing it.** So §7.3's "closing it needs
+the matched-volume σ measurement" is withdrawn: that measurement does not exist
+at these couplings, the large-volume reference is the answer rather than a
+stopgap, and ε_t (Z₂-even, sector-blind) is unaffected throughout. `sigma_ok`
+now gates on the tunnelling rate and the accuracy table falls back automatically.
+
+**One number moved, and the headline weakens.** With proper thermalisation
+(n_therm up to 5957 against 1500) the large-volume ξ at β = 0.7585 came back at
+6.021 ± 0.078 against the first run's 6.355 ± 0.108 — a 2.5σ shift, the other
+three agreeing within 1.6σ. The direction is the expected one: an unrelaxed cold
+start is too ordered and reads ξ long, so the **new value is the better one**.
+Recomputed:
+
+| operator | new truth | first run |
+|---|---|---|
+| classical | **−8.9%** | −11.1% |
+| attention, trained | **+3.8%** | +1.2% |
+| attention, random | **−8.0%** | −10.2% |
+
+The conclusion survives — the trained arm is the only one consistent with the
+exact answer, and the two low-A₀ arms are both ~8–9% low — but it is a smaller
+effect than §7.3 first reported, and β = 0.752 (classical 3.6σ low) does most of
+the discriminating. Paper and tables updated to the new numbers.
+
+The scaling test also weakens: anchoring at β = 0.745 gives −1.8%, −0.8%, −5.1%
+rather than the first run's +0.1%, −1.2%, −0.9%. Worth recording *why* that
+anchor is a poor choice — it is the point furthest from β_c, so it minimises
+finite volume but **maximises corrections to scaling**, which the first version
+of this note did not weigh. A two-parameter fit on the same four points gives
+ν = 0.60 against the bootstrap 0.630. The test still establishes that the dual
+sits on the Ising scaling curve to a few percent, which is the precision the
+comparison needs; it should not be called a knockout.
+
+### 7.8 What the rerun must settle
+
+1. ~~**Matched-volume σ at β ≥ 0.756**~~ — **withdrawn, see §7.7.** That
+   measurement does not exist at these couplings: the box tunnels, and the
+   tunnelling mode is a real light state in the σ channel rather than a
+   sampling artefact. A cluster algorithm would sample it faster and get the
+   same inflated ξ. The large-volume reference is the answer.
+2. **β = 0.760 at large volume with a sound chain**, to confirm the scaling miss
+   there is the box rather than something real. Low priority — the point is
+   excluded from every conclusion.
 3. Tighter gauge-side errors would help more than anything on the dual side: at
    0.745 and 0.756 the comparison is limited by ±0.13–0.30 on the *gauge* ξ, not
    by the reference.
