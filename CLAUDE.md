@@ -91,7 +91,20 @@ removed pending rewrites; the spec now lives across the notes below.)
   the big one was that `gevp_ground_vector`'s 1e-12 eigenvalue floor let the
   GEVP select a near-null direction of C(t0) **at every β** (correct masses,
   36–87% errors) — `z2_beta_scan.py` runs the same pathology and survived on
-  N=2000, so its top two points are superseded. Open: finite volume at ξ ≳ L/4.
+  N=2000, so its top two points are superseded.
+  **§8 (2026-08-14) — β = 0.760 is dropped and the finite-volume question is
+  closed** by the dual ground truth: its true ξ ≈ 10 against L = 24, so all
+  three operators read 50–58% low together (measuring the box, not the gap), and
+  it was the entire source of the non-monotonic excursion. Dropping it costs no
+  dynamic range (β = 0.7585 already carries the largest clean ξ, 6.36) and
+  raises Pearson(ξ_A, **exact truth**) from 0.744 to **0.9946**. §8.1 withdraws
+  §7's ν caveat: the "effective exponent 0.39, not 0.63" was that one point —
+  the same fit on four β gives 0.622 (classical) / 0.656 (attention) against the
+  dual's 0.626. The **non-monotonic-excursion argument must be deleted from the
+  paper** (§8.2 lists all five required changes). Figures/tables regenerate
+  offline with `ZAC_REPLOT=<dump.pt> python scripts/z2_attention_correlator.py`
+  — no GPU, no ensembles, no checkpoints, since dropping a β changes no per-β
+  number, only the aggregates.
 - `notes/dual_ground_truth.md` — **design record for closing the one question
   `attention_as_operator.md` §6.1.2 leaves open**: the trained attention field
   reads ξ 21% above the classical operator, and that can only be called a

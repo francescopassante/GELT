@@ -318,7 +318,35 @@ is an artefact of the volume, shared by both operators because both were
 measured on the same L = 24 configurations. What survives — and is stronger — is
 §7.3.
 
-### 7.6 What the rerun must settle
+### 7.6 Consequence: the scan does see 3D Ising scaling
+
+`attention_as_operator.md` §7 recorded, and the paper repeats, that the
+effective exponent from ξ ~ (β_c−β)^(−ν) is 0.35–0.48 rather than the 3D Ising
+0.630, concluding "ξ ≤ 5.6 at L = 24 is not the asymptotic scaling regime". That
+diagnosis was wrong, and the dual identifies why: **it was one finite-volume
+point at the end of the lever arm.** Same fit, same code, β = 0.760 removed:
+
+| arm | ν (five β) | ν (four β) |
+|---|---|---|
+| classical | 0.426 | **0.622** |
+| attention, trained | 0.480 | **0.656** |
+| attention, random | 0.420 | 0.592 |
+| **dual ground truth** | 0.631 | **0.626** |
+
+The dual arm returns 0.631 *either way* — it is the only arm measured at a
+volume that can hold ξ = 11 — which is what distinguishes "outside the scaling
+window" (would move the dual too) from "one point outside the box" (does not).
+
+Quote it as agreement with the dual arm fitted identically on the same four
+couplings, never as a measurement of ν: four points, a diagonally-weighted line,
+and corrections to scaling at t* ≈ 0.035 are all real. But the standing claim
+that the scan cannot see 3D Ising scaling is false.
+
+Note this is a *second*, independent recovery of ν, and a stronger one than
+§7.1: there the bootstrap ν was an input and only the amplitude was fitted; here
+both are free and the answer still lands on 0.63.
+
+### 7.7 What the rerun must settle
 
 1. **Matched-volume σ at β ≥ 0.756**, so the accuracy table has a same-box
    yardstick and the finite-volume argument of §7.3 becomes a measurement. The

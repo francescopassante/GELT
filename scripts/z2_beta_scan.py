@@ -80,9 +80,20 @@ BETA_C = 0.7614
 # Calibrating Ising scaling ξ ~ |β_c − β|^(−ν), ν ≈ 0.63, against that
 # measurement puts ξ ≈ 3 at β_c − β ≈ 0.004 and ξ ≈ 6 at ≈ 0.0016 — so the
 # entire usable window is the last ~0.015 below β_c, and the scan has to sit
-# inside it. The closest point is held at 0.7600 (ξ ≈ 6 ≈ L/4): nearer than
-# that and finite volume bends the mass back up, as it did at SU(2) β=2.7.
-BETAS = [0.7450, 0.7520, 0.7560, 0.7585, 0.7600]
+# inside it. The closest point was held at 0.7600 on the estimate ξ ≈ 6 ≈ L/4:
+# nearer than that and finite volume bends the mass back up, as it did at
+# SU(2) β=2.7.
+#
+# **That guard failed, and it failed because it was set with the number it was
+# supposed to protect.** The dual Ising ground truth (notes/dual_ground_truth.md
+# §7.5) puts the true ξ(0.7600) at ≈10, not 6 — the ξ ≈ 6 came from the
+# contaminated classical operator, which reads low, so the guard was computed
+# from an underestimate of exactly the quantity it was bounding. β = 0.7600 is
+# therefore measuring the box (everything 50–58% low) and is dropped;
+# β = 0.7585 (true ξ = 6.36) is the closest point L = 24 can actually hold.
+# The lesson generalises: a finite-volume guard has to be evaluated against a
+# ξ that is not itself contaminated.
+BETAS = [0.7450, 0.7520, 0.7560, 0.7585]
 
 L = 24  # spatial extent; keeps ξ ≲ L/4 = 6 measurable without finite volume
 D = 3  # 2 spatial + 1 temporal. Time is axis 0

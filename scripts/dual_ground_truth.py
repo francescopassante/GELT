@@ -141,6 +141,12 @@ device = (
 # land on exactly the couplings the gauge measurements were made at.
 # --------------------------------------------------------------------------
 BETAS = [0.7450, 0.7520, 0.7560, 0.7585, 0.7600]
+# β = 0.7600 is retained *here* although it is dropped from the gauge-side scan
+# (see z2_attention_correlator.py): the dual is what established that its true
+# ξ ≈ 10 outgrows L = 24, and re-measuring it each run is what keeps that
+# conclusion current. It carries no weight in the accuracy table, which excludes
+# any β whose ξ exceeds L/4 on the gauge lattice.
+XI_OVER_L_MAX = 0.25  # gauge-side finite-volume guard for the accuracy table
 
 # Λ = (Lt, L, L), time on axis 0, matching the gauge convention.
 VOLUMES = {
@@ -540,38 +546,8 @@ def main():
         )
 
     # ------------------------------------------------------------- the table
-    if gauge and "matched" in results:
-        print(f"\n{'=' * 74}\nACCURACY vs the matched-volume dual ground truth"
-              f"\n{'=' * 74}")
-        print(
-            f"{'β':>8} {'ξ dual(σ)':>14} {'ξ classical':>14} {'ξ attn train':>14}"
-            f" {'ξ attn rand':>14}"
-        )
-        dev = {"classical": [], "trained": [], "random": []}
-        for r in results["matched"]:
-            g = gauge.get(round(r["beta"], 4), {})
-            t = r["m"]["xi"]
-            line = f"{r['beta']:>8} {t:>8.3f}±{r['m']['xi_err']:.3f}"
-            for k in ("classical", "trained", "random"):
-                if k in g:
-                    line += f" {g[k][0]:>8.3f}±{g[k][1]:.3f}"
-                    dev[k].append((g[k][0] - t) / t)
-                else:
-                    line += f" {'—':>14}"
-            print(line)
-        print(f"\n{'operator':>14} {'mean fractional deviation from truth':>40}")
-        for k in ("classical", "trained", "random"):
-            if dev[k]:
-                a = np.array(dev[k])
-                print(
-                    f"{k:>14} {a.mean():>+20.1%}  (rms {np.sqrt((a**2).mean()):.1%},"
-                    f" worst {a[np.argmax(abs(a))]:+.1%})"
-                )
-        best = min(
-            (k for k in dev if dev[k]),
-            key=lambda k: np.sqrt((np.array(dev[k]) ** 2).mean()),
-        )
-        print(f"\n  closest to the dual ground truth: **{best}**")
+    if gauge and results:
+        accuracy_table(results, gauge)
 
     # ------------------------------------------------------- finite volume
     if len(results) == 2:
@@ -602,6 +578,106 @@ def main():
     )
     plot(results, gauge)
     print(f"\nwrote {RESULTS}/dual_ground_truth.{{png,pt}}")
+
+
+def accuracy_table(results, gauge):
+    """The comparison the whole script exists for, with two guards.
+
+    **Guard 1 — the truth has to be sampled.** The matched volume is the right
+    yardstick in principle (the gauge operators measured *that* box, so an
+    infinite-volume reference would charge them for finite volume as if it were
+    contamination). But it is also the volume where sector tunnelling is worst,
+    so a matched cell that fails the τ(M) gate is replaced by the large-volume
+    number and the substitution is printed. A silently mixed yardstick would be
+    the worst of both.
+
+    **Guard 2 — the gauge lattice has to hold the correlation length.** A β
+    whose *true* ξ exceeds `XI_OVER_L_MAX·L` on the gauge lattice is not a
+    measurement of a mass gap there, so it cannot discriminate between
+    operators: every operator is measuring the box and they all read ~50% low
+    together. β = 0.7600 is exactly that case (true ξ ≈ 10 against L = 24) and
+    excluding it is why the gauge-side scan now stops at 0.7585. This guard is
+    evaluated against the *dual* ξ, deliberately: the original L/4 guard in
+    z2_beta_scan.py was computed from the contaminated classical ξ, i.e. from an
+    underestimate of the very quantity it was bounding, which is why it passed a
+    point it should have rejected.
+    """
+    L_gauge = None
+    for rows in results.values():
+        for r in rows:
+            if r["label"] == "matched":
+                L_gauge = min(r["shape"][1:])
+                break
+    if L_gauge is None:
+        L_gauge = 24
+    xi_cap = XI_OVER_L_MAX * L_gauge
+
+    by_beta = {}
+    for name, rows in results.items():
+        for r in rows:
+            by_beta.setdefault(round(r["beta"], 4), {})[name] = r
+
+    print(f"\n{'=' * 74}\nACCURACY vs the dual ground truth\n{'=' * 74}")
+    print(f"  gauge lattice L = {L_gauge}; β excluded when true ξ >"
+          f" {XI_OVER_L_MAX}·L = {xi_cap:.1f}")
+    print(
+        f"\n{'β':>8} {'ξ true':>15} {'src':>8} {'classical':>15}"
+        f" {'attn trained':>15} {'attn random':>15}"
+    )
+    dev = {"classical": [], "trained": [], "random": []}
+    excluded = []
+    for b in sorted(by_beta):
+        cells = by_beta[b]
+        m, lg = cells.get("matched"), cells.get("large")
+        # guard 1: prefer matched, fall back to large if it is not sampled
+        if m is not None and m["sampling_ok"]:
+            truth, src = m, "matched"
+        elif lg is not None and lg["sampling_ok"]:
+            truth, src = lg, "large*"
+        else:
+            print(f"{b:>8}   no adequately sampled reference — skipped")
+            continue
+        t, te = truth["m"]["xi"], truth["m"]["xi_err"]
+        # guard 2: can the gauge lattice hold this ξ at all?
+        if t > xi_cap:
+            excluded.append((b, t))
+            continue
+        g = gauge.get(b, {})
+        line = f"{b:>8} {t:>9.3f}±{te:.3f} {src:>8}"
+        for k in ("classical", "trained", "random"):
+            if k in g and np.isfinite(g[k][0]):
+                d = 100 * (g[k][0] - t) / t
+                sig = (g[k][0] - t) / math.hypot(g[k][1], te)
+                line += f" {d:>+8.1f}%({sig:>+4.1f}σ)"
+                dev[k].append((g[k][0] - t) / t)
+            else:
+                line += f" {'—':>15}"
+        print(line)
+
+    for b, t in excluded:
+        print(f"{b:>8} {t:>9.3f}   EXCLUDED — true ξ exceeds {xi_cap:.1f};"
+              f" the gauge measurement there is the box, not the gap")
+
+    if not any(dev.values()):
+        return
+    print(f"\n{'operator':>16} {'mean dev':>10} {'rms':>8} {'worst':>9}")
+    for k in ("classical", "trained", "random"):
+        if dev[k]:
+            a = np.array(dev[k])
+            print(f"{k:>16} {a.mean():>+9.1%} {np.sqrt((a**2).mean()):>8.1%}"
+                  f" {a[np.argmax(abs(a))]:>+9.1%}")
+    best = min((k for k in dev if dev[k]),
+               key=lambda k: np.sqrt((np.array(dev[k]) ** 2).mean()))
+    print(f"\n  closest to the dual ground truth: **{best}**")
+    if any(
+        by_beta[b].get("matched") is not None
+        and not by_beta[b]["matched"]["sampling_ok"]
+        for b in by_beta
+    ):
+        print("  * large-volume substitution used at one or more β — the"
+              " comparison there is against")
+        print("    the infinite-volume gap, which can only make the gauge"
+              " operators look worse, not better.")
 
 
 def scaling_test(results):

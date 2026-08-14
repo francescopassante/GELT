@@ -427,22 +427,104 @@ Consequences for how this is written up:
 
 ## 7. Known limitations, stated up front
 
+Two of these were resolved by the dual ground truth on 2026-08-14; they are
+struck rather than deleted so the reasoning that produced them stays traceable.
+See §8.
+
 - Z₂ in 3D, one volume, one lattice family — a statement about the *method*,
-  not about SU(N), exactly as in §6.1.
+  not about SU(N), exactly as in §6.1. **Still stands.**
 - The R=12 operators are of uneven quality (`m_net/m_class` 1.18 → 2.10). The
   cross-evaluation design makes this a nuisance parameter rather than a
-  confound, but the diagonal alone would still inherit it.
-- The effective exponent from ξ ~ (β_c − β)^(−ν) on these five points is
+  confound, but the diagonal alone would still inherit it. **Still stands**
+  (the quoted results are the retrained R=6 set).
+- ~~The effective exponent from ξ ~ (β_c − β)^(−ν) on these five points is
   **≈ 0.39**, not the 3D Ising ν = 0.63: ξ ≤ 5.3 at L = 24 is not the
   asymptotic scaling regime. The exponent may be quoted only as a
   *consistency* check between the attention and the classical scan on the same
   points — never as a measurement of ν. With the ξ(0.7585) > ξ(0.760) excursion
   now confirmed on both operators, it should probably not be quoted at all
-  until the volume question is settled.
-- **Finite volume at the top two β is the open physics question.** ξ = 5.6 and
+  until the volume question is settled.~~ **Superseded — see §8.1.** The
+  diagnosis was wrong: it was not "not the asymptotic regime", it was one
+  finite-volume point at the end of the lever arm. Drop it and the fit returns
+  0.622 / 0.656 against the dual's 0.626.
+- ~~**Finite volume at the top two β is the open physics question.** ξ = 5.6 and
   4.7 (classical) against L/4 = 6 puts both points at or past
   `z2_beta_scan.py`'s own guard, and the non-monotonicity is what a
   volume-squeezed pair looks like. The test is L = 24 → 32 — but GELT is built
   per-L, so that means new ensembles *and* new checkpoints at all five β
   (≈2.4× per sweep, ~40 h wall clock), not one point. Worth it only if the
-  excursion is to be reported as physics rather than flagged as unresolved.
+  excursion is to be reported as physics rather than flagged as unresolved.~~
+  **Resolved — see §8.** The test was not L = 24 → 32 and cost no gauge sweeps
+  at all: the dual settled it, β = 0.760 was outside the box (true ξ ≈ 10, not
+  the 4.7 the contaminated operator reported — which is *why* the L/4 guard
+  passed a point it should have rejected), and β = 0.7585 shows no detectable
+  squeeze in the tunnelling-immune ε_t operator.
+
+## 8. Amendment (2026-08-14): β = 0.760 is dropped
+
+The dual Ising ground truth (`notes/dual_ground_truth.md`) settled §7's open
+questions, and the answer is that **β = 0.7600 was never measuring a mass gap**:
+its true ξ ≈ 10 against L = 24, so classical (4.72), trained (5.60) and random
+(4.80) are all 50–58% low together, measuring the box. It is dropped from
+`BETAS` in `z2_attention_correlator.py` and `z2_beta_scan.py`, and the operator
+trained on that ensemble goes with it (`net_names` iterates `BETAS`, so the
+`train@0.76` row of the transfer matrix disappears too — correct, since its
+training data was the compromised ensemble).
+
+Recomputed offline from the saved dumps (`ZAC_REPLOT`; no per-β number changes,
+the ensembles were always measured independently):
+
+| statistic | five β (published) | four β |
+|---|---|---|
+| Pearson(ξ_A, ξ_classical) | 0.9966 | **0.9965** |
+| Pearson(ξ_A, **exact truth**) | 0.7440 | **0.9946** |
+| dynamic range in ξ | ×2.96 | **×2.96** |
+| monotonic in β | no | **yes** |
+| mean deviation from truth | −9.0% | **+1.2%** |
+| cross-matrix ensemble/training ratio | 11.9× | **12.3×** |
+
+**Nothing is lost.** β = 0.7585 already carried the largest clean ξ (true value
+6.36, not the 5.59 the contaminated classical operator reported), so the range
+is unchanged. What is gained is that ξ_A now tracks the *exact* correlation
+length at 0.9946 rather than tracking a contaminated operator at 0.9966 — a
+better sentence, and one that no longer needs the excursion to carry it.
+
+### 8.1 §7's ν caveat was β = 0.760, and it is withdrawn
+
+§7 said the effective exponent from these points is "≈ 0.39, not the 3D Ising
+ν = 0.63", and the paper's Limitations repeats it as 0.35–0.48. **That was one
+bad point at the end of the lever arm.** The same weighted log-log fit, on the
+same code, with β = 0.760 removed:
+
+| arm | ν (five β) | ν (four β) |
+|---|---|---|
+| classical | 0.426 | **0.622** |
+| attention, trained | 0.480 | **0.656** |
+| attention, random | 0.420 | 0.592 |
+| **dual ground truth** | 0.631 | **0.626** |
+
+The dual arm gives 0.631 either way — it was never fooled, because at L = 48 it
+can hold ξ = 11 — which is what identifies the finite volume as the cause rather
+than "not the asymptotic regime".
+
+Quote this as *agreement with the dual arm fitted identically on the same four
+couplings* (0.622 and 0.656 against 0.626), **not** as a measurement of ν: four
+couplings, a diagonally-weighted line, and corrections to scaling at t* ≈ 0.035
+are all real. But the standing claim that the scan cannot see 3D Ising scaling
+is false and should be removed from the paper.
+
+### 8.2 What the paper must change
+
+1. Drop β = 0.760 from every table and figure of §"The attention map as a
+   lattice operator".
+2. **Delete the non-monotonic-excursion argument.** The dual is monotonic at
+   both volumes; the excursion was finite volume, inherited by both operators
+   because both were measured on the same L = 24 configurations. §7.3 of
+   `dual_ground_truth.md` replaces it and is a stronger argument.
+3. Replace the ν limitation with §8.1.
+4. Add the accuracy result: against exact ground truth the trained attention
+   field is unbiased (+1.2%) where the classical basis and the untrained network
+   read ~11% and ~10% low.
+5. `attention_as_operator.md` §6.1's headline framing survives unchanged; only
+   the fifth row of its table goes.
+

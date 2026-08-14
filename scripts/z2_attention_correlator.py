@@ -132,7 +132,15 @@ for _d in ("results/sampler", "results/glueball", "results/attention",
 
 # ── Tunables ──────────────────────────────────────────────────────────────────
 BETA_C = 0.7614
-BETAS = [0.7450, 0.7520, 0.7560, 0.7585, 0.7600]
+# β = 0.7600 was dropped on 2026-08-14. The dual Ising ground truth
+# (notes/dual_ground_truth.md §7.5) puts the true ξ there at ≈10 against L = 24,
+# so that ensemble is measuring the box and not a mass gap: classical 4.72,
+# trained 5.60, truth ≈10.1 — everything 50–58% low. It is also the entire
+# source of the ξ(0.7585) > ξ(0.760) excursion, which the dual reproduces at
+# neither volume. Dropping it costs **no dynamic range** (β = 0.7585 already
+# carries the largest clean ξ, 6.36) and raises Pearson(ξ_A, ξ_true) from 0.744
+# to 0.995. Restoring it requires L ≥ 48, not more statistics.
+BETAS = [0.7450, 0.7520, 0.7560, 0.7585]
 
 # Training used configs[:N_USE]; everything from there on is unseen by every
 # checkpoint, so the SAME evaluation slice is clean for all 25 matrix cells.
@@ -149,6 +157,9 @@ if "ZAC_N_USE" in os.environ:
 CHUNK = int(os.environ.get("ZAC_CHUNK", 1))
 CROSS = os.environ.get("ZAC_CROSS", "1") == "1"
 SMOKE = os.environ.get("ZAC_SMOKE", "0") == "1"
+# Comma-separated saved dumps to re-report and re-plot offline (no GPU, no
+# ensembles, no checkpoints). See replot().
+REPLOT = os.environ.get("ZAC_REPLOT", "")
 
 # Matched to z2_beta_scan.py — the classical ξ these numbers are compared to
 # was produced with exactly these conventions.
@@ -859,9 +870,19 @@ def report(rows):
 def fit_exponent(betas, xis, errs):
     """Effective ν from ξ ~ (β_c − β)^(−ν), weighted log-log line.
 
-    Quotable ONLY as a consistency check between the attention and the classical
-    scan on the same points: ξ ≤ 5.3 at L = 24 is not the asymptotic regime and
-    this returns ≈ 0.39, not the 3D Ising 0.63.
+    **Updated 2026-08-14.** This used to return ≈ 0.39–0.48 against the 3D Ising
+    ν = 0.629971, and the paper recorded that as a limitation ("not the
+    asymptotic scaling regime, should not be read as a measurement of ν"). The
+    diagnosis was wrong. The whole discrepancy was β = 0.7600, whose true ξ ≈ 10
+    outgrows L = 24 (notes/dual_ground_truth.md §7.5): a point pinned ~55% low at
+    the end of the lever arm drags the slope down hard. With it dropped the same
+    fit returns **0.622 (classical), 0.656 (attention), 0.592 (random)**.
+
+    Still a *consistency* check rather than a measurement of ν — four couplings,
+    a diagonal-weighted line, and corrections to scaling at t* ≈ 0.035 are all
+    real — but the honest comparator is now available: the dual ground truth,
+    fitted the same way on the same four couplings, gives **0.626**. The gauge
+    arms agree with it. Quote the agreement, not the number.
     """
     b, x, e = np.asarray(betas), np.asarray(xis), np.asarray(errs)
     ok = np.isfinite(x) & (x > 0) & np.isfinite(e) & (e > 0)
@@ -971,7 +992,7 @@ def plot(rows):
     a.invert_xaxis()
     a.set_xlabel(r"$\beta_c - \beta$")
     a.set_ylabel(r"$\xi$")
-    a.set_title(r"$\xi_{\rm eff}$ scaling (NOT the asymptotic $\nu$ = 0.63)")
+    a.set_title(r"$\xi$ scaling — vs 3D Ising $\nu$ = 0.630 (dual fit: 0.626)")
     a.legend()
 
     # (1,1) how good an operator the gaze is, and the null that must be flat.
@@ -1061,7 +1082,41 @@ def selftest():
     return res
 
 
+def replot(path):
+    """Re-run report() and plot() on a saved dump, filtered to the current BETAS.
+
+    Dropping a β does not change any per-β number — the ensembles are measured
+    independently — so re-running the GPU pass to remove one would be pure
+    waste. What changes is the aggregates (Pearson, slope, dynamic range, the
+    figure), and `report`/`plot` are pure functions of `rows`. This path is the
+    offline analogue of `fit_glueball_overlap.py`: no GPU, no ensembles, no
+    checkpoints, seconds.
+
+    `CROSS` is taken from the dump's own metadata rather than the environment,
+    because it decides whether `report` prints the cross-evaluation block and
+    the dump knows which kind of run produced it.
+    """
+    global CROSS, OUT_PNG
+    d = torch.load(path, map_location="cpu", weights_only=False)
+    CROSS = bool(d.get("meta", {}).get("cross", CROSS))
+    OUT_PNG = path.replace(".pt", ".png")
+
+    keep = {round(b, 4) for b in BETAS}
+    rows = [r for r in d["rows"] if round(r["beta"], 4) in keep]
+    dropped = [r["beta"] for r in d["rows"] if round(r["beta"], 4) not in keep]
+    print(f"replot {path}: {len(rows)} of {len(d['rows'])} ensembles"
+          + (f"  (dropped {dropped})" if dropped else ""))
+    if not rows:
+        raise SystemExit("no ensembles survive the BETAS filter")
+    report(rows)
+    plot(rows)
+
+
 def main():
+    if REPLOT:
+        for p in REPLOT.split(","):
+            replot(p.strip())
+        return
     if SMOKE:
         selftest()
     print(f"device: {device} | Z₂ 3D {tz.L}²×{tz.LT} | R = {tz.R} | "
