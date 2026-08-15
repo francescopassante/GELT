@@ -298,6 +298,122 @@ outcome lands, the whole study deletes in one command and leaves no trace.
 
 ---
 
-## Result
+## Result (2026-08-16)
 
-*(not yet run)*
+`ZRI_N_EVAL=1200` on the four production ensembles, plus `dual_spin2.py` at
+32 × 500 × 50 on 96×48². **Pre-registered outcome 1 for the projection; outcome
+5 (a null) for the spin-2 channel.**
+
+### Every control passed exactly
+
+Classical smeared-plaquette field through the same projector: non-A₁ fraction
+`0.00e+00` at all four β and all three arms. Random and no-RoPE output fields:
+A₁ = 1.0000, breaking 0.001. Schur closure 1.0000–1.0012. The `no RoPE + trivial
+T` row of the attribution table is 0.0000 for the trained network too — a
+structural identity (§5.1), and the strongest end-to-end validation available.
+
+### The trained operator is 14–28% non-scalar
+
+Site-level variance fraction of the network's own operator field:
+
+| β | A₁ | A₂ | B₁ | B₂ | **E** |
+|---|---|---|---|---|---|
+| 0.7450 | 0.747 | 0.009 | 0.022 | 0.090 | **0.132** |
+| 0.7520 | 0.718 | 0.011 | 0.021 | 0.081 | **0.169** |
+| 0.7560 | 0.860 | 0.005 | 0.013 | 0.029 | **0.095** |
+| 0.7585 | 0.838 | 0.005 | 0.016 | 0.072 | **0.069** |
+
+Random and no-RoPE arms: 1.0000 / 0.0000 / 0.0000 / 0.0000 / 0.0000.
+
+**The dominant non-scalar irrep is E — spin 1, not spin 2.** That has a
+mechanism, and it is the one §5.1 identified: E is a *vector* breaking, and the
+anchoring mismatch is a half-lattice-vector offset between where `W` sits and
+where `T` sits. The attribution table (which is a different code path) already
+said the anchoring term is the one that reaches the operator while RoPE does
+not. The two agree, having been measured independently.
+
+### The A₁ projection is a free, significant improvement
+
+Correlated blocked jackknife of the difference on shared configurations:
+
+| β | operator ΔA₀ | attention-channel ΔA₀ |
+|---|---|---|
+| 0.7450 | +0.015 ± 0.005 (3.0σ) | +0.035 ± 0.007 (5.1σ) |
+| 0.7520 | +0.008 ± 0.003 (2.6σ) | +0.038 ± 0.006 (6.3σ) |
+| 0.7560 | +0.017 ± 0.002 (7.9σ) | +0.072 ± 0.005 (13.4σ) |
+| 0.7585 | +0.017 ± 0.002 (11.4σ) | +0.050 ± 0.003 (17.2σ) |
+
+with the random and no-RoPE arms at exactly `0.000 ± 0.000` on the output field
+— the projection cannot improve an operator that is already scalar, and it
+does not.
+
+**ξ does not move** (2.27→2.26, 3.07→3.09, 4.92→4.91, 6.54→6.52), so the removed
+content is a **contact term**: it lives in C(0) and is gone by Δ=2. That is what
+a channel at m ≈ 1 against a gap of 0.16 has to look like, and it is why the
+effect on A₀ is small (+0.017) while the site-level contamination is large
+(14–28%): the zero-momentum sum already suppresses non-scalar content by
+≈(ξ_A/ξ_B)².
+
+So the published A₀ and ξ_A in `attention_as_operator.md` §6.1 are **confirmed,
+not overturned** — the projection corrects them upward by ~0.017 and leaves every
+mass unchanged. The right framing is "explicit A₁ projection is a free
+improvement", not "the published numbers were wrong".
+
+### The learned anisotropy is not a fixed filter
+
+Kernel-level split of ᾱ(Δ), averaged over layers and heads: trained and random
+are indistinguishable (A₁ ≈ 0.22–0.27, E ≈ 0.53–0.62 for both; no-RoPE
+A₁ ≈ 0.87–0.88 with B₁ exactly 0.0000). Training adds essentially no fixed
+anisotropic filter beyond what RoPE puts there at initialisation. The trained
+field's 14–28% therefore comes from the **configuration-dependence** of the
+attention, not from a learned spurion — which is the more interesting of the two
+options §4 laid out, and the one that cannot be fixed by re-initialising.
+
+### The spin-2 channel: a decisive null, for a reason
+
+Not "unconverged" — **there is no state in it.** The dual, across β:
+
+```
+m_σ    0.473  0.332  0.235  0.160     falls 2.96×
+m_B    1.296  1.110  0.961  0.871     falls 1.49×
+ratio  2.74   3.34   4.09   5.46      rises monotonically
+```
+
+A physical state scales with the correlation length and the ratio would be flat.
+Instead **ξ_B ≈ 0.77–1.15 lattice spacings at every β**: the B correlator dies
+within one spacing whatever the physics is doing. The smearing ladder never
+plateaus because ξ_B tracks the smearing radius (0.62 / 0.75 / 0.92 / 1.15 at
+n = 2 / 4 / 8 / 16), not a mass. The gauge side reproduces the same pathology
+(m_B = 1.49, 1.37, 1.11, 1.06 — falling 1.4× while the gap falls 2.9×), with
+ragged m_eff and no plateau.
+
+**The non-scaling of a mass across β is the test that turns "unconverged" into
+"absent", and it is cheap.** Use it before investing in any channel that will not
+plateau. Whether 3D Ising has a 2⁺⁺ at all is not settled by this — what is
+settled is that a bond-energy difference (dual) and an attention-row quadrupole
+(gauge) both fail to couple to one, so `A₀` quoted for those fits is the
+ground-state fraction *of a contact term* and must not be read as operator
+quality.
+
+### Cost
+
+~2 h for the gauge scan, ~25 min per β for the dual on a V100. The dual's
+scalar channel reproduces the established ground truth (ξ_σ = 6.266 ± 0.10 at
+β = 0.7585 against the 6.36 recorded in `attention_as_operator.md` §8), which is
+what licenses reading anything off the rest of it.
+
+### What this does and does not license
+
+- **Do** report: the block is not rotation-equivariant; the defect is the
+  W/T anchoring mismatch (RoPE is larger at init but does not reach the
+  operator); it costs the trained operator 14–28% of its site-level variance and
+  ~0.017 of A₀; explicit A₁ projection recovers that at 3–17σ for free.
+- **Do** correct `topological_localization.md` §6.1's reading of the SU(2) heads
+  locked to a fixed spatial axis: a substantial part of that is architectural and
+  present at initialisation, not learned structure.
+- **Do not** report a 2⁺⁺ mass from either side, and do not quote A₀ for any B or
+  E channel fit as operator quality.
+- **Do not** invest in a GEVP over the smearing ladder, an equivariant
+  re-architecture, or a retrain: the whole defect is worth 0.017 in A₀, so
+  removing it at the source buys about the same as projecting after the fact,
+  and projection is free.
