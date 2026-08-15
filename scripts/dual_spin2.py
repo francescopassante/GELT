@@ -40,10 +40,29 @@ that the matched 48×24² volume tunnels between magnetisation sectors at 6–48
 for β ≥ 0.756, which is a real light state in the σ channel and not something
 more sweeps can fix.
 
-Run:
+Run (``-u``: without it stdout block-buffers when piped while tqdm writes to
+stderr, so the bars appear ahead of the prints and the log reads out of order):
 
-    python -u scripts/dual_spin2.py          # ~30 min on a V100
+    python -u scripts/dual_spin2.py
     DS2_SMOKE=1 python -u scripts/dual_spin2.py   # 2 min plumbing check
+
+**Cost, and how to tell whether it is on the GPU.** Each β needs
+``N_THERM + N_MEASURE·N_SKIP`` = 26,500 sweeps of a 32 × 96 × 48 × 48 spin array.
+A sweep is ~24 elementwise kernels over 7.07M spins: on a V100 that is ~1 ms, so
+expect order 10² sweeps/s and a few minutes per β. At ~17 sweeps/s — the CPU rate
+for this size — it is 25 min per β and ~1.8 h for the scan. The header line
+prints the device; if it says ``cpu`` that is why. The measurement bar ticks once
+per ``N_SKIP`` sweeps, so it looks frozen on CPU even when it is fine.
+
+There is also a **silent fit phase** after each β: ``JACK_BLOCK`` = 40 on
+32 × 500 = 16,000 measurements is 400 jackknife replicas × 12 operators, each
+recomputing the correlator over ~16k rows, with no progress bar. Minutes on CPU.
+
+If it has to be cut, ``DS2_MEASURE`` is the linear wall-time knob and
+``DS2_REPLICAS`` is linear on CPU only (replicas are batched, hence nearly free
+on a GPU). Cut those before ``DS2_SKIP``: n_skip is set against the
+*magnetisation* autocorrelation, and under-skipping there biases ⟨ss⟩ high and
+shows up as a failure of the duality check — see ``gelt.ising.heatbath_sweep``.
 
 Environment overrides: ``DS2_REPLICAS``, ``DS2_MEASURE``, ``DS2_SKIP``,
 ``DS2_THERM``, ``DS2_JACK``, ``DS2_SHAPE`` (e.g. ``96,48,48``).
