@@ -615,14 +615,34 @@ def attribution(beta, labels, n_cfg=24):
     agrees with the classical one in attention_as_operator.md §6.1.2.
 
     Reported as the non-A₁ variance fraction, the same statistic as the main
-    tables, averaged over the isotropic reductions (self/ell/ent). The bottom
-    row — no RoPE *and* trivial T — must be **exactly 0**: that is the exact-zero
-    null the whole study rests on, and it is the strongest validation of the
-    projector, stronger than any of the checks in :func:`check_transforms`.
+    tables, averaged over the isotropic reductions (self/ell/ent).
 
-    Which of the two architectural terms dominates is left to the run. On the
-    smoke configuration (R=3, random links) RoPE is the larger of the two by
-    ~5×, but that geometry is not the production one.
+    Disabling both must give **exactly 0**, and does — for the trained network
+    as well as the random one. That is a structural identity, not a result about
+    training: these two are the *only* mechanisms by which anisotropy can enter,
+    so training has no third channel and acts by driving them harder. It is
+    nonetheless the strongest validation the projector gets, stronger than
+    anything in :func:`check_transforms`, because it exercises the whole
+    measurement path end to end on a function known to be equivariant.
+
+    Production run (R=6, β=0.7585, 24 configs), non-A₁ fraction:
+
+        arm                real T     trivial T      (attention | output)
+        random           0.241|0.000  0.186|0.000
+        no RoPE          0.049|0.000  0.000|0.000
+        trained          0.337|0.147  0.424|0.744
+        trained,no RoPE  0.141|0.166  0.000|0.000
+
+    Three things to read off. (i) At initialisation RoPE is the larger term
+    (0.186 vs 0.049) and the output field is untouched at 0.000 — the attention
+    path is a perturbation on the exactly-scalar residual W. (ii) The trained
+    operator's **output** field is 14.7% non-scalar, which is what gives the A₁
+    projection something to remove. (iii) Removing RoPE from the trained network
+    cuts the attention breaking by 2.4× but leaves the output breaking alone
+    (0.147 → 0.166), so the operator's anisotropy comes from the anchoring
+    mismatch, not from the positional encoding. Ablations on trained weights are
+    out of distribution — "trivial T" especially so — and the 0.744 cell is that
+    artefact rather than a symmetry statement.
     """
     configs = load_configs(beta)
     if configs is None:
@@ -668,8 +688,17 @@ def attribution(beta, labels, n_cfg=24):
     print(f"  {'arm':<18s}{'transport':<12s}{'attention (iso)':>17s}{'output field':>15s}")
     for name, tname, a, o in rows:
         print(f"  {name:<18s}{tname:<12s}{a:17.4f}{o:15.4f}")
-    print("\n  trivial T isolates the anchoring mismatch; no-RoPE isolates the")
-    print("  positional encoding; what survives both is genuinely learned.")
+    print("\n  Both ablations off ⇒ exactly 0 for ANY weights: with rope_freq = 0")
+    print("  and T = 1 the score is Re Tr[Q(x)†K(x+Δ)] over a pure translation")
+    print("  gather, which is covariant regardless of what the weights are. So the")
+    print("  bottom rows are a structural identity validating the projector — NOT a")
+    print("  measurement that training contributes nothing. Training has no third")
+    print("  channel to break the symmetry through; it acts by driving these two")
+    print("  harder, so read the trained/random contrast within a fixed column.")
+    print("  Caveat: 'trivial T' on a *trained* network is out of distribution —")
+    print("  it removes the gauge structure the weights were fitted to, so that")
+    print("  row is not a clean symmetry ablation. The trained-arm comparison to")
+    print("  trust is real T, with and without RoPE.")
     return rows
 
 

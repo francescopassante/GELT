@@ -185,10 +185,45 @@ reasons, both isolated by ablation in `attribution()`:
   score acquires a Δ-dependent phase no rotation preserves. Zeroing `rope_freq`
   removes this term.
 
-Remove both and the block is equivariant to float32 noise — on the smoke
-configuration the non-A₁ fraction goes to **exactly 0.0000**, with the two terms
-contributing 0.159 (RoPE) and 0.031 (anchoring) separately. Which dominates at
-R = 6 on production ensembles is for the run to say.
+Remove both and the block is exactly equivariant. Production numbers (R = 6,
+β = 0.7585, 24 configs), non-A₁ variance fraction as `attention | output`:
+
+| arm | real T | trivial T |
+|---|---|---|
+| random | 0.241 \| 0.000 | 0.186 \| 0.000 |
+| no RoPE | 0.049 \| 0.000 | **0.000 \| 0.000** |
+| trained | 0.337 \| **0.147** | 0.424 \| 0.744 |
+| trained, no RoPE | 0.141 \| 0.166 | **0.000 \| 0.000** |
+
+**The bottom row is a structural identity, not a result.** With `rope_freq = 0`
+and `T = 1` the score is `Re Tr[Q(x)†K(x+Δ)]` over a pure translation gather,
+which is covariant for *any* weight values — so it vanishes for the trained
+network too, and "what survives both ablations is genuinely learned" (as this
+note and the script first put it) is wrong: nothing can survive both. These two
+are the only channels through which anisotropy can enter at all, and training
+acts by driving them harder rather than by adding a third. The row's value is as
+validation: it exercises the entire measurement path on a function known to be
+equivariant, which is stronger than any of the checks in §5.
+
+What the table does say:
+
+1. **At initialisation RoPE is the larger term** — 0.186 against 0.049 for the
+   anchoring — and the output field is untouched at 0.000, confirming the
+   init-scale explanation above.
+2. **The trained operator's output field is 14.7% non-scalar.** That is the
+   number the rest of this study needs: the A₁ projection has real work to do,
+   and the published A₀/ξ_A were measured through it.
+3. **RoPE is not what makes the operator anisotropic.** Removing it from the
+   trained network cuts the *attention* breaking by 2.4× (0.337 → 0.141) but
+   leaves the *output* breaking where it was (0.147 → 0.166). The anchoring
+   mismatch is what reaches the variational operator. That matters for the
+   architectural recommendation: swapping the positional encoding would not fix
+   the spectroscopy.
+
+Every ablation on trained weights is out of distribution, "trivial T" most of
+all — it removes the gauge structure the weights were fitted to, which is what
+the 0.744 cell is. The trained-arm comparison to trust is real T, with and
+without RoPE.
 
 Consequences:
 
