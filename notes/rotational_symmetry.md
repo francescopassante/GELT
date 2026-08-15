@@ -1,4 +1,24 @@
-# The attention field has quantum numbers — design record
+# The attention field has quantum numbers — closed 2026-08-16
+
+**Study closed. The scripts are deleted; this note is the record.**
+`scripts/z2_rotation_irreps.py` and `scripts/dual_spin2.py` live at commit
+`c9de51e` and can be restored with `git checkout c9de51e -- scripts/…` if the
+question ever reopens. Artifacts were under `results/rotation/` (gitignored).
+
+Verdict: the measurements all worked and the answer was *small*. That the block
+does not enforce lattice-rotation symmetry was already known and recorded in
+`topological_localization.md` §6.1. What this study added is the size (14–28% of
+the trained operator's site-level variance), the mechanism (the W/T anchoring
+mismatch, not RoPE), and the cost (**+0.017 in A₀**, at 3–17σ but changing no
+claim in the paper). The spin-2 arm returned a decisive null.
+
+Keep the two numbers below for the "your operator is only approximately a cubic
+scalar — how much does that matter?" question. Nothing here belongs in the paper
+as a result.
+
+---
+
+## Original design record
 
 Written 2026-08-15, before the run. Everything below the "Result" heading is
 empty on purpose; the pre-registered outcomes in §6 are what the run is allowed
