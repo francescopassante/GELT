@@ -335,8 +335,8 @@ def main():
     print("\n" + "=" * 74)
     print("SPIN-2 GROUND TRUTH — what the gauge-side B channel must reproduce")
     print("=" * 74)
-    print("  Best smearing level per family, chosen once by C(2)/C(0).")
-    print("  β       operator   m               m/m_σ           A₀")
+    print("  Most-smeared resolved level per family, with a convergence verdict.")
+    print("  β       operator   m               m/m_σ           A₀        conv")
     for r in rows:
         o = r["ops"]
         for fam in ("b1", "b2"):
@@ -344,11 +344,31 @@ def main():
             if not cand:
                 print(f"  {r['beta']:<6.4f}  {fam:<9s} unresolved at every smearing level")
                 continue
-            k = max(cand, key=lambda x: o[x]["signal"])
+            # Ordered by smearing level, not by C(2)/C(0): the most-smeared
+            # operator always wins on signal, so ranking that way would quote a
+            # mass that is still drifting as though it were the answer.
+            cand.sort(key=lambda x: int(x.split("@")[1]))
+            k = cand[-1]
+            # The mass must stop moving between the last two levels. It did not
+            # at β = 0.745 (1.467 → 1.296, nine times its own error, with A₀
+            # still climbing), which means the lightest state in the channel has
+            # not been isolated and the true mass is *below* the quoted one.
+            verdict = "  ?  "
+            if len(cand) > 1:
+                prev, cur = o[cand[-2]], o[k]
+                sig = abs(cur["m"] - prev["m"]) / max(cur["m_err"], 1e-30)
+                verdict = "yes" if sig < 2 else f"NO {sig:.0f}σ"
             g = lambda f, d="  —  ": (f"{o[k][f]:.3f}"  # noqa: E731
                                       if f in o[k] and np.isfinite(o[k][f]) else d)
             print(f"  {r['beta']:<6.4f}  {k:<9s} {g('m')} ± {g('m_err')}   "
-                  f"{g('ratio')} ± {g('ratio_err')}   {g('A0')} ± {g('A0_err')}")
+                  f"{g('ratio')} ± {g('ratio_err')}   {g('A0')} ± {g('A0_err')}"
+                  f"   {verdict}")
+    print("\n  conv = did the mass stop moving between the last two smearing")
+    print("  levels? 'NO' means the ladder has not isolated the lightest state and")
+    print("  the true mass is below the quoted one — read it as an upper bound.")
+    print("  The two-particle threshold is m/m_σ = 2.0: two σ in a relative D-wave")
+    print("  carry spin 2, so a ratio converging to 2 is the continuum rather than")
+    print("  a state, and only a ratio settling *below* 2 is a 2⁺⁺ bound state.")
     print("\n  The ratio is the transferable number: it is a pure spectrum quantity,")
     print("  so the gauge-side attention B channel must land on it if the")
     print("  non-scalar content couples to the physical spin-2 state at all.")
