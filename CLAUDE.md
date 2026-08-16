@@ -114,6 +114,29 @@ removed pending rewrites; the spec now lives across the notes below.)
   offline with `ZAC_REPLOT=<dump.pt> python scripts/z2_attention_correlator.py`
   — no GPU, no ensembles, no checkpoints, since dropping a β changes no per-β
   number, only the aggregates.
+  **§9 (2026-08-16) — the same measurement on SU(2)**
+  (`scripts/su2_attention_correlator.py`), i.e. the paper's Table 5 on a
+  non-abelian group. §9.1: SU(2)'s `ξ_s ≤ 1.1` verdict was about ℓ_att and does
+  not apply — ξ_A is measured in **time** on the anisotropic lattice, where
+  `beta_scan.pt` records ξ_t = 1.72 … 3.31 (×1.92 range, 3–8%) over
+  β ∈ [2.1, 2.7]. §9.2: β = 2.7 is non-monotonic but is **kept** in the scan —
+  unlike Z₂'s dropped β = 0.760 it is not finite volume (L/ξ_s = 12), so SU(2)
+  can carry the non-monotonic-excursion argument §8.2 forces out of the Z₂
+  section. §9.3: the default run is **one row at β = 2.4** — the only trained
+  coupling, so the row is a genuine *diagonal* cell, with both the Run-5 and
+  `_ens1` checkpoints as independent trained arms. It delivers every number in a
+  Table 5 row (ξ_class, ξ_A trained/random, the three A₀, correlated ΔA₀) plus
+  the profiles/nulls/δA/A the paper prints beside the table; it cannot deliver
+  the aggregates (Pearson, slope, dynamic range, row/column control), and the
+  script refuses to print those below three couplings rather than emitting NaN.
+  `SAC_BETAS=2.1,2.3,2.4,2.5,2.7` runs the scan with no retraining (off-diagonal
+  at four β, licensed by §6.1.1's row/column ratio of 12.0). §9.4: evaluation
+  ensembles are sampled at seed 11 / N = 1600, colliding with no training cache,
+  so **every** configuration is unseen at **every** β. §9.5: the estimator layer
+  is *imported* from
+  `z2_attention_correlator.py`, so identical conventions is a fact about the
+  call graph; the two SU(2)-specific traps (real `dist`, three spatial axes in
+  the zero-momentum sum) are recorded there.
 - `notes/dual_ground_truth.md` — **design record for closing the one question
   `attention_as_operator.md` §6.1.2 leaves open**: the trained attention field
   reads ξ 21% above the classical operator, and that can only be called a
@@ -558,6 +581,24 @@ loop inline (there is no shared `gelt/train.py`). Device order: cuda → mps
   `DGT_THERM_CHECK=1` re-runs the cold-vs-hot thermalisation test that fixed
   `N_THERM`; `DGT_SMOKE=1` is a 2-minute plumbing run (its physics is
   meaningless — 12³ boxes at ξ ≈ 5). Writes `results/dual/dual_ground_truth.{png,pt}`.
+- **`su2_attention_correlator.py`** — the paper's Table 5 on **anisotropic
+  SU(2)**: ξ_A of the attention field vs the classical APE basis vs a
+  random-init network, on the same configurations
+  (`notes/attention_as_operator.md` §9). **Defaults to a single row at β = 2.4**
+  (the only trained coupling ⇒ a true diagonal cell); `SAC_BETAS` runs the
+  five-β scan. Reuses `z2_attention_correlator.py`'s
+  estimator layer by import (GEVP t0=1/td=2, window Δ∈[2,8], cosh + A₀, blocked
+  jackknife block 20, config-scramble null, time-shuffle zero-mode check,
+  correlated ΔA₀) and `train_glueball.config_inputs` for the per-timeslice 3D
+  inputs, so only the physics inputs differ. Trained arms are the two β = 2.4
+  checkpoints (Run 5 and `_ens1`); ensembles are sampled fresh at seed 11 so
+  nothing measured was ever trained on. ~40 min sampling + measurement for the
+  default single row. Env: `SAC_BETAS` / `SAC_N_EVAL` (1600) / `SAC_CHUNK` /
+  `SAC_SEED` / `SAC_KEEP` (cache ≈8.5 GB per β) / `SAC_DEVICE` / `SAC_SMOKE` /
+  `SAC_REPLOT`.
+  Writes `results/attention/su2_attention_correlator.{pt,png}` plus a
+  paste-ready `…_table.tex`. **Does not run on MPS** (SU(2)'s projection needs
+  complex `linalg.det`/`svd`) — use `SAC_DEVICE=cpu` for a laptop smoke test.
 - **`check_glueball_autocorrelation.py`** — step-1 pre-flight before
   `measure_glueball.py`: runs a long `n_skip=1` heat-bath+OR chain, builds the
   plaquette and the thin/smeared glueball operator per config, and reports
@@ -662,6 +703,7 @@ python scripts/check_glueball_autocorrelation.py  # τ_int of the glueball opera
 python scripts/measure_glueball.py     # anisotropic 0⁺⁺ glueball baseline (correlator + GEVP m_eff)
 python scripts/fit_glueball_overlap.py # cosh fits + overlap A₀ (offline, from train_glueball.py's test-Ō dump)
 python scripts/dual_ground_truth.py    # exact ξ from the dual Ising model (~30 min, GPU)
+python scripts/su2_attention_correlator.py  # one Table 5 row, SU(2) β=2.4 (~40 min, GPU)
 python -m gelt.cnn_baseline            # torchsummary for a 5×5 CNN
 pytest tests                           # unit tests
 ```

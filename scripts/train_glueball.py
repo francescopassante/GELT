@@ -228,11 +228,11 @@ EVAL_ONLY = _env_flag("GLUEBALL_EVAL_ONLY", False)
 
 
 # ── Rayleigh loss & per-batch operator ────────────────────────────────────────
-def network_obar(model, U4_batch, device):
-    """Zero-momentum operator Ō(t) of a config minibatch via the 3D GELT.
+def config_inputs(U4_batch, device):
+    """Smeared plaquette channels W and transport T for a config minibatch.
 
     ``U4_batch`` : ``(b, 4, Lt, L, L, L, nc, nc)`` full 4D SU(2) configs (time =
-    lattice axis 0, i.e. tensor dim 2). Returns ``(b, Lt)`` real Ō[config, t].
+    lattice axis 0, i.e. tensor dim 2). Returns ``(W, T)`` with batch ``b·Lt``.
 
     The spatial links (directions 1..3) at each fixed time are pulled out and the
     time axis is *folded into the batch*, so the network only ever sees a single
@@ -241,6 +241,10 @@ def network_obar(model, U4_batch, device):
     built on the fly per batch (audit item 4). ``W`` stacks one 3-channel
     plaquette block per ``INPUT_SMEAR_LEVELS`` entry (in_channels = 3·n_levels);
     ``T`` comes from the first (least smeared) level.
+
+    Split out of :func:`network_obar` so the attention-as-operator analysis
+    (``scripts/su2_attention_correlator.py``) pays this — the whole per-config
+    cost, and none of it weight-dependent — once and shares it across networks.
     """
     b, _, Lt = U4_batch.shape[0], U4_batch.shape[1], U4_batch.shape[2]
     U = U4_batch.to(device)
@@ -262,6 +266,17 @@ def network_obar(model, U4_batch, device):
         Ws.append(plaquette_tensor(U3, gaugegroup))  # (b·Lt, 3, L,L,L, nc,nc) spatial planes
     W = torch.cat(Ws, dim=1)  # (b·Lt, 3·n_levels, L,L,L, nc,nc)
     T = build_transport_average(U3_first, R, gaugegroup)  # (b·Lt, n_off, L,L,L, nc,nc)
+    return W, T
+
+
+def network_obar(model, U4_batch, device):
+    """Zero-momentum operator Ō(t) of a config minibatch via the 3D GELT.
+
+    ``U4_batch`` : ``(b, 4, Lt, L, L, L, nc, nc)`` full 4D SU(2) configs (time =
+    lattice axis 0, i.e. tensor dim 2). Returns ``(b, Lt)`` real Ō[config, t].
+    """
+    b, Lt = U4_batch.shape[0], U4_batch.shape[2]
+    W, T = config_inputs(U4_batch, device)
     O = model(W, T)  # (b·Lt, L, L, L) per-site invariant scalar
     Obar = O.sum(dim=(1, 2, 3))  # zero-momentum projection → (b·Lt,)
     return Obar.view(b, Lt)

@@ -528,3 +528,147 @@ is false and should be removed from the paper.
 5. `attention_as_operator.md` §6.1's headline framing survives unchanged; only
    the fifth row of its table goes.
 
+
+## 9. Transporting the result to SU(2) (queued 2026-08-16)
+
+`scripts/su2_attention_correlator.py` runs the §6.1 measurement on anisotropic
+SU(2) in 3+1D — i.e. reproduces the paper's Table 5 (`tab:z2`) on the group the
+thesis is actually about. Read this before touching that script.
+
+### 9.1 Why SU(2) is measurable after all
+
+`topological_localization.md` §6 closed the *range* question on SU(2) with
+"ξ_s ≤ 1.1 spatial spacings, smaller than the integer grid the attention lives
+on". That is the correct verdict for ℓ_att and the wrong number for ξ_A. The
+attention field is a **per-timeslice** operator and its correlator runs in
+**time**, on a lattice deliberately made fine in that direction (a_t = a_s/ξ,
+ξ_bare = 3) precisely so the 0⁺⁺ mass would resolve. `results/attention/beta_scan.pt`
+records m·a_t = 0.581 → 0.303 over β ∈ [2.1, 2.7], i.e.
+
+    ξ_t = 1/(m·a_t) = 1.72, 2.49, 3.00, 3.31, 3.01   at 3–8% precision.
+
+So there is a genuine correlator with a **×1.92** dynamic range. It is smaller
+than Z₂'s ×2.74 and that should be said when the Pearson is quoted — five points
+over a factor of two is a weaker lever arm than five points over a factor of
+three, and two of the five (β = 2.4 and 2.7) are degenerate within errors, so
+the fit really has four distinct lengths.
+
+The §6.1 ceiling argument does not apply here: C_A correlates a *fluctuation*
+about the mean, so nothing bounds ξ_A by R the way the ball geometry bounded
+ℓ_att. R = 2 in the SU(2) operator is not an obstruction to measuring ξ_t ≈ 3.
+
+### 9.2 β = 2.7 is kept, and it is not the Z₂ β = 0.760 mistake
+
+β = 2.7 is **non-monotonic**: it reads the same mass as β = 2.4. §8 dropped Z₂'s
+β = 0.760 for looking similar, so the distinction matters. There the cause was
+diagnosed exactly: true ξ ≈ 10 against L = 24, i.e. the operator was measuring
+the box. Here ξ_s ≈ 1.0 against L = 12 is **L/ξ_s = 12** — the box is enormous
+compared to the correlation length, and the same is true at every coupling in
+the scan. The non-monotonicity is coarse-a_s strong coupling plus a bare
+anisotropy whose renormalisation drifts with β (the caveat `CLAUDE.md` already
+records: β_s = β/ξ = 0.8 is not continuum physics), not finite volume.
+
+That makes it worth keeping rather than merely harmless. ξ_A is compared against
+the classical ξ measured **on the same configurations**, so monotonicity in β is
+irrelevant to the correlation, and a point where the two operators must agree
+that ξ went *down* when β went *up* is a stronger test than a monotone one. This
+is the argument §8.2 required the paper to delete for Z₂; SU(2) can carry it
+legitimately, because here the finite-volume alternative is excluded by
+L/ξ_s = 12 rather than merely unmeasured.
+
+### 9.3 Scope: one row, at β = 2.4
+
+The default run is a **single coupling**. Z₂ had one checkpoint per β; SU(2) has
+exactly one trained coupling, and a fresh operator costs ≈15 h of V100 (47 min
+sampling + ~14 h training, `logs/overnight.log`), so a five-row table is a
+three-day batch.
+
+β = 2.4 is the choice because it is that trained coupling, which makes the row a
+genuine **diagonal** cell — network and ensemble at the same β, as every row of
+Table 5 is. Any other β would be off-diagonal, and would additionally be
+answering a question (does ξ_A follow the ensemble rather than the training β?)
+that only the full matrix makes worth asking. β = 2.4 is also the anchor of the
+§6.2 result and carries ξ_t = 3.00, near the top of the range this lattice
+family reaches.
+
+A single row delivers everything Table 5 puts in a row — ξ_class, ξ_A trained,
+ξ_A random, the three A₀, the correlated ΔA₀ — plus the detail the paper prints
+beside the table: the C(Δ)/C(0) profile of every arm, the time-shuffle zero-mode
+check, the config-scramble null, and the site-level δA/A. What it cannot support
+is the *aggregates*: Pearson(ξ_A, ξ_class), the slope, the dynamic range, and
+§6.1.1's row/column control. `report()` declines to print those below three
+couplings rather than emitting a NaN that reads like a failed measurement.
+
+`SAC_BETAS=2.1,2.3,2.4,2.5,2.7` runs the scan later without any retraining: the
+trained arm is then the β = 2.4 operator evaluated everywhere — matched in its
+own row, off-diagonal in the other four — which §6.1.1 licenses, since it
+measures (spread across evaluation ensembles)/(spread across training β) = 12.0
+with a mean diagonal advantage in A₀ of +0.038 against a mean
+trained-minus-random of +0.156. That is the weaker of the two positions and
+therefore the one to report; off-diagonal arms tracking ξ would be §6.1.1's
+content-dependence result reproduced on a non-abelian group, not a weakness.
+
+Both β = 2.4 checkpoints are run as separate arms in either mode — Run 5 (seed-0
+ensemble) and the replication (`_ens1`, seed-1 ensemble). They were trained on
+*different* ensembles, so agreement between them is §6.2's replication statement
+transported to the attention field, and it is available from the single row.
+
+### 9.4 Nothing measured here was ever trained on
+
+The evaluation ensemble is sampled fresh at seed 11 — none of 0, 1, 2, the
+seeds every checkpoint's training ensemble used — and at N = 1600 rather than
+2000, so the cache key cannot collide with a training ensemble either. Every
+configuration is unseen by every network at **every** β, the matched one
+included, so no train/val/test slicing is needed and the diagonal cell is as
+clean as the off-diagonal ones. (The Z₂ study had to carve `configs[N_USE:]` out
+of the training ensembles; here re-sampling is ~40 min at N = 1600, which is
+cheaper than the argument about whether the slice is clean.)
+
+### 9.5 The estimator is imported, not reimplemented
+
+`su2_attention_correlator.py` imports `_jack`, `_fit`, `_project`,
+`_gevp_is_sane`, `_window`, `_corr_delta`, `_shuffle_time`, `_scramble_configs`
+and the constants from `z2_attention_correlator.py`. GEVP t0 = 1 / td = 2, the
+largest positive window inside Δ ∈ [2,8] fixed once on the full sample, the cosh
+fit and Morningstar–Peardon A₀, blocked jackknife with block 20, the
+config-scramble null and the time-shuffle zero-mode check are therefore
+*identical by construction* rather than by claim — "same conventions as Table 5"
+becomes a fact about the call graph. Only the inputs differ: the classical
+comparator is SU(2)'s APE ladder (0, 2, 4, 6), the one `train_glueball.py` and
+`measure_glueball.py` build their GEVP anchor from, not Z₂'s (0, 4, 8, 16).
+
+The one code change on the SU(2) side is that `train_glueball.network_obar` was
+split into `config_inputs` (4D config → per-timeslice 3D `W`, `T`) plus the
+forward, so the analysis pays the per-configuration cost — the whole cost, and
+none of it weight-dependent — once and shares it across the three networks. The
+split is bit-exact: `network_obar == config_inputs ∘ model` was checked on the
+Run-5 checkpoint.
+
+Two traps found while wiring it, both silent if missed:
+
+* the reduction weight `dist` must be **real**. Z₂'s `MODEL_DTYPE` is float32 so
+  copying that line works there; SU(2)'s is complex64, and since the score is
+  `Re Tr[Q†K̃]` the softmax α is real, a complex weight would promote the whole
+  `ell` reduction to complex and it would flow to the GEVP unnoticed.
+* the zero-momentum projection sums **three** spatial axes, not two. The Z₂
+  slice is 2D; SU(2)'s is 12³.
+
+### 9.6 What would falsify the transported claim
+
+Same pre-registration discipline as §6. The claim survives if ξ_A tracks the
+classical ξ_t across the scan and the trained arms carry more ground-state
+overlap than the random one. It fails if:
+
+* **ξ_A does not resolve.** With ξ_t ≈ 2–3 on N_t = 24 the fit window Δ ∈ [2,8]
+  spans 2–4 correlation lengths, which is where the signal-to-noise falls off
+  exponentially; if the window collapses to its 4-point minimum at every β, the
+  answer is "more configurations", not "no mass".
+* **ξ_A is flat in β.** Then the attention is reading the architecture, not the
+  configuration, and §6.1.1's control did not transport to SU(2). *Not testable
+  from the single-β row* — it needs `SAC_BETAS` set to the scan.
+* **ΔA₀ ≤ 0.** The structural claim (equivariant attention maps are lattice
+  operators with a mass) would still stand — it stands for the random arm in Z₂
+  too — but the *learning* claim would be Z₂-specific. At β = 2.4 this arm is
+  fully diagonal, so a null result there is clean and cannot be blamed on the
+  off-diagonal design; in the scan, four of the five ΔA₀ cells compare a network
+  trained at β = 2.4 against a random one on an ensemble neither has seen.
