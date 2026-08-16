@@ -712,7 +712,10 @@ def write_tex(rows):
             f"{r['classical']['A0']:.2f}$ & {d} \\\\"
         )
     lines += [r"\end{tabular}", r"\end{ruledtabular}", r"\end{table}", ""]
-    with open(OUT_TEX, "w") as fh:
+    # encoding is explicit: the V100 box runs with an ASCII default locale, and
+    # the generated header carries an em dash, so the write died there after a
+    # 1.5 h measurement had already succeeded.
+    with open(OUT_TEX, "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines))
     print(f"\nwrote {OUT_TEX}")
 
