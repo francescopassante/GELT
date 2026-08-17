@@ -409,10 +409,20 @@ def measure_ensemble(beta, nets, labels, dist):
 
     cl = torch.cat(classical, dim=1)  # (n_levels, B, Nt)
     res["classical"] = zac._jack(cl, LT)
+    # The same basis read by its best single member, so every arm — classical,
+    # trained, random — is quoted under both estimators and the table can be
+    # read either way. The GEVP is the variational optimum but it is fitted on
+    # the configurations it is scored on; the best single member is not.
+    res["classical_single"] = zac._jack_best_single(
+        cl, LT, [f"APE{n}" for n in SMEAR_LEVELS])
     xi_c, xi_ce = zac._xi(res["classical"])
+    xi_c1, _ = zac._xi(res["classical_single"])
     print(f"  classical APE basis {SMEAR_LEVELS}:  m·a_t = "
           f"{res['classical']['m']:.4f} ± {res['classical']['m_err']:.4f}   "
-          f"ξ_t = {xi_c:.2f} ± {xi_ce:.2f}")
+          f"ξ_t = {xi_c:.2f} ± {xi_ce:.2f}   "
+          f"A₀ = {res['classical']['A0']:.3f}   "
+          f"[best single {res['classical_single'].get('channel')}: "
+          f"ξ_t = {xi_c1:.2f}, A₀ = {res['classical_single']['A0']:.3f}]")
     zac._diagnose("classical", res["classical"])
 
     gen = torch.Generator().manual_seed(RANDOM_SEED)
@@ -626,23 +636,36 @@ def report(rows):
     print("Table 5, SU(2): ξ from the attention field vs the classical smeared "
           "basis (same configurations)")
     print("=" * 96)
-    hdr = (f"{'β':>6} {'ξ_class (a_t)':>16} "
+    # Every β is printed twice, once per estimator, and each line is internally
+    # consistent: ξ, A₀ and ΔA₀ on one line all come from the same operator, so
+    # the A₀ column subtracts to the ΔA₀ column within a line and never across.
+    hdr = (f"{'β':>6} {'est':>7} {'ξ_class (a_t)':>16} "
            + " ".join(f"{n:>16}" for n in names)
            + f" {'A₀ tr/rnd/cl':>20} {'ΔA₀ (trained−rnd)':>22}")
     print(hdr)
     print("-" * len(hdr))
     for j, r in enumerate(rows):
-        line = f"{r['beta']:>6} {_fmt(xi_c[j], xi_ce[j]):>16} "
-        for n in names:
-            v, e = _arm([r], n)
-            line += f"{_fmt(v[0], e[0]):>16} "
-        a_tr = _arm([r], names[0], what="A0")[0][0] if names else float("nan")
-        a_rn = _arm([r], "random", what="A0")[0][0]
-        line += f"{a_tr:>6.2f}/{a_rn:.2f}/{r['classical']['A0']:.2f} "
-        dd = r.get("delta_vs_random", {}).get(names[0] if names else "")
-        line += (f"{dd['dA0']:>+13.3f}({int(round(dd['dA0_err'] * 1000))})"
-                 if dd else f"{'—':>18}")
-        print(line)
+        for est, ckey, akey, dkey in (
+            ("GEVP", "classical", "attention", "delta_vs_random"),
+            ("single", "classical_single", "attention_single",
+             "delta_vs_random_single"),
+        ):
+            cl = r.get(ckey)
+            if cl is None:  # a dump written before both estimators were kept
+                continue
+            xv, xe = zac._xi(cl)
+            line = f"{r['beta']:>6} {est:>7} {_fmt(xv, xe):>16} "
+            for n in names:
+                v, e = _arm([r], n, key=akey)
+                line += f"{_fmt(v[0], e[0]):>16} "
+            a_tr = (_arm([r], names[0], key=akey, what="A0")[0][0]
+                    if names else float("nan"))
+            a_rn = _arm([r], "random", key=akey, what="A0")[0][0]
+            line += f"{a_tr:>6.2f}/{a_rn:.2f}/{cl['A0']:.2f} "
+            dd = r.get(dkey, {}).get(names[0] if names else "")
+            line += (f"{dd['dA0']:>+13.3f}({int(round(dd['dA0_err'] * 1000))})"
+                     if dd else f"{'—':>18}")
+            print(line)
 
     print("-" * len(hdr))
 
@@ -659,10 +682,16 @@ def report(rows):
     # is better than emitting a NaN that looks like a failed measurement.
     if len(rows) >= 3:
         print("-" * len(hdr))
-        for n in names:
-            xi_a, _ = _arm(rows, n)
-            r_p, slope = _pearson_slope(xi_c, xi_a)
-            print(f"  Pearson(ξ_A[{n}], ξ_class) = {r_p:.4f}   slope = {slope:.2f}")
+        for est, ckey, akey in (("GEVP", "classical", "attention"),
+                                ("single", "classical_single", "attention_single")):
+            if any(r.get(ckey) is None for r in rows):
+                continue
+            xi_ref = np.array([zac._xi(r[ckey])[0] for r in rows])
+            for n in names:
+                xi_a, _ = _arm(rows, n, key=akey)
+                r_p, slope = _pearson_slope(xi_ref, xi_a)
+                print(f"  [{est:>6}] Pearson(ξ_A[{n}], ξ_class) = {r_p:.4f}   "
+                      f"slope = {slope:.2f}")
         ok = np.isfinite(xi_c) & (xi_c > 0)
         if ok.sum() > 1:
             print(f"  classical dynamic range: "
@@ -710,39 +739,56 @@ def write_tex(rows):
         rf" $\xi_{{\rm bare}}={XI}$; lengths in temporal lattice spacings $a_t$. The",
         rf" trained arm is the $\beta={TRAIN_BETA}$ operator of Sec.~\ref{{sec:spectroscopy}}",
         r" evaluated on every ensemble (matched only in its own row).",
+        r" Each coupling is quoted under both estimators: the multi-channel",
+        r" GEVP, which is the variational optimum but is fitted on the",
+        r" configurations it is scored on, and the best single member of the",
+        r" same basis, which is not. A line is internally consistent —",
         r" $\Delta A_0$ is a blocked jackknife of the trained $-$ random",
-        r" \emph{difference} on shared configurations, taken on the same two",
-        r" operators the $A_0$ column quotes, so it is their difference.}",
+        r" \emph{difference} on shared configurations, taken on the two",
+        r" operators that line quotes, so it is their difference.}",
         r"\label{tab:su2attn}",
         r"\begin{ruledtabular}",
         r"\scriptsize",
         r"\setlength{\tabcolsep}{2.6pt}",
-        r"\begin{tabular}{lccccc}",
-        r"$\beta$ & $\xi_{\rm class}$ & $\xiA$ trained & $\xiA$ random"
+        r"\begin{tabular}{llccccc}",
+        r"$\beta$ & est. & $\xi_{\rm class}$ & $\xiA$ trained & $\xiA$ random"
         r" & $A_0$ tr./rnd./cl. & $\Delta A_0$ \\",
         r"\colrule",
     ]
+    ESTIMATORS = (
+        ("GEVP", "classical", "attention", "delta_vs_random"),
+        ("single", "classical_single", "attention_single",
+         "delta_vs_random_single"),
+    )
     for j, r in enumerate(rows):
-        xi_c, xi_ce = zac._xi(r["classical"])
-        v_t, e_t = _arm([r], tr) if tr else (np.array([np.nan]), np.array([np.nan]))
-        v_r, e_r = _arm([r], "random")
-        a_t = _arm([r], tr, what="A0")[0][0] if tr else float("nan")
-        a_r = _arm([r], "random", what="A0")[0][0]
-        dd = r.get("delta_vs_random", {}).get(tr)
-        # A table generated from a dump written before the difference moved onto
-        # the resolved bases would silently print a single-channel ΔA₀ beside a
-        # multi-channel A₀ column. Say so rather than emit it quietly.
-        if dd and tr:
-            zac._delta_consistency(dd, r["nets"][tr]["attention"],
-                                   r["nets"]["random"]["attention"],
-                                   tag=f"[β={r['beta']:g}, stale dump?]")
-        d = (f"${dd['dA0']:+.3f}({int(round(dd['dA0_err'] * 1000))})$"
-             if dd else "---")
-        lines.append(
-            f"${r['beta']:g}$ & ${_fmt(xi_c, xi_ce)}$ & ${_fmt(v_t[0], e_t[0])}$ "
-            f"& ${_fmt(v_r[0], e_r[0])}$ & ${a_t:.2f}/{a_r:.2f}/"
-            f"{r['classical']['A0']:.2f}$ & {d} \\\\"
-        )
+        for i, (est, ckey, akey, dkey) in enumerate(ESTIMATORS):
+            cl = r.get(ckey)
+            if cl is None:  # a dump written before both estimators were kept
+                continue
+            xi_c, xi_ce = zac._xi(cl)
+            nan = (np.array([np.nan]), np.array([np.nan]))
+            v_t, e_t = _arm([r], tr, key=akey) if tr else nan
+            v_r, e_r = _arm([r], "random", key=akey)
+            a_t = _arm([r], tr, key=akey, what="A0")[0][0] if tr else float("nan")
+            a_r = _arm([r], "random", key=akey, what="A0")[0][0]
+            dd = r.get(dkey, {}).get(tr)
+            # A table generated from a dump written before the difference moved
+            # onto the resolved bases would silently print a single-channel ΔA₀
+            # beside a multi-channel A₀ column. Say so rather than emit it
+            # quietly.
+            if dd and tr:
+                zac._delta_consistency(dd, r["nets"][tr][akey],
+                                       r["nets"]["random"][akey],
+                                       tag=f"[β={r['beta']:g}, {est}, stale dump?]")
+            d = (f"${dd['dA0']:+.3f}({int(round(dd['dA0_err'] * 1000))})$"
+                 if dd else "---")
+            head = f"${r['beta']:g}$" if i == 0 else ""
+            lines.append(
+                f"{head} & {est} & ${_fmt(xi_c, xi_ce)}$ "
+                f"& ${_fmt(v_t[0], e_t[0])}$ "
+                f"& ${_fmt(v_r[0], e_r[0])}$ & ${a_t:.2f}/{a_r:.2f}/"
+                f"{cl['A0']:.2f}$ & {d} \\\\"
+            )
     lines += [r"\end{tabular}", r"\end{ruledtabular}", r"\end{table}", ""]
     # encoding is explicit: the V100 box runs with an ASCII default locale, and
     # the generated header carries an em dash, so the write died there after a
@@ -797,31 +843,58 @@ def plot_single(rows):
     a0_v = [r["classical"]["A0"]] + [r["nets"][n]["attention"]["A0"] for n in names]
     a0_e = [r["classical"]["A0_err"]] + [r["nets"][n]["attention"]["A0_err"]
                                          for n in names]
+    # The same three arms read by the best single member of each basis, drawn
+    # hollow beside the filled GEVP points: the gap between the two markers of
+    # one arm is what the variational step bought that arm, and it is much
+    # larger for a random network's redundant channels than for a trained one's.
+    cl1 = r.get("classical_single")
+    if cl1 is not None:
+        xi1_v = [zac._xi(cl1)[0]] + [zac._xi(r["nets"][n]["attention_single"])[0]
+                                     for n in names]
+        xi1_e = [zac._xi(cl1)[1]] + [zac._xi(r["nets"][n]["attention_single"])[1]
+                                     for n in names]
+        a01_v = [cl1["A0"]] + [r["nets"][n]["attention_single"]["A0"] for n in names]
+        a01_e = [cl1["A0_err"]] + [r["nets"][n]["attention_single"]["A0_err"]
+                                   for n in names]
+    else:
+        xi1_v = xi1_e = a01_v = a01_e = None
+
     y = np.arange(len(labels))
-    for a, v, e, xlabel, title in (
-        (ax[1], xi_v, xi_e, r"$\xi_t = 1/(m\,a_t)$  [temporal spacings]",
+    for a, v, e, v1, e1, xlabel, title in (
+        (ax[1], xi_v, xi_e, xi1_v, xi1_e,
+         r"$\xi_t = 1/(m\,a_t)$  [temporal spacings]",
          "Correlation length, same configurations"),
-        (ax[2], a0_v, a0_e, r"$A_0$  [ground-state overlap fraction]",
-         "Operator quality"),
+        (ax[2], a0_v, a0_e, a01_v, a01_e,
+         r"$A_0$  [ground-state overlap fraction]", "Operator quality"),
     ):
-        a.errorbar(v, y, xerr=e, fmt="o", capsize=4, color="tab:blue")
-        a.axvline(v[0], color="k", ls=":", lw=1, label="classical")
+        a.errorbar(v, y, xerr=e, fmt="o", capsize=4, color="tab:blue",
+                   label="GEVP basis")
+        if v1 is not None:
+            a.errorbar(v1, y + 0.16, xerr=e1, fmt="o", capsize=4, mfc="none",
+                       color="tab:orange", label="best single member")
+        a.axvline(v[0], color="k", ls=":", lw=1)
         if np.isfinite(e[0]):
             a.axvspan(v[0] - e[0], v[0] + e[0], color="k", alpha=0.08)
         a.set_yticks(y, labels)
         a.invert_yaxis()
         a.set_xlabel(xlabel)
         a.set_title(title)
+        a.legend(fontsize=8)
     # The correlated trained − random difference goes in the title rather than
     # inside the axes: it is the significance statement of the panel, and the
     # only empty region of a 4-row point plot is wherever the next run's error
     # bars happen not to be.
     dd = r.get("delta_vs_random", {}).get(tr) if tr else None
+    ds = r.get("delta_vs_random_single", {}).get(tr) if tr else None
     if dd and dd["dA0_err"]:
+        sub = ""
+        if ds and ds["dA0_err"]:
+            sub = (rf", single {ds['dA0']:+.3f} ± {ds['dA0_err']:.3f} "
+                   rf"({ds['dA0'] / ds['dA0_err']:+.1f}$\sigma$)")
         ax[2].set_title(
             "Operator quality\n"
-            rf"$\Delta A_0$ = {dd['dA0']:+.3f} ± {dd['dA0_err']:.3f} "
-            rf"({dd['dA0'] / dd['dA0_err']:+.1f}$\sigma$), correlated"
+            rf"$\Delta A_0$ GEVP {dd['dA0']:+.3f} ± {dd['dA0_err']:.3f} "
+            rf"({dd['dA0'] / dd['dA0_err']:+.1f}$\sigma$){sub}, correlated"
         )
 
     fig.tight_layout()
@@ -888,9 +961,23 @@ def plot(rows):
     a = ax[1, 0]
     a.plot(betas, [r["classical"]["A0"] for r in rows], "o-", color="k",
            label="classical")
+    arm_color = {}
     for n, fmt in zip(names, ["s--", "^--", "v--"]):
         v, e = _arm(rows, n, what="A0")
-        a.errorbar(betas, v, yerr=e, fmt=fmt, capsize=4, alpha=0.85, label=n)
+        cont = a.errorbar(betas, v, yerr=e, fmt=fmt, capsize=4, alpha=0.85,
+                          label=n)
+        arm_color[n] = cont.lines[0].get_color()
+    # The same arms read by their best single member, hollow and in the arm's
+    # own colour: the gap between a filled and a hollow marker of one arm is
+    # what the variational step bought it, and the random network — 24
+    # redundant noisy channels — gains most.
+    if all(r.get("classical_single") is not None for r in rows):
+        a.plot(betas, [r["classical_single"]["A0"] for r in rows], "o:",
+               color="k", mfc="none", alpha=0.6, label="best single member")
+        for n, fmt in zip(names, ["s:", "^:", "v:"]):
+            v, e = _arm(rows, n, key="attention_single", what="A0")
+            a.errorbar(betas, v, yerr=e, fmt=fmt, capsize=3, mfc="none",
+                       alpha=0.6, color=arm_color[n])
     if tr:
         null = [r["nets"][tr]["scrambled"]["A0"] if tr in r["nets"]
                 and not r["nets"][tr].get("dead") else np.nan for r in rows]

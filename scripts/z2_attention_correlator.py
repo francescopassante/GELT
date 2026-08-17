@@ -762,9 +762,19 @@ def measure_ensemble(beta, nets, labels, dist):
 
     cl = torch.cat(classical, dim=1)  # (n_levels, B, Nt)
     res["classical"] = _jack(cl, Nt)
+    # The same basis read by its best single member, so every arm — classical,
+    # trained, random — is quoted under both estimators and the table can be
+    # read either way. The GEVP is the variational optimum but it is fitted on
+    # the configurations it is scored on; the best single member is not.
+    res["classical_single"] = _jack_best_single(
+        cl, Nt, [f"APE{n}" for n in SMEAR_LEVELS])
     xi_c, xi_ce = _xi(res["classical"])
+    xi_c1, _ = _xi(res["classical_single"])
     print(f"  classical smeared basis:  m = {res['classical']['m']:.4f} "
-          f"± {res['classical']['m_err']:.4f}   ξ = {xi_c:.2f} ± {xi_ce:.2f}")
+          f"± {res['classical']['m_err']:.4f}   ξ = {xi_c:.2f} ± {xi_ce:.2f}   "
+          f"A₀ = {res['classical']['A0']:.3f}   "
+          f"[best single {res['classical_single'].get('channel')}: "
+          f"ξ = {xi_c1:.2f}, A₀ = {res['classical_single']['A0']:.3f}]")
     _diagnose("classical", res["classical"])
 
     gen = torch.Generator().manual_seed(RANDOM_SEED)

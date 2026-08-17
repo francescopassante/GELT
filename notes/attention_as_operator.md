@@ -687,6 +687,24 @@ dump's mismatched row silently). The single-channel difference is kept as
 β the resolved basis *is* the single channel, so the old and new definitions
 agree there identically.
 
+**Both estimators are now quoted, not one.** Picking between them is a real
+choice — the GEVP is the variational optimum but its v₀ is fitted on the
+configurations it is scored on, and the best single member is not — and it is
+not one to make silently at the moment of writing a table. So every arm
+(classical, trained, random) carries both readings: `classical` /
+`classical_single`, `attention` / `attention_single`, `delta_vs_random` /
+`delta_vs_random_single`. Table 5 prints one **line per estimator per β**, and a
+line is internally consistent by construction: its ξ, its three A₀ and its ΔA₀
+all come from the same operators, so the A₀ column subtracts to the ΔA₀ column
+*within* a line and never across one. The classical arm gained a single-member
+reading (`_jack_best_single` over the APE ladder) purely so that line is
+complete.
+
+The gap between the two lines is itself informative and is the thing to watch in
+the rerun: it is what the variational step bought each arm. If it is large for
+the random network and small for the trained ones, the GEVP line is inflating
+the control, and the single line is the one to quote in prose.
+
 ### 9.6 What would falsify the transported claim
 
 Same pre-registration discipline as §6. The claim survives if ξ_A tracks the
