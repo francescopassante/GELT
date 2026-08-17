@@ -608,10 +608,14 @@ trained-minus-random of +0.156. That is the weaker of the two positions and
 therefore the one to report; off-diagonal arms tracking ξ would be §6.1.1's
 content-dependence result reproduced on a non-abelian group, not a weakness.
 
-Both β = 2.4 checkpoints are run as separate arms in either mode — Run 5 (seed-0
-ensemble) and the replication (`_ens1`, seed-1 ensemble). They were trained on
-*different* ensembles, so agreement between them is §6.2's replication statement
-transported to the attention field, and it is available from the single row.
+**One trained arm** is run in either mode: the Run-5 β = 2.4 operator (seed-0
+ensemble). The replication checkpoint (`_ens1`, seed-1 ensemble) was trained on
+an independent ensemble, so running it as a second arm would transport §6.2's
+replication statement to the attention field — worth doing, available from the
+same single row, and one entry in `TRAINED_CKPTS` away. It is left out by
+default so that the row compares one trained operator against one random one
+against the classical basis, and nothing in the table needs a reader to hold two
+trained columns apart.
 
 ### 9.4 Nothing measured here was ever trained on
 

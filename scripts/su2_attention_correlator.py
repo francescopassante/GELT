@@ -52,11 +52,12 @@ the rest), which Table 6 (``tab:cross``) licenses — it measures the ratio
 mean diagonal advantage in A₀ of only +0.038 against a mean trained-minus-random
 of +0.156, i.e. ξ_A is a property of the configuration in front of the network.
 
-Both β = 2.4 checkpoints are run as independent trained arms — Run 5
-(``best_glueball_gelt_sm0-2-4-6.pth``, seed-0 ensemble) and the replication
-(``…_ens1.pth``, seed-1 ensemble). They were trained on *different* ensembles, so
-agreement between them is the same replication statement §6.2 already makes for
-A₀, now transported to the attention field.
+One trained arm is run: the Run-5 β = 2.4 operator
+(``best_glueball_gelt_sm0-2-4-6.pth``, seed-0 ensemble). The replication
+checkpoint (``…_ens1.pth``, seed-1 ensemble) is a second, equally valid trained
+arm trained on an independent ensemble — running it too would transport §6.2's
+A₀ replication statement to the attention field, and it is one entry in
+``TRAINED_CKPTS`` away.
 
 Every ensemble measured here is sampled at ``SAC_SEED`` (default 11), which is
 neither of the seeds (0, 1, 2) any checkpoint was trained on, and at a different
@@ -192,11 +193,12 @@ gaugegroup = tg.gaugegroup
 # GEVP anchor from. (Z₂ used (0, 4, 8, 16) — a coarser ladder for a coarser ξ.)
 SMEAR_LEVELS = tg.GEVP_LEVELS
 
-# Trained arms. Both are β = 2.4 operators; ens1 was trained on an independent
-# ensemble, so the pair is a replication of the trained arm, not a duplicate.
+# The trained arm: the Run-5 β = 2.4 operator. The replication checkpoint
+# (`tg.CHECKPOINT.replace(".pth", "_ens1.pth")`, trained on the independent
+# seed-1 ensemble) is a second, equally valid trained arm — add it back as one
+# more entry here if a replication of the attention measurement is wanted.
 TRAINED_CKPTS = {
     "trained": tg.CHECKPOINT,
-    "trained/ens1": tg.CHECKPOINT.replace(".pth", "_ens1.pth"),
 }
 TRAIN_BETA = tg.BETA  # the coupling every checkpoint was trained at
 

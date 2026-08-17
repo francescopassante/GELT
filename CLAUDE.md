@@ -123,8 +123,12 @@ removed pending rewrites; the spec now lives across the notes below.)
   unlike Z₂'s dropped β = 0.760 it is not finite volume (L/ξ_s = 12), so SU(2)
   can carry the non-monotonic-excursion argument §8.2 forces out of the Z₂
   section. §9.3: the default run is **one row at β = 2.4** — the only trained
-  coupling, so the row is a genuine *diagonal* cell, with both the Run-5 and
-  `_ens1` checkpoints as independent trained arms. It delivers every number in a
+  coupling, so the row is a genuine *diagonal* cell, with the Run-5 checkpoint
+  as the trained arm (the `_ens1` replication checkpoint is one `TRAINED_CKPTS`
+  entry away if a second trained arm is wanted). Every arm is quoted under
+  **both estimators** — the multi-channel GEVP and the best single member of the
+  same basis — one table line each, and a line's A₀ column subtracts to its ΔA₀
+  column by construction. It delivers every number in a
   Table 5 row (ξ_class, ξ_A trained/random, the three A₀, correlated ΔA₀) plus
   the profiles/nulls/δA/A the paper prints beside the table; it cannot deliver
   the aggregates (Pearson, slope, dynamic range, row/column control), and the
@@ -590,8 +594,8 @@ loop inline (there is no shared `gelt/train.py`). Device order: cuda → mps
   estimator layer by import (GEVP t0=1/td=2, window Δ∈[2,8], cosh + A₀, blocked
   jackknife block 20, config-scramble null, time-shuffle zero-mode check,
   correlated ΔA₀) and `train_glueball.config_inputs` for the per-timeslice 3D
-  inputs, so only the physics inputs differ. Trained arms are the two β = 2.4
-  checkpoints (Run 5 and `_ens1`); ensembles are sampled fresh at seed 11 so
+  inputs, so only the physics inputs differ. The trained arm is the Run-5
+  β = 2.4 checkpoint; ensembles are sampled fresh at seed 11 so
   nothing measured was ever trained on. ~40 min sampling + measurement for the
   default single row. Env: `SAC_BETAS` / `SAC_N_EVAL` (1600) / `SAC_CHUNK` /
   `SAC_SEED` / `SAC_KEEP` (cache ≈8.5 GB per β) / `SAC_DEVICE` / `SAC_SMOKE` /
