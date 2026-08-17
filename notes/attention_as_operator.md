@@ -653,6 +653,40 @@ Two traps found while wiring it, both silent if missed:
 * the zero-momentum projection sums **three** spatial axes, not two. The Z₂
   slice is 2D; SU(2)'s is 12³.
 
+### 9.5.1 ΔA₀ now compares the operators the table quotes (2026-08-17)
+
+The first SU(2) table printed `A₀ tr./rnd. = 0.90/0.76` beside
+`ΔA₀ = +0.286(56)` — a factor of two apart, and the reader is invited to
+subtract. Neither number was wrong; they were **different operators**. The `A₀`
+column is `entry["attention"]`, the multi-channel GEVP arm, while `_corr_delta`
+was fed `best_series`, the single best channel chosen by `_jack_best_single`.
+
+This was invisible in Z₂ because §6.2's variational self-check **fell back to a
+single channel at every β**, so `attention` and `attention_single` coincided
+(verified in `z2_attention_correlator_diag_R6.pt`: identical A₀ to six decimals
+at all five β, `gevp_fell_back = True` throughout) and the columns subtracted by
+accident. On SU(2) the fallback does not fire uniformly — 24 attention channels
+of a *random* network are redundant in a different way than a trained one's, and
+a variational combination of them buys the random arm ≈ +0.15 in A₀ that its
+best single channel does not have. That is a real property of the GEVP (a
+variational optimum fitted on the same data helps a bad operator most), not a
+bug, but it must not be split across two columns of one row.
+
+Fix: `_jack` now records `basis_idx`, the rows it actually settled on after
+pruning and after the fallback; `_resolved_series` replays that choice; and
+`_corr_delta` takes both arms' resolved bases plus the windows `_jack` fixed on
+the full sample, so v₀ is recomputed per replica for each arm exactly as in the
+quoted number and **ΔA₀ is the difference of the two quoted A₀ by
+construction**. `_delta_consistency` asserts that identity at every call site
+(including the offline `write_tex`, which would otherwise regenerate a stale
+dump's mismatched row silently). The single-channel difference is kept as
+`delta_vs_random_single` — it is the conditioning-free floor, and it is what
+§6.2 above reports.
+
+**The Z₂ numbers in the paper are unchanged**: with the fallback firing at every
+β the resolved basis *is* the single channel, so the old and new definitions
+agree there identically.
+
 ### 9.6 What would falsify the transported claim
 
 Same pre-registration discipline as §6. The claim survives if ξ_A tracks the

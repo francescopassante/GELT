@@ -416,7 +416,7 @@ def measure_ensemble(beta, nets, labels, dist):
     zac._diagnose("classical", res["classical"])
 
     gen = torch.Generator().manual_seed(RANDOM_SEED)
-    best_series = {}
+    best_series, gevp_series = {}, {}
     for name in nets:
         chan = torch.cat(acc[name]["chan"], dim=1)  # (n_ch, B, Nt)
         out = torch.cat(acc[name]["out"], dim=0).unsqueeze(0)  # (1, B, Nt)
@@ -481,6 +481,11 @@ def measure_ensemble(beta, nets, labels, dist):
             print(f"      zero-mode check: time-shuffle plateau {plateau:.3f} "
                   f"vs (2ξ−1)/Nt = {(2 * xi_s - 1) / LT:.3f}")
 
+        # The series the correlated difference is taken on is the one the
+        # `attention` row quotes — GEVP basis, or the single channel it fell
+        # back to. On SU(2) the fallback does *not* fire uniformly (it did at
+        # every Z₂ β), so this is where the two definitions part company.
+        gevp_series[name] = zac._resolved_series(chan[keep], entry["attention"])
         idx = entry["attention_single"].get("idx")
         if idx is not None:
             best_series[name] = std[idx : idx + 1]
@@ -492,18 +497,37 @@ def measure_ensemble(beta, nets, labels, dist):
 
     # Correlated trained − random difference on shared configurations: the
     # significance statement for "training makes the routing a better operator".
+    # Taken on the *resolved* bases, so ΔA₀ is exactly the difference of the two
+    # A₀ the table quotes in the same row; `delta_vs_random_single` keeps the
+    # conditioning-free single-channel version beside it.
     res["delta_vs_random"] = {}
+    res["delta_vs_random_single"] = {}
+    if "random" in gevp_series:
+        e_r = res["nets"]["random"]["attention"]
+        for name in gevp_series:
+            if name == "random":
+                continue
+            e_t = res["nets"][name]["attention"]
+            dd = zac._corr_delta(gevp_series[name], gevp_series["random"], LT,
+                                 wa=e_t.get("window"), wb=e_r.get("window"))
+            if dd:
+                res["delta_vs_random"][name] = dd
+                zac._delta_consistency(dd, e_t, e_r, tag=f"[{name}]")
+                sig = dd["dA0"] / dd["dA0_err"] if dd["dA0_err"] else float("nan")
+                print(f"  {name} − random (shared configs): "
+                      f"ΔA₀ = {dd['dA0']:+.3f} ± {dd['dA0_err']:.3f} ({sig:+.1f}σ)"
+                      f"   Δξ = {dd['dxi']:+.2f} ± {dd['dxi_err']:.2f}"
+                      f"   [{dd['n_ops'][0]} vs {dd['n_ops'][1]} ops]")
     if "random" in best_series:
         for name in best_series:
             if name == "random":
                 continue
-            dd = zac._corr_delta(best_series[name], best_series["random"], LT)
-            if dd:
-                res["delta_vs_random"][name] = dd
-                sig = dd["dA0"] / dd["dA0_err"] if dd["dA0_err"] else float("nan")
-                print(f"  {name} − random (shared configs): "
-                      f"ΔA₀ = {dd['dA0']:+.3f} ± {dd['dA0_err']:.3f} ({sig:+.1f}σ)"
-                      f"   Δξ = {dd['dxi']:+.2f} ± {dd['dxi_err']:.2f}")
+            ds = zac._corr_delta(best_series[name], best_series["random"], LT)
+            if ds:
+                res["delta_vs_random_single"][name] = ds
+                sig = ds["dA0"] / ds["dA0_err"] if ds["dA0_err"] else float("nan")
+                print(f"  {name} − random, best single channel: "
+                      f"ΔA₀ = {ds['dA0']:+.3f} ± {ds['dA0_err']:.3f} ({sig:+.1f}σ)")
     return res
 
 
@@ -687,7 +711,8 @@ def write_tex(rows):
         rf" trained arm is the $\beta={TRAIN_BETA}$ operator of Sec.~\ref{{sec:spectroscopy}}",
         r" evaluated on every ensemble (matched only in its own row).",
         r" $\Delta A_0$ is a blocked jackknife of the trained $-$ random",
-        r" \emph{difference} on shared configurations.}",
+        r" \emph{difference} on shared configurations, taken on the same two",
+        r" operators the $A_0$ column quotes, so it is their difference.}",
         r"\label{tab:su2attn}",
         r"\begin{ruledtabular}",
         r"\scriptsize",
@@ -704,6 +729,13 @@ def write_tex(rows):
         a_t = _arm([r], tr, what="A0")[0][0] if tr else float("nan")
         a_r = _arm([r], "random", what="A0")[0][0]
         dd = r.get("delta_vs_random", {}).get(tr)
+        # A table generated from a dump written before the difference moved onto
+        # the resolved bases would silently print a single-channel ΔA₀ beside a
+        # multi-channel A₀ column. Say so rather than emit it quietly.
+        if dd and tr:
+            zac._delta_consistency(dd, r["nets"][tr]["attention"],
+                                   r["nets"]["random"]["attention"],
+                                   tag=f"[β={r['beta']:g}, stale dump?]")
         d = (f"${dd['dA0']:+.3f}({int(round(dd['dA0_err'] * 1000))})$"
              if dd else "---")
         lines.append(

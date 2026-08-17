@@ -454,6 +454,11 @@ def _jack(obar, nt, block=JACK_BLOCK, label=""):
     fell_back = not use_proj
     if fell_back:
         obar = obar[best_i : best_i + 1]
+    # Rows of the *input* the estimator actually settled on, after pruning and
+    # after the fallback. Recorded so a correlated difference between two arms
+    # can be taken on exactly the operators this function quotes — see
+    # _resolved_series.
+    basis_idx = [kept[best_i]] if fell_back else list(kept)
 
     try:
         proj, _ = _project(obar)
@@ -461,12 +466,13 @@ def _jack(obar, nt, block=JACK_BLOCK, label=""):
     except Exception as exc:
         return {"m": float("nan"), "m_err": float("nan"), "A0": float("nan"),
                 "A0_err": float("nan"), "why": f"GEVP failed: {exc}",
-                "n_ops": len(kept), "window": None, "profile": None}
+                "n_ops": len(kept), "basis_idx": basis_idx, "window": None,
+                "profile": None}
 
     prof = (Cp / Cp[0]).tolist() if Cp[0] > 0 else Cp.tolist()
     window = _window(Cp)
     out = {"n_ops": obar.shape[0], "n_basis": len(kept), "kept": kept,
-           "window": window, "gevp_fell_back": fell_back,
+           "basis_idx": basis_idx, "window": window, "gevp_fell_back": fell_back,
            "profile": [float(x) for x in prof[:12]]}
     if window is None:
         out.update({"m": float("nan"), "m_err": float("nan"), "A0": float("nan"),
@@ -534,7 +540,22 @@ def _jack_best_single(obar, nt, labels, block=JACK_BLOCK):
     return res
 
 
-def _corr_delta(a, b, nt, block=JACK_BLOCK):
+def _resolved_series(obar, res):
+    """The standardized operator basis :func:`_jack` settled on for ``res``.
+
+    ``_jack`` standardizes, prunes, and then either keeps the GEVP basis or
+    falls back to one channel; it records that choice in ``basis_idx``. Feeding
+    the same rows back to :func:`_corr_delta` is what makes the correlated
+    difference a difference *of the operators the table quotes* rather than of
+    two other operators that happen to come from the same network.
+    """
+    idx = res.get("basis_idx")
+    if not idx:
+        return None
+    return _standardize(obar.double())[idx]
+
+
+def _corr_delta(a, b, nt, block=JACK_BLOCK, wa=None, wb=None):
     """Blocked jackknife of (A₀_a − A₀_b) and (ξ_a − ξ_b) on SHARED configs.
 
     The trained and random arms are evaluated on the same configurations, so
@@ -543,9 +564,18 @@ def _corr_delta(a, b, nt, block=JACK_BLOCK):
     head ablation into +0.0787 ± 0.0145 in the glueball study. Each arm keeps
     its own fit window (they are different operators); only the configurations
     are shared.
+
+    ``a`` and ``b`` are whole operator *bases*: the GEVP runs inside `_fit`, so
+    v₀ is recomputed in every replica exactly as in :func:`_jack`. Pass ``wa`` /
+    ``wb`` — the windows `_jack` fixed on the full sample — so that the central
+    ΔA₀ is identical to the difference of the two quoted A₀ values; without them
+    the window is re-derived here from the projected correlator, which agrees
+    but is not guaranteed to by construction.
     """
-    wa = _window(connected_correlator(a[0]))
-    wb = _window(connected_correlator(b[0]))
+    if wa is None:
+        wa = _window(connected_correlator(_project(a)[0]))
+    if wb is None:
+        wb = _window(connected_correlator(_project(b)[0]))
     if wa is None or wb is None:
         return None
 
@@ -575,7 +605,32 @@ def _corr_delta(a, b, nt, block=JACK_BLOCK):
         return float(np.sqrt((n - 1) / n * ((good - good.mean()) ** 2).sum()))
 
     return {"dA0": dA, "dA0_err": _err(sA), "dxi": dxi, "dxi_err": _err(sx),
-            "n_blocks": n_blocks}
+            "n_blocks": n_blocks, "n_ops": (a.shape[0], b.shape[0]),
+            "window": (wa, wb)}
+
+
+def _delta_consistency(dd, res_a, res_b, tag="", tol=1e-6):
+    """Warn if ΔA₀ is not the difference of the two quoted A₀ values.
+
+    The whole point of taking the difference on the resolved bases is that the
+    table's ``A₀ tr./rnd.`` column and its ``ΔA₀`` column describe the same two
+    operators. That held silently in Z₂ only because the GEVP fell back to one
+    channel at every β; the SU(2) run then quoted a multi-channel A₀ column
+    beside a single-channel ΔA₀ and the two disagreed by a factor of two. It is
+    a one-line check, so it is made rather than assumed.
+    """
+    if not dd:
+        return True
+    a0a, a0b = res_a.get("A0", float("nan")), res_b.get("A0", float("nan"))
+    if not (np.isfinite(a0a) and np.isfinite(a0b)):
+        return True
+    gap = abs(dd["dA0"] - (a0a - a0b))
+    if gap > tol:
+        print(f"      ** ΔA₀{(' ' + tag) if tag else ''} = {dd['dA0']:+.4f} but "
+              f"the quoted A₀ differ by {a0a - a0b:+.4f} — the columns describe "
+              f"different operators (gap {gap:.2e})")
+        return False
+    return True
 
 
 def _diagnose(name, res):
@@ -713,7 +768,7 @@ def measure_ensemble(beta, nets, labels, dist):
     _diagnose("classical", res["classical"])
 
     gen = torch.Generator().manual_seed(RANDOM_SEED)
-    best_series = {}
+    best_series, gevp_series = {}, {}
     for name in nets:
         chan = torch.cat(acc[name]["chan"], dim=1)  # (n_ch, B, Nt)
         out = torch.cat(acc[name]["out"], dim=0).unsqueeze(0)  # (1, B, Nt)
@@ -783,6 +838,10 @@ def measure_ensemble(beta, nets, labels, dist):
             print(f"      zero-mode check: time-shuffle plateau {plateau:.3f} "
                   f"vs (2ξ−1)/Nt = {(2 * xi_a1 - 1) / tz.LT:.3f}")
 
+        # The series the correlated difference is taken on is the one the
+        # `attention` row quotes — GEVP basis, or the single channel it fell
+        # back to. (Both bases are stored: which one is live is `basis_idx`.)
+        gevp_series[name] = _resolved_series(chan[keep], entry["attention"])
         idx = entry["attention_single"].get("idx")
         if idx is not None:
             best_series[name] = _standardize(chan[keep].double())[idx : idx + 1]
@@ -793,16 +852,30 @@ def measure_ensemble(beta, nets, labels, dist):
                   f"vs jackknife block {JACK_BLOCK}{flag}")
 
     # Correlated difference on shared configurations — the significance
-    # statement for "training makes the routing a better operator".
+    # statement for "training makes the routing a better operator". Taken on the
+    # *resolved* bases, so ΔA₀ is the difference of the two A₀ the tables quote;
+    # the single-channel difference is kept beside it as the conditioning-free
+    # floor (it is what §6.2 of notes/attention_as_operator.md reports, and the
+    # two coincide whenever the GEVP falls back, as it did at every Z₂ β).
     tr = f"train@{beta}"
-    if tr in best_series and "random" in best_series:
-        dd = _corr_delta(best_series[tr], best_series["random"], Nt)
+    if tr in gevp_series and "random" in gevp_series:
+        e_t, e_r = res["nets"][tr]["attention"], res["nets"]["random"]["attention"]
+        dd = _corr_delta(gevp_series[tr], gevp_series["random"], Nt,
+                         wa=e_t.get("window"), wb=e_r.get("window"))
         res["delta_vs_random"] = dd
         if dd:
+            _delta_consistency(dd, e_t, e_r)
             print(f"  trained − random (shared configs): "
                   f"ΔA₀ = {dd['dA0']:+.3f} ± {dd['dA0_err']:.3f} "
                   f"({dd['dA0']/dd['dA0_err']:+.1f}σ)   "
                   f"Δξ = {dd['dxi']:+.2f} ± {dd['dxi_err']:.2f}")
+    if tr in best_series and "random" in best_series:
+        ds = _corr_delta(best_series[tr], best_series["random"], Nt)
+        res["delta_vs_random_single"] = ds
+        if ds:
+            print(f"  trained − random, best single channel: "
+                  f"ΔA₀ = {ds['dA0']:+.3f} ± {ds['dA0_err']:.3f} "
+                  f"({ds['dA0']/ds['dA0_err']:+.1f}σ)")
     return res
 
 
