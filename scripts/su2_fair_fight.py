@@ -169,10 +169,32 @@ _DEFAULT_DUMPS = [
     ("results/glueball/best_glueball_gelt_sm0-2-4-6_ens1_test_obars.pt",
      "datasets/glueball_configs_L12_Lt24_b2.4_xi3.0_N2000_seed1.pt"),
 ]
-if "SFF_DUMPS" in os.environ:
-    DUMPS = [(p.strip(), _cache_for(p.strip())) for p in os.environ["SFF_DUMPS"].split(",")]
+
+
+def _resolve(path):
+    """Where the dump actually is.
+
+    ``results/`` is gitignored, and on the V100 it is root-owned (the jobs run in
+    a container), so a dump cannot be pulled or copied into it as the user. The
+    tracked copies therefore live in ``dumps/`` — look there before giving up,
+    so neither an env var nor a writable ``results/`` is needed to find them.
+    """
+    if os.path.exists(path):
+        return path
+    alt = os.path.join("dumps", os.path.basename(path))
+    return alt if os.path.exists(alt) else path
+
+
+# Paths may also be given as positional arguments — env vars do not survive
+# every container wrapper, and a path that must be typed is one that can be seen.
+_cli = [a for a in _ARGV[1:] if a.endswith(".pt")]
+if _cli:
+    DUMPS = [(_resolve(a), _cache_for(a)) for a in _cli]
+elif "SFF_DUMPS" in os.environ:
+    DUMPS = [(_resolve(p.strip()), _cache_for(p.strip()))
+             for p in os.environ["SFF_DUMPS"].split(",")]
 else:
-    DUMPS = _DEFAULT_DUMPS
+    DUMPS = [(_resolve(d), c) for d, c in _DEFAULT_DUMPS]
 
 CHUNK = int(os.environ.get("SFF_CHUNK", 8))
 MAX_LEVEL = int(os.environ.get("SFF_MAXLEVEL", 16))
