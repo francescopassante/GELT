@@ -637,8 +637,13 @@ def build_transport_average(
         # elements, and *any* tie-break breaks gauge covariance. Concretely for
         # Z₂, project(0) = +1 by convention, but covariance demands
         # project(ω·0·ω') = ω·project(0)·ω', which fails whenever ωω' = −1.
-        # This is not a corner case: on a Z₂ L1-ball at R=6 roughly a fifth of
-        # the offsets average to exactly zero (paths cancel pairwise).
+        # This is not a corner case, and not merely a statistical one: T_Δx sums
+        # N_Δx values in {±1}, so it vanishes iff the paths cancel pairwise —
+        # possible for every offset with N_Δx *even*, which is 36/84 = 43% of the
+        # D=2 R=6 L1-ball (268/376 = 71% at D=3). On an 8×8 lattice every one of
+        # those offsets vanishes somewhere at every β; per (offset, site) the
+        # rate is ~6% at β ≈ 0.7–0.76 and ~15% under Haar, peaking at 50% (Haar)
+        # on the N_Δx = 2 offsets. So .any() below fires on essentially any batch.
         vanishing = (stacked.abs().amax(dim=(-2, -1)) == 0).any()
         if vanishing:
             raise ValueError(

@@ -157,6 +157,37 @@ removed pending rewrites; the spec now lives across the notes below.)
   the ~40 h L=32 gauge run), and **pre-registered outcomes** — including the
   one that would force retracting §6.1.2's reading. Read before touching
   `gelt/ising.py`.
+- `notes/operator_decomposition.md` — **design record for the question §6.2
+  leaves open**: the learned operator *wins* on A₀, but is the advantage new
+  operator content or the same content in a combination the GEVP missed? Because
+  `C_ab(0)` is the Hilbert-space inner product on states `O|vac⟩`, the split
+  `O_GELT = P + r` (P = orthogonal projection onto the classical span) is exact,
+  and P is the strongest possible classical opponent *by construction*. Result
+  (2026-09-06, offline from the existing dumps): **12.9% / 11.7%** of the norm²
+  lies outside the span of the whole four-level basis on two independent
+  ensembles, that part carries 13–14% of the ground-state amplitude, and removing
+  it costs the entire advantage — **ΔA₀ = +0.076 ± 0.019 (4.0σ)** combined, at
+  unchanged mass. It is **not** a contact term (the fraction *grows* under the
+  C(τ) metric, 0.129 → 0.156 → 0.197 — the opposite of `rotational_symmetry.md`'s
+  E-irrep). The scale that makes 13% meaningful is the ladder's own increments,
+  0.689 → 0.197 → 0.049: a converged geometric series, so the entire remaining
+  tail is worth ≈2%. Mechanism: `r` is a *poor* operator alone (A₀ = 0.43) that
+  wins by constructive interference. Two controls outstanding (§5, random-init
+  arm = learned vs architectural) and one falsifiable prediction about the fair
+  fight (§6). Read before touching `scripts/operator_decomposition.py`.
+- `notes/audit_2026-09-06.md` — **repo audit**, the successor to
+  `fable_audit.md` for everything built since: what is green (111 tests, the
+  paper already carries the §8.2 dual corrections), the two untracked/unrun
+  fair-fight scripts, and the **one confirmed defect** — projected Z₂ APE
+  smearing has *no tunable radius at any α* (identity below ½, majority-vote
+  automaton above), and at the production `SMEAR_ALPHA = 0.5` it is **not gauge
+  covariant**: 99.9% of the links it changes are `project(0) → +1` tie-breaks,
+  Ō(t) moves 1.82σ under a gauge transformation, and 0.67% of the network's
+  smeared input plaquettes flip sign. Consequences: the Z₂ classical comparator
+  is one operator, not four (the dumps already say `gevp_fell_back=True,
+  n_ops=1` at all five β), the Z₂ nets trained on four channels of which three
+  are byte-identical, and the dual accuracy table faces a handicapped opponent.
+  **SU(2) is verified clean** (1.4e-15), so §6.2 is untouched. Ranked plan in §4.
 - `notes/resources.md` — curated textbooks, lecture notes, and ML-for-LGT
   papers with suggested reading order.
 - `notes/tunnel-visualization.md` — exploratory notes on visualising
@@ -335,6 +366,26 @@ prioritized fixes):
 3. **RoPE axis coverage:** `pair_axis = [p % D for p in range(n_pairs)]`
    only rotates `n_pairs` axes, so in 4D with small `d_qkv` some axes get
    the identity rotation. Enforce `d_qkv ≥ 2D` for full coverage.
+4. **`ape_smear` is broken on Z₂ at the production `SMEAR_ALPHA = 0.5`**
+   (confirmed 2026-09-06 — `notes/audit_2026-09-06.md` §2). Projected Z₂ APE
+   smearing has **no tunable radius at any α**: with two spatial staples the
+   update is `V = (1−α)U + (α/2)(s₁+s₂)`, which is the exact identity for
+   α < ½ and a majority-vote automaton with a fixed point for α > ½. At
+   α = ½ exactly, `V = 0` whenever the staples disagree with the link and
+   `Z2.project` sends `0 → +1` — a value that does not transform. Measured on
+   production configs: the ladder **freezes after one step**, and 99.9% of the
+   links the smearing changes are gauge-dependent tie-breaks; Ō(t) moves 1.82σ
+   under a gauge transformation and 0.67% of the network's smeared input
+   plaquettes flip sign. So (i) the Z₂ classical basis is one operator, not four
+   (the dumps already record `gevp_fell_back=True, n_ops=1` at all five β),
+   (ii) the Z₂ nets were trained on four channels of which three are
+   byte-identical, and (iii) "exact gauge invariance" holds for the
+   *architecture* but not end-to-end for the Z₂ *input pipeline*. **SU(2) is
+   verified clean** (covariance violation 1.4e-15, ladder keeps moving), so the
+   §6.2 headline is untouched. `tests/test_glueball.py` misses it because its
+   covariance cases use α = 0.6 / 0.7, never 0.5. Fix: α = 0.7, or the
+   unprojected fat links `z2_fair_fight.py` implements (linear in the links ⇒
+   exactly covariant, and the only Z₂ scheme with a real radius).
 
 What still does **not** exist: a full worst-case-Ω stress test (only the
 quick `check_gelt_invariance.py` exists); β in the datasets (needed for the
@@ -571,6 +622,29 @@ loop inline (there is no shared `gelt/train.py`). Device order: cuda → mps
   (`python -u`, `TQDM_MININTERVAL=30`) so progress is watchable with
   `tail -f`; each leaves a `datasets/*_test_obars.pt` dump for
   `fit_glueball_overlap.py`.
+- **`operator_decomposition.py`** — *what did the network find?* Splits the
+  learned operator as `O_GELT = P + r` against the span of the classical basis
+  in the exact Hilbert-space metric `C_ab(0)`, on the `…_test_obars.pt` dumps
+  (offline, CPU, seconds — no GPU, no ensemble). Prints the published
+  GELT-vs-GEVP comparison first as a **gate** (it reproduces it to the last
+  digit), then the norm² fraction outside the span, `Z_r/Z_G`, the correlated
+  ΔA₀(GELT − P), the classical ladder's own increments as the scale, a C(τ)
+  metric scan as the contact-term test, and an inverse-variance combination
+  across the two ensembles. Writes `results/glueball/operator_decomposition.
+  {png,pt}`. See `notes/operator_decomposition.md` — including the two controls
+  it does *not* have.
+- **`z2_fair_fight.py` / `su2_fair_fight.py`** — *is the classical comparator a
+  straw man?* Rebuilds the classical arm as strongly as the theory allows, on
+  the same configurations, through the same estimator, and re-runs the
+  comparison: Z₂ against the dual accuracy table (arms `published` / `covariant`
+  / `fat` / `shapes` / `full`), SU(2) against §6.2's ΔA₀ (`published` / `deep` /
+  `shapes` / `full`). Both gate on reproducing the published numbers before
+  anything else is read. **Written 2026-08-17/18, never run** —
+  `results/fair_fight/` is empty; `SFF_NOCACHE=1` (SU(2), reproduces
+  `+0.077 ± 0.022` offline) and `FF_SMOKE=1` (Z₂) both verified to work
+  2026-09-06. `su2_fair_fight.py`'s strengthened arms need the SU(2) ensemble
+  cache, which is absent locally. The Z₂ pre-flight that motivated them is
+  confirmed and quantified in `notes/audit_2026-09-06.md` §2.
 - **`dual_ground_truth.py`** — exact ground truth for the Z₂ mass gap from the
   dual Ising model (`gelt.ising`), closing `attention_as_operator.md` §6.1.2.
   Per β: runs the dual Ising at β* on the **matched** (48×24²) and **large**
@@ -708,6 +782,9 @@ python scripts/measure_glueball.py     # anisotropic 0⁺⁺ glueball baseline (
 python scripts/fit_glueball_overlap.py # cosh fits + overlap A₀ (offline, from train_glueball.py's test-Ō dump)
 python scripts/dual_ground_truth.py    # exact ξ from the dual Ising model (~30 min, GPU)
 python scripts/su2_attention_correlator.py  # one Table 5 row, SU(2) β=2.4 (~40 min, GPU)
+python scripts/operator_decomposition.py    # O_GELT = P + r against the classical span (offline, seconds)
+SFF_NOCACHE=1 python scripts/su2_fair_fight.py  # reproduce §6.2's ΔA₀ offline; drop it for the strengthened arms
+python scripts/z2_fair_fight.py             # is the Z₂ classical comparator a straw man? (GPU)
 python -m gelt.cnn_baseline            # torchsummary for a 5×5 CNN
 pytest tests                           # unit tests
 ```
@@ -757,8 +834,23 @@ charge, Wilson loops).
 
 ## Suggested next steps
 
-In priority order, per `notes/fable_audit.md` §4 (architecture work
-gating the explainability program in `notes/explainability.md`):
+**Results-closing work comes first, and its ranked plan is
+`notes/audit_2026-09-06.md` §4:** (1) run the two fair fights — written, smoke-
+tested, never run, and until they do the Z₂ accuracy table has a known
+self-diagnosed hole; (2) the random-init control for
+`notes/operator_decomposition.md`, one GPU eval pass, which separates *learned*
+from *architectural* in the new result; (3) fold the decomposition into
+`su2_fair_fight.py` against its strongest arm; (4) fix the Z₂ smearing
+(caveat 4 above) and cover it in `tests/test_glueball.py`; (5) dump per-config
+Ō from `z2_attention_correlator.py` so the decomposition transports to the
+attention field; (6) merge `dual-ground-truth` → `main` and track the
+fair-fight scripts. **Framing caution:** items 1 and 3 can move the Z₂ accuracy
+table, so hold the abstract's "the only arm consistent with" sentence until the
+fair fight lands — nothing else depends on it.
+
+The list below is the *architecture* backlog, in priority order, per
+`notes/fable_audit.md` §4 (architecture work gating the explainability program
+in `notes/explainability.md`):
 
 1. ~~**Resolve the dead parameters** (`self.alpha` ReZero, `blocks_bias`'s
    `b_h`).~~ **Done:** `self.alpha` deleted (residual stays `W + W_act`),
