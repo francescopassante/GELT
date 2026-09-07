@@ -198,8 +198,26 @@ elif "SFF_DUMPS" in os.environ:
 else:
     DUMPS = [(_resolve(d), c) for d, c in _DEFAULT_DUMPS]
 
-CHUNK = int(os.environ.get("SFF_CHUNK", 8))
-MAX_LEVEL = int(os.environ.get("SFF_MAXLEVEL", 16))
+def _flag(name, default):
+    """``--name=value`` from argv, falling back to the env var, then the default.
+
+    Env vars do not survive every container wrapper — a run that silently used
+    the defaults instead of what was asked for is how this study spent an
+    afternoon auditing nothing.
+    """
+    for a in _ARGV[1:]:
+        if a.startswith(f"--{name}="):
+            return a.split("=", 1)[1]
+    return os.environ.get(f"SFF_{name.upper()}", default)
+
+
+CHUNK = int(_flag("chunk", 8))
+# The matched-input cap. The network's inputs are INPUT_SMEAR_LEVELS = (0,2,4,6),
+# so `deep`/`full` at levels 8–16 give the classical side smearing content the
+# network never received. `--maxlevel=6` caps every arm there, which is the
+# like-for-like comparison; loop *shapes* need no cap, since depth can build
+# larger loops out of plaquettes but cannot rebuild iterated smearing (Run 4).
+MAX_LEVEL = int(_flag("maxlevel", 16))
 NOCACHE = os.environ.get("SFF_NOCACHE", "0") == "1"
 REPLOT = os.environ.get("SFF_REPLOT", "")
 KEEP_OBARS = os.environ.get("SFF_KEEP_OBARS", "1") == "1"
@@ -242,7 +260,7 @@ ARM_SPEC = {
 # SFF_STRONGEST re-points it; the verdict below additionally names whichever arm
 # came out strongest in fact, since that is the opponent the claim has to beat.
 STRONGEST = os.environ.get("SFF_STRONGEST", "full")
-ARMS = os.environ["SFF_ARMS"].split(",") if "SFF_ARMS" in os.environ else list(ARM_SPEC)
+ARMS = _flag("arms", ",".join(ARM_SPEC)).split(",")
 
 # Okabe–Ito, ordered so no adjacent pair falls in the 6–8 ΔE band under
 # deuteranopia; every series also carries a distinct marker, so identity is
@@ -789,7 +807,11 @@ def main():
         return
 
     print(f"device: {device} | SU(2) {tg.L}³×{tg.LT}, β = {tg.BETA}, ξ = {tg.XI} | "
-          f"arms = {','.join(ARMS)} | strongest = {STRONGEST}")
+          f"arms = {','.join(ARMS)} | strongest = {STRONGEST} | "
+          f"max level = {MAX_LEVEL}"
+          + ("  [MATCHED INPUT: the classical arms see only the smearing levels "
+             "the network was trained on]" if MAX_LEVEL <= max(tg.INPUT_SMEAR_LEVELS)
+             else ""))
     print(f"auditing: §6.2 ΔA₀ = +0.078 ± 0.022 (3.6σ) vs the [0,2,4,6] × 1×1 basis")
 
     rows, cov, moved = [], None, None
