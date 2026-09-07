@@ -39,6 +39,7 @@ Run:
 
 import functools
 import os
+import sys
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -77,6 +78,21 @@ def _env_int(name, default):
 def _env_flag(name, default):
     v = os.environ.get(name)
     return default if v is None else v not in ("0", "false", "False", "")
+
+
+def _env_levels(name, default):
+    """A comma-separated smearing ladder from env or ``--name=a,b,c`` in argv.
+
+    Both routes, because env vars do not survive every container wrapper. The
+    ladder is part of the checkpoint and dump names, so a non-default one cannot
+    collide with an existing run.
+    """
+    flag = f"--{name.lower().replace('glueball_', '').replace('_', '-')}="
+    for a in sys.argv[1:]:
+        if a.startswith(flag):
+            return tuple(int(x) for x in a.split("=", 1)[1].split(","))
+    v = os.environ.get(name)
+    return default if not v else tuple(int(x) for x in v.split(","))
 
 
 # ── Tunables ──────────────────────────────────────────────────────────────────
@@ -199,7 +215,8 @@ JACK_BLOCK = 10  # blocked-jackknife block size (configs) for reported masses
 GEVP_LEVELS = [0, 2, 4, 6]  # classical anchor smearing basis (matches measure_)
 GEVP_T0 = 1
 SMEAR_ALPHA = 0.5
-INPUT_SMEAR_LEVELS = (0, 2, 4, 6)  # cumulative APE levels of the plaquette
+INPUT_SMEAR_LEVELS = _env_levels("GLUEBALL_INPUT_SMEAR_LEVELS", (0, 2, 4, 6))
+#   cumulative APE levels of the plaquette
 #   channels fed to GELT; (0,) is the original thin-link input. Stacking several
 #   levels on the channel axis (in_channels = 3·n_levels) hands the network the
 #   deep branched staple content it cannot rebuild from thin links at depth 4

@@ -440,8 +440,16 @@ def measure(dump_path, cache_path, cov_done):
     jb = int(meta.get("jack_block", 10))
     B, Nt = gelt.shape
     dmin, dmax = fgo.FIT_WINDOW
+    # The trained operator's OWN input ladder, read from the dump rather than
+    # from the module default — a second ladder now exists, and the matched-input
+    # question is exactly "does the classical arm see levels this net did not?".
+    in_levels = list(meta.get("input_smear_levels", tg.INPUT_SMEAR_LEVELS))
     print(f"  {B} test configs × Nt = {Nt} | window Δ ∈ [{dmin}, {dmax}] | "
           f"GEVP (t0, td) = ({t0}, {td}) | block {jb}")
+    print(f"  the net was trained on input smear levels {in_levels}; "
+          f"classical arms capped at {MAX_LEVEL} → "
+          + ("MATCHED" if MAX_LEVEL <= max(in_levels)
+             else f"the classical side sees levels the net never did"))
 
     bases = {"published": dumped_basis}
     labels = {"published": [f"n{n}·1x1" for n in meta.get("gevp_levels", [])]}
