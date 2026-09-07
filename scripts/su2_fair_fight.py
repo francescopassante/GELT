@@ -229,6 +229,13 @@ ARM_SPEC = {
     "published": ([0, 2, 4, 6],              ((1, 1),),     True),
     "deep":      ([0, 2, 4, 6, 8, 12, 16],   ((1, 1),),     False),
     "shapes":    ([0],                       SHAPES_EXT,    False),
+    # `shapes` carries no smearing at all, so it tests thin unsmeared loops
+    # rather than loop *geometry*: it was the arm `operator_decomposition.md` §6
+    # predicted would be the only one able to move A₀, and it came last. This
+    # one gives the same shapes the published arm's own radius, so geometry and
+    # radius can be told apart — `deep` is radius alone, `shapes_sm` geometry
+    # alone at matched radius, `full` both.
+    "shapes_sm": ([0, 2, 4, 6],              SHAPES_EXT,    False),
     "full":      ([0, 2, 4, 6, 8, 12, 16],   SHAPES_FULL,   False),
 }
 # Named before the run so the choice cannot be made after seeing the A₀ column.
