@@ -132,7 +132,9 @@ sys.argv = _ARGV
 from gelt.glueball import (  # noqa: E402
     ape_smear,
     connected_correlator,
+    connected_correlator_matrix,
     fit_cosh_correlator,
+    gevp_ground_vector,
     glueball_operator,
     zero_momentum,
 )
@@ -201,6 +203,15 @@ MAX_LEVEL = int(os.environ.get("SFF_MAXLEVEL", 16))
 NOCACHE = os.environ.get("SFF_NOCACHE", "0") == "1"
 REPLOT = os.environ.get("SFF_REPLOT", "")
 KEEP_OBARS = os.environ.get("SFF_KEEP_OBARS", "1") == "1"
+# Eigenvalue floor for the GEVP whitening, relative to the largest eigenvalue of
+# C(t0) — the same value and for the same reason as
+# `z2_attention_correlator.py`'s GEVP_EPS. `fit_glueball_overlap.project_ground`
+# takes the library default 1e-12, which is twelve orders of magnitude, i.e. no
+# regularisation: a small signal divided by a floored *noise* eigenvalue yields a
+# huge generalized eigenvalue in a direction that is almost pure noise. Harmless
+# for the published 4-operator arm, fatal for a 21-operator one at 400 configs.
+GEVP_EPS = float(os.environ.get("SFF_GEVP_EPS", 1e-4))
+GEVP_TD_ = int(os.environ.get("SFF_GEVP_TD", 2))  # only for the Rayleigh gate
 
 OUT_PT = "results/fair_fight/su2_fair_fight.pt"
 OUT_PNG = "results/fair_fight/su2_fair_fight.png"
@@ -446,7 +457,15 @@ def measure(dump_path, cache_path, cov_done):
 
     # σ_Δ fixed from the full sample, per operator, exactly as fit_glueball_
     # overlap.py does it: every replica then minimises the same χ² surface.
-    proj_full = {n: fgo.project_ground(bases[n], t0, td) for n in names}
+    proj_full, proj_info = {}, {}
+    for n in names:
+        proj_full[n], proj_info[n] = _project(bases[n], t0, td)
+    print(f"\n  {'arm':<12} {'n_ops':>6} {'cond C(t0)':>12}   variational gate")
+    for n in names:
+        i = proj_info[n]
+        note = (f"FELL BACK to member {i['best']} — the GEVP picked a near-null "
+                "direction" if i["fell_back"] else "ok")
+        print(f"  {n:<12} {i['n_ops']:>6} {i['cond']:>12.2e}   {note}")
     sig = {"gelt": fgo.blocked_jackknife(
         lambda m: connected_correlator(gelt[m]), B, jb)[1]}
     for n in names:
@@ -460,7 +479,7 @@ def measure(dump_path, cache_path, cov_done):
     def stats(mask):
         v = {"gelt": fit_one(connected_correlator(gelt[mask]), sig["gelt"])[:2]}
         for n in names:
-            proj = fgo.project_ground(bases[n][:, mask], t0, td)
+            proj, _ = _project(bases[n][:, mask], t0, td)
             v[n] = fit_one(connected_correlator(proj), sig[n])[:2]
         row = []
         for n in ["gelt"] + names:
@@ -507,6 +526,46 @@ def measure(dump_path, cache_path, cov_done):
         print(f"  {n:<12} {a['m']:>8.4f} ± {a['m_err']:.4f} "
               f"{a['A0']:>8.4f} ± {a['A0_err']:.4f}{dd}")
     return out, cov_done
+
+
+def _rayleigh(series):
+    """C(td)/C(0) of a scalar series — what the variational projection maximises.
+
+    Also what exposes a projection that has instead maximised noise: it is scale
+    invariant, so a near-cancelling combination with an almost-zero C(0) shows up
+    here and nowhere in the mass.
+    """
+    C = connected_correlator(series)
+    return float(C[GEVP_TD_] / C[0]) if C[0] > 0 else float("-inf")
+
+
+def _project(basis, t0, td, eps=GEVP_EPS):
+    """v₀-projected operator, with the two guards `project_ground` does not have.
+
+    1. a real eigenvalue floor (see GEVP_EPS), and
+    2. the variational gate from `z2_attention_correlator._gevp_is_sane`: v₀
+       maximises the Rayleigh quotient over the *span* of the basis, so the
+       projection can never be a worse interpolator than the best single member.
+       When it is, the whitening has selected a near-null direction of an
+       ill-conditioned C(t0) and the honest answer is that member.
+
+    Returns ``(series, info)``; ``info`` carries the C(t0) condition number and
+    whether the gate fired, both of which belong in the report.
+    """
+    if basis.shape[0] == 1:
+        return basis[0], {"cond": 1.0, "fell_back": False, "n_ops": 1}
+    C = connected_correlator_matrix(basis)
+    Ct0 = 0.5 * (C[t0] + C[t0].transpose(-1, -2))
+    ev = torch.linalg.eigvalsh(Ct0)
+    cond = float(ev[-1] / ev[0]) if ev[0] > 0 else float("inf")
+    v0 = gevp_ground_vector(C, t0=t0, td=td, eps=eps)
+    proj = torch.einsum("i,ibt->bt", v0, basis)
+    singles = [_rayleigh(basis[i]) for i in range(basis.shape[0])]
+    best = int(np.argmax(singles))
+    if _rayleigh(proj) < singles[best] - 1e-9:
+        return basis[best], {"cond": cond, "fell_back": True,
+                             "n_ops": basis.shape[0], "best": best}
+    return proj, {"cond": cond, "fell_back": False, "n_ops": basis.shape[0]}
 
 
 def _chunked_table(configs, levels, shapes):
@@ -563,9 +622,44 @@ def report(rows):
     # column): the highest-A₀ classical arm is the one the claim must beat. If
     # that is not the pre-registered `full`, the verdict is taken against it and
     # both are named.
+    def r0(key):
+        return rows[0].get(key, {}) if rows else {}
+
     def _mean_A0(n):
         v = [r["arms"][n]["A0"] for r in rows if n in r.get("arms", {})]
         return sum(v) / len(v) if v else float("-inf")
+
+    # The superset gate. `deep` and `full` contain every operator `published`
+    # has, so the GEVP over them optimises over a strictly larger span and their
+    # A₀ cannot be lower than `published`'s — that is linear algebra, not
+    # physics. When it is lower, the estimator failed on the bigger basis and no
+    # verdict may be read from this run in either direction.
+    pub_lv, pub_sh, _ = ARM_SPEC["published"]
+    broken = []
+    for n in names:
+        if n == "published" or "published" not in r0("arms"):
+            continue
+        lv, sh, _ = ARM_SPEC[n]
+        if not (set(pub_lv) <= set(lv) and set(pub_sh) <= set(sh)):
+            continue                       # not a superset — may legitimately lose
+        a_n, a_p = _mean_A0(n), _mean_A0("published")
+        e = max(max((r["arms"][n]["A0_err"] for r in rows if n in r["arms"]),
+                    default=0.0), 1e-9)
+        if a_n < a_p - 2 * e:
+            broken.append((n, a_n, a_p))
+    if broken:
+        print("\n" + "=" * 78)
+        print("  NO VERDICT — the strengthened arms did not build")
+        print("=" * 78)
+        for n, a_n, a_p in broken:
+            print(f"  `{n}` is a strict superset of `published`, so its GEVP optimises")
+            print(f"  over a larger span, yet A₀ = {a_n:.3f} against {a_p:.3f}. A superset")
+            print("  cannot interpolate worse: this is the estimator failing on an")
+            print("  ill-conditioned C(t0), not a weaker operator.")
+        print("\n  Nothing here says whether §6.2 survives — the stronger opponent was")
+        print("  never built. Check the condition numbers and the variational gate")
+        print("  above; raise SFF_GEVP_EPS, or cut the basis size.")
+        return
 
     # A run with no strengthened arm (SFF_NOCACHE, or every one skipped) has no
     # verdict to give: falling back to `published` would print "survives its
