@@ -178,6 +178,7 @@ CHUNK = int(os.environ.get("SFF_CHUNK", 8))
 MAX_LEVEL = int(os.environ.get("SFF_MAXLEVEL", 16))
 NOCACHE = os.environ.get("SFF_NOCACHE", "0") == "1"
 REPLOT = os.environ.get("SFF_REPLOT", "")
+KEEP_OBARS = os.environ.get("SFF_KEEP_OBARS", "1") == "1"
 
 OUT_PT = "results/fair_fight/su2_fair_fight.pt"
 OUT_PNG = "results/fair_fight/su2_fair_fight.png"
@@ -197,7 +198,10 @@ ARM_SPEC = {
     "shapes":    ([0],                       SHAPES_EXT,    False),
     "full":      ([0, 2, 4, 6, 8, 12, 16],   SHAPES_FULL,   False),
 }
-STRONGEST = "full"
+# Named before the run so the choice cannot be made after seeing the A₀ column.
+# SFF_STRONGEST re-points it; the verdict below additionally names whichever arm
+# came out strongest in fact, since that is the opponent the claim has to beat.
+STRONGEST = os.environ.get("SFF_STRONGEST", "full")
 ARMS = os.environ["SFF_ARMS"].split(",") if "SFF_ARMS" in os.environ else list(ARM_SPEC)
 
 # Okabe–Ito, ordered so no adjacent pair falls in the 6–8 ΔE band under
@@ -458,6 +462,20 @@ def measure(dump_path, cache_path, cov_done):
                            "dA0": mean[base + 2 * k + 1].item(),
                            "dA0_err": err[base + 2 * k + 1].item()}
 
+    # The trained series and every classical arm's, on the same configurations.
+    # Re-deriving the strengthened arms needs the ensemble and a GPU pass, and
+    # `operator_decomposition.py` needs precisely this pairing to run against
+    # `full` rather than the published basis (audit 2026-09-06 §4 item 3).
+    if KEEP_OBARS:
+        ob_path = ("results/fair_fight/su2_fair_fight_obars_"
+                   f"{_tag(dump_path)}.pt")
+        torch.save({"dump": dump_path, "n_cfg": B, "labels": labels,
+                    "t0": t0, "td": td,
+                    "gelt": gelt.to(torch.float32),
+                    "bases": {n: bases[n].to(torch.float32) for n in names}},
+                   ob_path)
+        print(f"  kept Ō series → {ob_path}")
+
     print(f"\n  {'operator':<12} {'m·a_t':>18} {'A₀':>18}   ΔA₀ (GELT − arm)")
     for n in order:
         a = out["arms"][n]
@@ -519,13 +537,37 @@ def report(rows):
             print(f"  {n:<12} {per}   →  combined {comb:+.3f} ± {cerr:.3f} "
                   f"({abs(comb) / cerr:.1f}σ)")
 
-    strong = [r["delta"][STRONGEST] for r in rows if STRONGEST in r.get("delta", {})]
+    # Which arm is the real opponent is an A₀ question (SU(2) has no exact truth
+    # column): the highest-A₀ classical arm is the one the claim must beat. If
+    # that is not the pre-registered `full`, the verdict is taken against it and
+    # both are named.
+    def _mean_A0(n):
+        v = [r["arms"][n]["A0"] for r in rows if n in r.get("arms", {})]
+        return sum(v) / len(v) if v else float("-inf")
+
+    # A run with no strengthened arm (SFF_NOCACHE, or every one skipped) has no
+    # verdict to give: falling back to `published` would print "survives its
+    # strongest opponent" about the very comparison under audit.
+    challengers = [n for n in names if n != "published"]
+    if not challengers:
+        print("\n  → No strengthened arm ran (dump-only mode), so there is no verdict:")
+        print("    the numbers above are the published comparison reproduced, nothing")
+        print("    more. Run with the ensemble cache present to build the new arms.")
+        return
+    best = max(challengers, key=_mean_A0)
+    against = best if _mean_A0(best) > _mean_A0(STRONGEST) else STRONGEST
+    if against != STRONGEST:
+        print(f"\n  `{against}` (A₀ = {_mean_A0(against):.3f}) came out above the "
+              f"pre-registered `{STRONGEST}` (A₀ = {_mean_A0(STRONGEST):.3f});"
+              f"\n  the verdict is taken against it.")
+    STRONGEST_EFF = against
+    strong = [r["delta"][STRONGEST_EFF] for r in rows if STRONGEST_EFF in r.get("delta", {})]
     if strong:
         w = sum(1.0 / d["dA0_err"] ** 2 for d in strong if d["dA0_err"] > 0)
         c = sum(d["dA0"] / d["dA0_err"] ** 2 for d in strong if d["dA0_err"] > 0) / w
         s = abs(c) * math.sqrt(w)
         print(f"\n  paper quotes ΔA₀ = +0.078 ± 0.022 (3.6σ) against `published`.")
-        print(f"  against `{STRONGEST}` it is {c:+.3f} ± {math.sqrt(1 / w):.3f} ({s:.1f}σ).")
+        print(f"  against `{STRONGEST_EFF}` it is {c:+.3f} ± {math.sqrt(1 / w):.3f} ({s:.1f}σ).")
         if c > 0 and s >= 3.0:
             print("\n  → The claim survives its strongest opponent. The Z₂ vulnerability")
             print("    was a property of the discrete group's frozen smearing, and does")
