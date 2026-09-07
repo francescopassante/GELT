@@ -596,7 +596,10 @@ class GELT(nn.Module):
             d_model = d_input
         if d_model < d_input:
             raise ValueError(
-                f"d_model must be >= d_input = D(D-1)/2 = {d_input}, got {d_model}."
+                f"d_model must be >= d_input = {d_input}, got {d_model}. "
+                + ("d_input is in_channels as passed"
+                   if in_channels is not None else "d_input = D(D-1)/2")
+                + " — widen d_model, or feed fewer input channels."
             )
         self.d_input = d_input
         self.d_model = d_model

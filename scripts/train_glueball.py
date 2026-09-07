@@ -72,6 +72,10 @@ for _d in ("results/sampler", "results/glueball", "results/attention",
 # (scripts/overnight_replication.sh) must vary a handful of them per phase
 # without editing this file, so those few read an optional env var.
 def _env_int(name, default):
+    flag = f"--{name.lower().replace('glueball_', '').replace('_', '-')}="
+    for a in sys.argv[1:]:
+        if a.startswith(flag):
+            return int(a.split("=", 1)[1])
     return int(os.environ.get(name, default))
 
 
@@ -143,7 +147,11 @@ GEMHSA_LAYERS = 4  # the value path is bilinear, so loop degree doubles per
 NHEAD = 2  # 2 heads: still tiny (~5k params) but feeds head-specialization study
 D_QKV = 6  # even (RoPE) and ≥ 2·D = 6 so every spatial axis gets a real rotation
 #            (caveat 3: pair_axis = p % D leaves axes unrotated when d_qkv < 2D)
-D_MODEL = 16
+# Residual-stream width. It must be >= in_channels = 3·len(INPUT_SMEAR_LEVELS),
+# so a ladder longer than 5 levels needs it raised (--d-model=24) — which widens
+# the net and stops the comparison against Run 5 being matched-parameter. A
+# 4-level ladder reaching deeper (0,4,8,16) keeps the architecture identical.
+D_MODEL = _env_int("GLUEBALL_D_MODEL", 16)
 MLP_HIDDEN = 32
 INIT_SCALE = 10.0
 QK_INIT_SCALE = 1.0
