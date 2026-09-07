@@ -313,7 +313,9 @@ def selftest(U):
     #    arm must be zero to float precision.
     torch.manual_seed(11)
     sub = U[:4]
-    omega = g.random((len(sub),) + tuple(sub.shape[2:2 + tg.D]), dtype=sub.dtype)
+    # ``GaugeGroup.random`` has no device argument — it always builds on CPU.
+    omega = g.random((len(sub),) + tuple(sub.shape[2:2 + tg.D]),
+                     dtype=sub.dtype).to(sub.device)
     Ug = torch.stack([link_gauge_transformation(sub[b], omega[b], g)
                       for b in range(len(sub))])
     print("  gauge covariance of Ō(t)   (max|ΔŌ| / std Ō — 0 for a real operator)")
