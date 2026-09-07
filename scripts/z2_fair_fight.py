@@ -170,6 +170,7 @@ CHUNK = int(os.environ.get("FF_CHUNK", 8))
 RUN_NETS = os.environ.get("FF_NETS", "1") == "1"
 MAX_LEVEL = int(os.environ.get("FF_MAXLEVEL", 32))
 REPLOT = os.environ.get("FF_REPLOT", "")
+KEEP_OBARS = os.environ.get("FF_KEEP_OBARS", "1") == "1"
 
 # Exact ground truth from the dual Ising model, large volume (96×48²), τ(M)-gated
 # rerun. Source: notes/dual_ground_truth.md §7.7 and paper Table `tab:dual`.
@@ -209,8 +210,12 @@ ARM_SPEC = {
     "shapes":    ([0],                   SHAPES_EXT,   0.5,   False),
     "full":      ([0, 2, 4, 8, 16, 32],  SHAPES_FULL,  0.5,   False),
 }
-# The arm the verdict is taken against: the strongest classical opponent.
-STRONGEST = "full"
+# The arm the verdict is taken against: the strongest classical opponent, named
+# here *before* the run so the choice cannot be made after seeing the truth
+# column. FF_STRONGEST re-points it — which is selection on the outcome and only
+# defensible in one direction: handing the classical side an arm that turned out
+# better than the pre-registered one makes the opponent stronger, never weaker.
+STRONGEST = os.environ.get("FF_STRONGEST", "full")
 ARMS = os.environ["FF_ARMS"].split(",") if "FF_ARMS" in os.environ else list(ARM_SPEC)
 
 if SMOKE:
@@ -471,6 +476,18 @@ def measure(beta, truth):
             bases[name] = chan
             row["labels"][name] = labels
 
+    # The per-config Ō series, kept beside the summary dump. Everything in this
+    # script that is *not* recomputable offline — every correlated difference,
+    # any arm pairing thought of after the run — needs these and only these.
+    # ~30 MB per β against a measurement that costs a GPU hour.
+    if KEEP_OBARS:
+        ob_path = f"results/fair_fight/z2_fair_fight_obars_b{beta}.pt"
+        torch.save({"beta": beta, "n_cfg": len(configs), "Nt": Nt,
+                    "labels": row["labels"],
+                    "bases": {k: v.to(torch.float32) for k, v in bases.items()}},
+                   ob_path)
+        print(f"  kept Ō series → {ob_path}")
+
     # Every arm under both estimators, as §9.5.1 requires: a line is internally
     # consistent (its ξ, its A₀ and its ΔA₀ describe the same operator) and the
     # gap between the two lines is what the variational step bought that arm.
@@ -492,18 +509,27 @@ def measure(beta, truth):
     # The load-bearing statistic: trained attention minus the STRONGEST
     # classical arm, as a blocked jackknife of the difference on shared
     # configurations, on the bases each arm's own quoted number settled on.
-    if "attention trained" in bases and STRONGEST in bases:
+    # It is computed against *every* classical arm, not just the pre-registered
+    # one: which arm turns out strongest is not knowable before the run, and
+    # recomputing this later is impossible offline (it needs the per-config Ō
+    # series, which the summary dump does not carry).
+    row["delta_vs"] = {}
+    if "attention trained" in bases:
         a_res = row["arms"]["attention trained"]["gevp"]
-        b_res = row["arms"][STRONGEST]["gevp"]
         a = zac._resolved_series(bases["attention trained"], a_res)
-        b = zac._resolved_series(bases[STRONGEST], b_res)
-        if a is not None and b is not None:
+        for name in [n for n in ARM_SPEC if n in bases]:
+            b_res = row["arms"][name]["gevp"]
+            b = zac._resolved_series(bases[name], b_res)
+            if a is None or b is None:
+                continue
             dd = zac._corr_delta(a, b, Nt, wa=a_res.get("window"), wb=b_res.get("window"))
-            zac._delta_consistency(dd, a_res, b_res, tag=f"(trained − {STRONGEST})")
-            row["delta_vs_strongest"] = dd
+            zac._delta_consistency(dd, a_res, b_res, tag=f"(trained − {name})")
+            row["delta_vs"][name] = dd
+            if name == STRONGEST:
+                row["delta_vs_strongest"] = dd
             if dd:
                 n_sig = abs(dd["dA0"]) / dd["dA0_err"] if dd["dA0_err"] else float("nan")
-                print(f"\n  correlated ΔA₀ (trained − {STRONGEST}) = "
+                print(f"\n  correlated ΔA₀ (trained − {name}) = "
                       f"{dd['dA0']:+.3f} ± {dd['dA0_err']:.3f}  ({n_sig:.1f}σ)")
 
     # The null, on the strongest arm: scrambling configurations must leave
@@ -618,9 +644,22 @@ def report(rows, truth):
 
     pub_d, str_d = mean_dev("published"), mean_dev(STRONGEST)
     tr_d = mean_dev("attention trained")
+    # Which classical arm came out best is a fact about the run, and it need not
+    # be the one named in advance. Reporting only the pre-registered arm would
+    # let the comparator lose on a technicality; reporting only the winner would
+    # be selection on the outcome. Both are printed.
+    cand = [(n, mean_dev(n)) for n in ARM_SPEC if n in names]
+    best = min((c for c in cand if np.isfinite(c[1])), key=lambda c: abs(c[1]),
+               default=(None, float("nan")))
     print(f"  published classical arm      {pub_d:+6.1f}%   (paper quotes −8.9%)")
-    print(f"  strongest classical arm      {str_d:+6.1f}%   ({STRONGEST})")
+    print(f"  strongest classical arm      {str_d:+6.1f}%   ({STRONGEST}, pre-registered)")
+    if best[0] and best[0] != STRONGEST:
+        print(f"  best classical arm           {best[1]:+6.1f}%   ({best[0]}, chosen after the fact)")
     print(f"  attention, trained           {tr_d:+6.1f}%   (paper quotes +3.8%)")
+    # The verdict is taken against whichever classical arm is *more* accurate:
+    # the fair fight exists to give the classical side its best shot.
+    if np.isfinite(best[1]) and abs(best[1]) < abs(str_d):
+        str_d = best[1]
     if np.isfinite(str_d) and np.isfinite(tr_d):
         if abs(str_d) > abs(tr_d):
             print("\n  → The strengthened classical basis is still further from the exact")
@@ -632,14 +671,22 @@ def report(rows, truth):
             print("    under-powered comparator, and Table 6 must be re-stated:")
             print("    the claim becomes 'from a rank-two input ladder the network")
             print("    reaches what a classical basis needs a radius ladder to reach'.")
-    ds = [r["delta_vs_strongest"] for r in rows if r.get("delta_vs_strongest")]
-    if ds:
+    # Combined over β for every classical arm, so the shrinkage of the published
+    # ΔA₀ as the opponent is strengthened is readable as a ladder rather than as
+    # a single number chosen for us.
+    print()
+    for n in [a for a in ARM_SPEC if a in names]:
+        ds = [r["delta_vs"][n] for r in rows
+              if r.get("delta_vs", {}).get(n)] if any("delta_vs" in r for r in rows) \
+            else ([r["delta_vs_strongest"] for r in rows
+                   if n == STRONGEST and r.get("delta_vs_strongest")])
         num = sum(d["dA0"] / d["dA0_err"] ** 2 for d in ds if d["dA0_err"])
         den = sum(1.0 / d["dA0_err"] ** 2 for d in ds if d["dA0_err"])
         if den:
-            print(f"\n  combined correlated ΔA₀ (trained − {STRONGEST}) = "
+            mark = "  ←" if n in (STRONGEST, best[0]) else ""
+            print(f"  combined correlated ΔA₀ (trained − {n:<10}) = "
                   f"{num / den:+.3f} ± {math.sqrt(1 / den):.3f} "
-                  f"({abs(num / den) * math.sqrt(den):.1f}σ)")
+                  f"({abs(num / den) * math.sqrt(den):.1f}σ){mark}")
 
 
 # ── Plot ──────────────────────────────────────────────────────────────────────
@@ -741,6 +788,12 @@ def main():
     truth = _load_truth()
 
     if REPLOT:
+        # Re-plotting a smoke dump must not overwrite the figure of the real run
+        # sitting beside it: the output names follow the dump being read.
+        global OUT_PNG
+        if "smoke" in os.path.basename(REPLOT) and "smoke" not in OUT_PNG:
+            OUT_PNG = OUT_PNG.replace(".png", "_smoke.png")
+            print(f"  smoke dump → writing {OUT_PNG}")
         d = torch.load(REPLOT, map_location="cpu", weights_only=False)
         rows = [r for r in d["rows"] if r["beta"] in BETAS] or d["rows"]
         regression_check(rows)
