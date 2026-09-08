@@ -21,6 +21,7 @@ def staple_sum(
     nu_dirs: Optional[Sequence[int]] = None,
     xi: float = 1.0,
     time_axis: int = 0,
+    batched: bool = False,
 ) -> torch.Tensor:
     """Sum of staples for every site along direction ``mu``.
 
@@ -39,7 +40,7 @@ def staple_sum(
 
     Parameters
     ----------
-    U     : ``(D, *Λ, nc, nc)``
+    U     : ``(D, *Λ, nc, nc)``, or ``(B, D, *Λ, nc, nc)`` with ``batched=True``
     mu    : direction index
     gaugegroup : gauge group (used for ``dagger``)
     nu_dirs : directions ν to sum over (defaults to all ν ≠ μ). Pass the
@@ -47,31 +48,40 @@ def staple_sum(
     xi    : bare anisotropy a_s/a_t (1.0 = isotropic). Note: APE smearing is not
         dynamics, so it must call with the default ``xi = 1`` (unweighted).
     time_axis : direction treated as time when classifying temporal planes.
+    batched : ``U`` carries a leading configuration axis. Every op here is
+        already elementwise over it, so this only shifts the direction indexing
+        and the roll axes by one — but it lets a caller with an ensemble avoid a
+        Python loop over configs. ``ape_smear`` used to run that loop, at
+        ``n_steps × B × len(dirs)`` iterations per call and six calls per
+        ``train_glueball.py`` optimizer step.
 
     Returns
     -------
-    Tensor of shape ``(*Λ, nc, nc)``.
+    Tensor of shape ``(*Λ, nc, nc)`` — or ``(B, *Λ, nc, nc)`` when ``batched``.
     """
-    D = U.shape[0]
+    ax = 1 if batched else 0  # lattice axis μ sits at tensor dim μ + ax
+    D = U.shape[ax]
     if nu_dirs is None:
         nu_dirs = range(D)
     weighted = xi != 1.0
-    A = torch.zeros_like(U[mu])
+    Umu = U[:, mu] if batched else U[mu]
+    A = torch.zeros_like(Umu)
     for nu in nu_dirs:
         if nu == mu:
             continue
         # Per-plane anisotropy weight (c = 1 in the isotropic case).
         c = (xi if (mu == time_axis or nu == time_axis) else 1.0 / xi) if weighted else 1.0
-        Umu = U[mu]
-        Unu = U[nu]
+        Unu = U[:, nu] if batched else U[nu]
         # Forward: U_ν(x+μ̂) · U_μ†(x+ν̂) · U_ν†(x)
-        Unu_fwd = torch.roll(Unu, shifts=-1, dims=mu)  # U_ν(x + μ̂)
-        Umu_nu = torch.roll(Umu, shifts=-1, dims=nu)  # U_μ(x + ν̂)
+        Unu_fwd = torch.roll(Unu, shifts=-1, dims=mu + ax)  # U_ν(x + μ̂)
+        Umu_nu = torch.roll(Umu, shifts=-1, dims=nu + ax)  # U_μ(x + ν̂)
         fwd = Unu_fwd @ gaugegroup.dagger(Umu_nu) @ gaugegroup.dagger(Unu)
         # Backward: U_ν†(x+μ̂-ν̂) · U_μ†(x-ν̂) · U_ν(x-ν̂)
-        Unu_bwd = torch.roll(torch.roll(Unu, shifts=-1, dims=mu), shifts=+1, dims=nu)
-        Umu_negnu = torch.roll(Umu, shifts=+1, dims=nu)  # U_μ(x - ν̂)
-        Unu_negnu = torch.roll(Unu, shifts=+1, dims=nu)  # U_ν(x - ν̂)
+        Unu_bwd = torch.roll(
+            torch.roll(Unu, shifts=-1, dims=mu + ax), shifts=+1, dims=nu + ax
+        )
+        Umu_negnu = torch.roll(Umu, shifts=+1, dims=nu + ax)  # U_μ(x - ν̂)
+        Unu_negnu = torch.roll(Unu, shifts=+1, dims=nu + ax)  # U_ν(x - ν̂)
         bwd = gaugegroup.dagger(Unu_bwd) @ gaugegroup.dagger(Umu_negnu) @ Unu_negnu
         if weighted:
             A = A + c * fwd

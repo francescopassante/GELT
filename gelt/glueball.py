@@ -34,6 +34,7 @@ def ape_smear(
     n_steps: int = 1,
     progress: bool = False,
     directions: Optional[Sequence[int]] = None,
+    chunk_bytes: int = 256 * 2**20,
 ) -> torch.Tensor:
     """APE smearing of an ensemble — spatial by default (time = axis 0).
 
@@ -60,8 +61,16 @@ def ape_smear(
     U : ``(B, D, *Λ, nc, nc)`` batched links.
     alpha : staple weight (0 = no smearing).
     n_steps : number of smearing iterations.
-    progress : show a tqdm bar over the (n_steps × B) per-config smear updates
-        — the serial batch loop is slow, so a bar is useful on large ensembles.
+    progress : show a tqdm bar over the (n_steps × len(dirs) × n_chunks) smear
+        updates — a bar is useful on large ensembles.
+    chunk_bytes : soft cap on the configuration-batch slice smeared at once.
+        The update is elementwise over configurations, so the batch axis is
+        vectorised (``staple_sum(..., batched=True)``) rather than looped, but
+        ``staple_sum`` holds ~10 temporaries of one slice each, so a 400-config
+        eval batch would allocate several GiB at once. Slicing the batch to this
+        many bytes per chunk keeps the peak bounded and is bit-exact — smearing
+        never couples two configurations. The training hot path (6 configs) fits
+        in a single chunk.
     directions : which link directions to smear (and which staples to use).
         ``None`` (default) means spatial only, i.e. ``range(1, D)``.
 
@@ -76,22 +85,32 @@ def ape_smear(
     n_staples = 2 * (len(dirs) - 1)
 
     out = U.clone()
+    # Configuration chunks: vectorised over the batch axis, sliced only to keep
+    # staple_sum's ~10 same-shaped temporaries within chunk_bytes.
+    per_config = out[0].numel() * out.element_size()
+    chunk = max(1, min(out.shape[0], chunk_bytes // max(per_config, 1)))
+    slices = [slice(i, i + chunk) for i in range(0, out.shape[0], chunk)]
     with tqdm(
-        total=n_steps * out.shape[0],
+        total=n_steps * len(dirs) * len(slices),
         desc="APE smearing",
         disable=not progress,
         leave=False,
     ) as bar:
         for _ in range(n_steps):
             new = out.clone()
-            for b in range(out.shape[0]):
+            for sl in slices:
+                chunk_links = out[sl]
                 for mu in dirs:
                     staples = gaugegroup.dagger(
-                        staple_sum(out[b], mu, gaugegroup, nu_dirs=dirs)
+                        staple_sum(
+                            chunk_links, mu, gaugegroup, nu_dirs=dirs, batched=True
+                        )
                     )
-                    V = (1 - alpha) * out[b, mu] + (alpha / n_staples) * staples
-                    new[b, mu] = gaugegroup.project(V)
-                bar.update(1)
+                    V = (1 - alpha) * chunk_links[:, mu] + (
+                        alpha / n_staples
+                    ) * staples
+                    new[sl, mu] = gaugegroup.project(V)
+                    bar.update(1)
             out = new
     return out
 

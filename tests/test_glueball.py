@@ -201,3 +201,37 @@ def test_jackknife_shapes_and_positive_error():
     assert torch.isfinite(mean).all()
     assert torch.isfinite(err).all()
     assert (err >= 0).all()
+
+
+def test_ape_smear_chunking_is_bit_exact():
+    """The configuration batch is vectorised (``staple_sum(..., batched=True)``)
+    and sliced only to bound ``staple_sum``'s temporaries. Smearing never couples
+    two configurations, so the chunk size must not change a single bit —
+    ``chunk_bytes=1`` forces one configuration per chunk."""
+    torch.manual_seed(0)
+    gg, L, D, B = SU(2), 4, 4, 5
+    U = torch.stack(
+        [random_links(L, D, gg, dtype=torch.complex128) for _ in range(B)]
+    )
+    whole = ape_smear(U, gg, alpha=0.5, n_steps=2)
+    per_config = ape_smear(U, gg, alpha=0.5, n_steps=2, chunk_bytes=1)
+    assert torch.equal(whole, per_config)
+
+
+@pytest.mark.parametrize("xi", [1.0, 3.0])
+def test_batched_staple_sum_matches_per_config(xi):
+    """``staple_sum(..., batched=True)`` is the vectorised form ``ape_smear``
+    relies on: every op in it is already elementwise over configurations, so it
+    must be bit-identical to looping."""
+    from gelt.sampler import staple_sum
+
+    torch.manual_seed(0)
+    gg, L, D, B = SU(2), 4, 3, 3
+    U = torch.stack(
+        [random_links(L, D, gg, dtype=torch.complex128) for _ in range(B)]
+    )
+    for mu in range(D):
+        looped = torch.stack(
+            [staple_sum(U[b], mu, gg, xi=xi) for b in range(B)]
+        )
+        assert torch.equal(looped, staple_sum(U, mu, gg, xi=xi, batched=True))

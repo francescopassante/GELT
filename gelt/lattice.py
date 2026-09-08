@@ -104,10 +104,75 @@ class SU(GaugeGroup):
         # Nearest SU(N) matrix to M: take the unitary (polar) factor via SVD
         # (M = W Σ Vh ⇒ polar factor W Vh maximises Re Tr[V† M] over U(N)),
         # then rescale by det^(1/nc) to land on SU(N).
-        W, _, Vh = torch.linalg.svd(M)
-        Q = W @ Vh
-        det = torch.linalg.det(Q)
+        if self.nc == 2:
+            Q = _polar_factor_2x2(M)
+            # Closed-form determinant too: torch.linalg.det goes through an LU
+            # factorisation, which is pure overhead for a 2×2.
+            det = Q[..., 0, 0] * Q[..., 1, 1] - Q[..., 0, 1] * Q[..., 1, 0]
+        else:
+            W, _, Vh = torch.linalg.svd(M)
+            Q = W @ Vh
+            det = torch.linalg.det(Q)
         return Q / det.pow(1 / self.nc).unsqueeze(-1).unsqueeze(-1)
+
+
+def _polar_factor_2x2(M: torch.Tensor) -> torch.Tensor:
+    """Unitary polar factor of a batch of 2×2 matrices, in closed form.
+
+    Same object ``torch.linalg.svd``-based polar decomposition returns, without
+    the linalg kernels: ``H = M† M`` is Hermitian PSD, so with ``s = √det H``
+    and ``t = √(tr H + 2s)``
+
+        √H = (H + s·𝟙)/t ,      det(H + s·𝟙) = s·t²  ⇒  √H⁻¹ = adj(H + s·𝟙)/(s·t)
+
+    and ``polar(M) = M · √H⁻¹``. Only ``s`` and ``t`` need a square root, and
+    both are real (``tr H`` and ``det H`` are real for a Hermitian ``H``), so the
+    whole route is two 2×2 matmuls plus real scalar arithmetic.
+
+    The motivation is the training hot path: APE smearing reprojects
+    ``3 · Lt · L³`` links per smearing step and ``train_glueball.py`` runs six
+    smearing steps *per optimizer step*, so ``SU.project`` was issuing ~4.5 M
+    batched 2×2 complex SVDs and determinants per step. Measured on CPU over
+    248 832 real production APE matrices this route is ~23× faster.
+
+    ``H`` is formed in double precision because squaring ``M`` squares its
+    condition number: in complex64 throughout, the unitarity residual on
+    far-from-group input degrades to ~1e-3, while the fp64 route reaches 1.2e-7
+    — *better* than the SVD path's 6e-7 — and agrees with it to 3.9e-7 (i.e.
+    complex64 rounding) on real APE matrices. See tests/test_lattice.py.
+    """
+    # MPS has no float64, so there the route stays in complex64 — acceptable
+    # because the inputs that reach it in practice (APE's weighted sum of
+    # near-parallel group elements, cooling's staple sum) are close to the group,
+    # where complex64 still agrees with the SVD polar to 3.9e-7. It is only
+    # far-from-group input that needs the wider working precision, and that is
+    # also the only case where this is a downgrade rather than an upgrade: the
+    # SVD path cannot run on MPS at all (no complex linalg).
+    work = (
+        torch.complex128
+        if M.dtype == torch.complex64 and M.device.type != "mps"
+        else M.dtype
+    )
+    Mw = M.to(work)
+    H = Mw.conj().transpose(-1, -2) @ Mw
+    h00 = H[..., 0, 0].real
+    h11 = H[..., 1, 1].real
+    h01 = H[..., 0, 1]
+    # det H = h00·h11 − |h01|² ≥ 0 (clamped: rounding can push it just below 0).
+    det_h = (h00 * h11 - h01.real.square() - h01.imag.square()).clamp_min(0)
+    s = det_h.sqrt()
+    tiny = torch.finfo(s.dtype).tiny
+    t = (h00 + h11 + 2 * s).clamp_min(tiny).sqrt()
+    # adj(H + s·𝟙) = [[h11 + s, −h01], [−h̄01, h00 + s]]
+    adj = torch.stack(
+        [
+            torch.stack([(h11 + s).to(work), -h01], dim=-1),
+            torch.stack([-h01.conj(), (h00 + s).to(work)], dim=-1),
+        ],
+        dim=-2,
+    )
+    scale = (s * t).clamp_min(tiny).unsqueeze(-1).unsqueeze(-1)
+    return (Mw @ adj / scale).to(M.dtype)
 
 
 def random_links(

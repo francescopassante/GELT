@@ -209,3 +209,61 @@ def test_output_shape_preserved(z2):
     omega = _random_omega(L, D, z2, torch.float32)
     U_prime = link_gauge_transformation(U, omega, z2)
     assert U_prime.shape == U.shape
+
+
+# ---------------------------------------------------------------------------
+# SU(2) reunitarisation: the closed-form polar factor is a drop-in for the SVD
+# ---------------------------------------------------------------------------
+
+
+def test_su2_project_matches_svd_polar():
+    """``SU(2).project`` takes a closed-form route (``_polar_factor_2x2``) rather
+    than ``linalg.svd``, because APE smearing reprojects millions of links per
+    training step. It must be the *same map*: the polar factor of M, rescaled by
+    det^(1/2). Checked against the SVD route it replaced, on matrices far from
+    the group (the hard case — squaring M squares its condition number, which is
+    why the closed form works in double precision internally)."""
+    torch.manual_seed(0)
+    gg = SU(2)
+    M = torch.randn(4096, 2, 2, dtype=torch.complex64)
+
+    W, _, Vh = torch.linalg.svd(M)
+    svd_polar = W @ Vh
+    reference = svd_polar / torch.linalg.det(svd_polar).pow(0.5).unsqueeze(
+        -1
+    ).unsqueeze(-1)
+
+    Q = gg.project(M)
+    assert (Q - reference).abs().max() < 1e-4  # complex64 output of an
+    #                                           ill-conditioned polar factor
+    eye = torch.eye(2, dtype=Q.dtype)
+    assert (Q @ gg.dagger(Q) - eye).abs().max() < 1e-6
+    assert (torch.linalg.det(Q) - 1).abs().max() < 1e-6
+
+
+def test_su2_project_agrees_with_svd_on_near_group_input():
+    """On the input the smearing hot path actually feeds it — a weighted sum of
+    near-parallel group elements — the two routes agree to complex64 rounding,
+    so switching them changes no measured number."""
+    torch.manual_seed(1)
+    gg = SU(2)
+    U = gg.random((20000,), dtype=torch.complex64)
+    staples = sum(gg.random((20000,), dtype=torch.complex64) for _ in range(4))
+    V = 0.5 * U + 0.125 * staples
+
+    W, _, Vh = torch.linalg.svd(V)
+    svd_polar = W @ Vh
+    reference = svd_polar / torch.linalg.det(svd_polar).pow(0.5).unsqueeze(
+        -1
+    ).unsqueeze(-1)
+    assert (gg.project(V) - reference).abs().max() < 1e-5
+
+
+def test_su3_project_still_uses_the_general_route():
+    """The closed form is 2×2-only; nc ≠ 2 must keep the SVD path."""
+    torch.manual_seed(2)
+    gg = SU(3)
+    Q = gg.project(torch.randn(512, 3, 3, dtype=torch.complex128))
+    eye = torch.eye(3, dtype=Q.dtype)
+    assert (Q @ gg.dagger(Q) - eye).abs().max() < 1e-12
+    assert (torch.linalg.det(Q) - 1).abs().max() < 1e-12
