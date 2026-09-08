@@ -14,6 +14,71 @@ from torch.utils.checkpoint import checkpoint
 from gelt.lattice import l1_ball_offsets
 
 
+# Peak-memory budget for the offset-gather backward below: the gradient is
+# re-gathered in slices of the offset axis so the transient never exceeds this,
+# which matters because the backward runs while the (much larger) recomputed
+# forward activations of the same layer are still alive.
+_GRAD_GATHER_BUDGET = 512 * 2**20
+
+
+class _OffsetGather(torch.autograd.Function):
+    """Gather ``X`` at every L1-ball offset, with a *coalesced* backward.
+
+    The forward is ``X[x + Δx_i]`` for every offset i — an advanced-index read.
+    Left to autograd, its backward is ``index_put_(accumulate=True)``: a
+    scatter-add in which every element of the input receives n_offsets separate
+    contributions, i.e. millions of atomic read-modify-writes on GPU. Measured on
+    CPU at ``(24, 4, 6, 12³, 2, 2)`` it cost **64× the forward** — by far the most
+    expensive single operation in the block.
+
+    But the forward is a pure *translation* per offset, so the gradient is itself
+    a gather:
+
+        dL/dX (x) = Σ_i  g_i(x − Δx_i)
+
+    and indexing the offset axis alongside the lattice axes expresses the whole
+    sum as one advanced-index read plus one reduction — no atomics, no Python
+    loop over offsets. Same number as autograd's, up to the order in which the
+    n_offsets terms are summed (float32: ~1e-6 relative; float64: exact).
+
+    ``chunk`` slices the offset axis of the *gradient* only, to bound the
+    transient; it changes nothing but the summation order.
+    """
+
+    @staticmethod
+    def forward(ctx, X, nbr_idx, nbr_idx_inv):
+        D = nbr_idx.shape[0]
+        ctx.save_for_backward(nbr_idx_inv)
+        ctx.D = D
+        indexer = (
+            (slice(None),) * 3
+            + tuple(nbr_idx[k] for k in range(D))
+            + (slice(None), slice(None))
+        )
+        return X[indexer]
+
+    @staticmethod
+    def backward(ctx, grad):
+        (inv,) = ctx.saved_tensors
+        D = ctx.D
+        n_off = inv.shape[1]
+        per_offset = grad.numel() // n_off * grad.element_size()
+        chunk = max(1, min(n_off, _GRAD_GATHER_BUDGET // max(per_offset, 1)))
+        ar = torch.arange(n_off, device=grad.device)
+        out = None
+        for lo in range(0, n_off, chunk):
+            hi = min(lo + chunk, n_off)
+            sel = (
+                (slice(None),) * 3
+                + (ar[lo:hi].view(-1, *([1] * D)),)
+                + tuple(inv[k, lo:hi] for k in range(D))
+                + (slice(None), slice(None))
+            )
+            part = grad[sel].sum(dim=3)
+            out = part if out is None else out + part
+        return out, None, None
+
+
 class GEMHSA(nn.Module):
     """Gauge-equivariant multi-head self-attention block.
 
@@ -94,6 +159,20 @@ class GEMHSA(nn.Module):
             raise ValueError(f"gate must be 'relu' or 'softplus', got {gate}")
         self.gate = gate
 
+        # Introspection switches, both off by default because both cost real
+        # time on the training path.
+        #   store_attention — keep _last_score / _last_alpha for the
+        #     interpretability program (scripts/*_attention_*.py set it).
+        #     (B, H, n_off, *Λ) reals per layer, retained until the next forward.
+        #   diagnostics — the _last_*_norm scalars. Each is a full reduction over
+        #     an offset-expanded tensor *plus* a .item(), i.e. a GPU sync; there
+        #     are ~10 per block, they run again inside every gradient-checkpoint
+        #     recompute, and the two K̃/Ṽ norms alone re-read and re-materialise
+        #     ~12% of the block's whole memory traffic (abs + pow + mean over
+        #     (B, H, d_qkv, n_off, *Λ, nc, nc)).
+        self.store_attention = False
+        self.diagnostics = False
+
         # offsets is a list of the Δx_i in the L1 ball of radius R. The
         # Δx = 0 self-offset is prepended (transport is the identity), so
         # the attention has an explicit "attend to self" slot in addition
@@ -120,6 +199,16 @@ class GEMHSA(nn.Module):
             dim=0,
         )  # (D, n_offsets, *Λ)
         self.register_buffer("_nbr_idx", nbr_idx)
+        # The same map with the offsets reversed, (x − Δx_i) mod L. This is the
+        # index the gather's *gradient* needs — see _OffsetGather.
+        nbr_idx_inv = torch.stack(
+            [
+                (coords[d].unsqueeze(0) - offset_tensor[:, d].view(-1, *([1] * D))) % L
+                for d in range(D)
+            ],
+            dim=0,
+        )
+        self.register_buffer("_nbr_idx_inv", nbr_idx_inv)
 
         # Relative positional encoding (RoPE) over the offset axis — replaces
         # the additive per-offset bias b_h. Rather than adding a content-
@@ -288,17 +377,75 @@ class GEMHSA(nn.Module):
         r1 = sin * k0 + cos * k1
         return torch.stack((r0, r1), dim=3).reshape(B, H, dq, n, *spatial, nc, nc)
 
-    def attend(self, Q, K, V, Q_v, T, T_dag):
+    def rope_score(self, Q, K_tilde):
+        """Gauge-invariant score with the RoPE rotation folded into the query.
+
+        Same number as ``Re Σ_c Tr[Q_c† · rope(K̃)_c] / √(d_qkv·nc)`` with
+        ``rope`` as in :meth:`apply_rope`, but K̃ is never rotated. Writing the
+        planar rotation of pair ``p`` out and using the linearity of the
+        Frobenius product ``⟨A, B⟩ = Σ_ij conj(A_ij) B_ij``:
+
+            Σ_s ⟨Q_{p,s}, rope(K̃)_{p,s}⟩
+              = cos(θ_p·Δx) [⟨Q_{p,0}, K̃_{p,0}⟩ + ⟨Q_{p,1}, K̃_{p,1}⟩]
+              + sin(θ_p·Δx) [⟨Q_{p,1}, K̃_{p,0}⟩ − ⟨Q_{p,0}, K̃_{p,1}⟩]
+
+        Both brackets are Frobenius products against the *unrotated* K̃: the
+        first with Q, the second with Q's pair-swapped copy
+        ``Q'_{p,0} = Q_{p,1}``, ``Q'_{p,1} = −Q_{p,0}``. Q carries no offset
+        axis, so swapping it costs n_offsets times less than rotating K̃ — at the
+        production shape ``apply_rope`` plus the old score materialised 569 MiB
+        per layer per forward where this route materialises 237 MiB.
+
+        ``Q`` : (B, H, d_qkv, *Λ, nc, nc); ``K_tilde`` : the transported,
+        *unrotated* keys (B, H, d_qkv, n_off, *Λ, nc, nc).
+        """
+        B, H, dq = Q.shape[0], Q.shape[1], Q.shape[2]
+        spatial = Q.shape[3:-2]
+        nc = Q.shape[-1]
+        n = K_tilde.shape[3]
+        # Q' — the within-pair swap-and-negate that turns the first bracket into
+        # the second. Per-site, so this is the cheap tensor to touch.
+        Qp = Q.reshape(B, H, self.n_pairs, 2, *spatial, nc, nc)
+        Q_swap = torch.stack((Qp[:, :, :, 1], -Qp[:, :, :, 0]), dim=3).reshape(
+            B, H, dq, *spatial, nc, nc
+        )
+
+        def brackets(Qx):
+            # Frobenius product over the colour axes only: the channel axis has
+            # to survive until cos/sin have been applied per pair.
+            t = (Qx.unsqueeze(3).conj() * K_tilde).sum(dim=(-2, -1))
+            return t.reshape(B, H, self.n_pairs, 2, n, *spatial).sum(dim=3)
+
+        # .real fallbacks: a module-wide ``.to(complex_dtype)`` (the tests cast
+        # the whole block) would upcast these real tensors to complex.
+        freq = self.rope_freq.real if self.rope_freq.is_complex() else self.rope_freq
+        disp = self._rope_disp.real if self._rope_disp.is_complex() else self._rope_disp
+        angle = disp * freq  # (n_off, n_pairs)
+        view = (1, 1, self.n_pairs, n) + (1,) * len(spatial)
+        cos = torch.cos(angle).t().reshape(view)
+        sin = torch.sin(angle).t().reshape(view)
+        # cos, sin are real, so Re(cos·u + sin·v) = cos·Re u + sin·Re v.
+        score = (cos * brackets(Q).real + sin * brackets(Q_swap).real).sum(dim=2)
+        return score / math.sqrt(dq * nc)
+
+    def attend(self, Q, KV, Q_v, T, T_dag):
         """Fully batched gauge-equivariant attention over the L1-ball.
 
         ``Q`` is the score-path query and ``Q_v`` the independent value-path
-        query — two separate on-site projections of the augmented field.
+        query — two separate on-site projections of the augmented field. ``KV``
+        is the key and value projections stacked on the head axis,
+        ``(B, 2·H, d_qkv, *Λ, nc, nc)`` with K first: they share the gather and
+        the transport, and the caller already has them adjacent in the fused QKV
+        output, so handing them over as one view saves a concatenation the size
+        of the whole offset-expanded neighbourhood.
 
         Single fused pass — no Python loop over offsets. Pipeline:
           1. Gather K(x+Δx_i), V(x+Δx_i)
           2. Adjoint transport: K' = T(x) · K(x+Δx) · T†(x)
           3. RoPE-rotate K̃ by R(Δx), then score Re Σ_c Tr[Q_c† · K̃_c] /
-             √(d_qkv·nc) computed as a Frobenius product.
+             √(d_qkv·nc) computed as a Frobenius product. Steps 2 and 3 commute
+             (one acts on colour, the other on channels) and the rotation is
+             folded into the query instead — see :meth:`rope_score`.
           4. Softmax over the offset axis.
           5. Value path Q_v† · V' — but α-weighted *before* the matmul
              Σ_n α_n (Q_v† Ṽ_n) = Q_v† (Σ_n α_n Ṽ_n)
@@ -307,38 +454,29 @@ class GEMHSA(nn.Module):
         GELT; the dagger is computed once at the GELT level and threaded in.
         """
         nc = Q.shape[-1]
+        H = self.H
 
         # 1. Neighbour gather.
-        idx = tuple(
-            self._nbr_idx[k] for k in range(self.D)
-        )  # (n_off, *Λ) D dimensional vectors
-        # nb_indexer = (:, :, :, ?, :, :) -> ? across dimension *Λ selects neighbors for each lattice site
-        nb_indexer = (slice(None),) * 3 + idx + (slice(None), slice(None))
-        K_nb = K[
-            nb_indexer
-        ]  # (B, H, d_qkv, n_off, *Λ, nc, nc) -> for each lattice site and neighbor, a (B, H, d, nc, nc) K tensor
-        V_nb = V[nb_indexer]  # same
+        # (B, 2H, d_qkv, n_off, *Λ, nc, nc) -> for each lattice site and
+        # neighbour, a (B, 2H, d, nc, nc) key/value tensor. One indexed read,
+        # because K and V arrive stacked. _OffsetGather is the same read as
+        # ``KV[(slice(None),) * 3 + (self._nbr_idx[k] for k) + (…)]`` with the
+        # gradient written as a gather instead of an atomic scatter-add.
+        KV_nb = _OffsetGather.apply(KV, self._nbr_idx, self._nbr_idx_inv)
 
         # 2. Transport: T · X · T†. T and its dagger are shared across heads,
         # channels, and (in GELT) all stacked GEMHSA layers.
-        # K and V use the same transport. Concatenate along the channel axis,
-        # then split after the transport to save one transport
-        KV_nb = torch.cat((K_nb, V_nb), dim=2)
-        del K_nb, V_nb
+        # K and V use the same transport, so they ride through it together and
+        # are split off afterwards as views.
         KV_tilde = self.transport(KV_nb, T, T_dag)
-        K_tilde, V_tilde = KV_tilde.split(self.d_qkv, dim=2)
+        del KV_nb
+        K_tilde, V_tilde = KV_tilde[:, :H], KV_tilde[:, H:]
 
-        # 3. RoPE: rotate K̃'s channel-pairs by the offset-dependent R(Δx). Q is
-        # left unrotated (the query sits at offset 0 → identity), so the score
-        # picks up the relative rotation R(Δx) and becomes offset-selective.
-        # Only K̃ is rotated; V_tilde (the value path) is left untouched.
-        K_tilde = self.apply_rope(K_tilde)
-
-        # 4. Score = Tr[Q_c† K'_c]/sqrt(Nc d_qkv); implementable via
-        # Frobenius product without matmul.
-        Q_e = Q.unsqueeze(3)  # (B, H, d_qkv, 1, *Λ, nc, nc)
-        score = (Q_e.conj() * K_tilde).sum(dim=(2, -2, -1)).real
-        score = score / math.sqrt(self.d_qkv * nc)
+        # 3./4. RoPE-weighted score. The rotation makes the score
+        # offset-selective (Q sits at offset 0 → identity, so only the relative
+        # rotation R(Δx) survives); it is applied to Q rather than to K̃ because
+        # K̃ carries the offset axis and Q does not.
+        score = self.rope_score(Q, K_tilde)
         # score: (B, H, n_off, *Λ)
 
         # 5. Softmax over offsets.
@@ -365,17 +503,48 @@ class GEMHSA(nn.Module):
         # to introspect per-layer attention state. Stored detached / no-grad so
         # they don't retain the autograd graph. Scalars for activations, full
         # tensors for score/alpha (cheap: (B, H, n_off, *Λ) reals).
-        with torch.no_grad():
-            self._last_score = score.detach()
-            self._last_alpha = alpha.detach()
-            self._last_Q_norm = Q.detach().abs().pow(2).mean().sqrt().item()
-            self._last_Q_v_norm = Q_v.detach().abs().pow(2).mean().sqrt().item()
-            self._last_K_tilde_norm = K_tilde.detach().abs().pow(2).mean().sqrt().item()
-            self._last_V_tilde_norm = V_tilde.detach().abs().pow(2).mean().sqrt().item()
-            self._last_bilin_norm = bilin.detach().abs().pow(2).mean().sqrt().item()
+        # Both stashes are opt-in (see store_attention / diagnostics in
+        # __init__): the scalars each force a GPU sync and a reduction over an
+        # offset-expanded tensor, which is pure overhead on a training step.
+        if self.store_attention:
+            with torch.no_grad():
+                self._last_score = score.detach()
+                self._last_alpha = alpha.detach()
+        if self.diagnostics:
+            with torch.no_grad():
+                self._last_Q_norm = Q.detach().abs().pow(2).mean().sqrt().item()
+                self._last_Q_v_norm = Q_v.detach().abs().pow(2).mean().sqrt().item()
+                self._last_K_tilde_norm = (
+                    K_tilde.detach().abs().pow(2).mean().sqrt().item()
+                )
+                self._last_V_tilde_norm = (
+                    V_tilde.detach().abs().pow(2).mean().sqrt().item()
+                )
+                self._last_bilin_norm = bilin.detach().abs().pow(2).mean().sqrt().item()
 
         return bilin
         # return self.alpha_attn * V_weighted + self.alpha_bilin * bilin
+
+    def prepend_self_offset(self, T, T_dag=None):
+        """Prepend the Δx = 0 slot (transport = identity) to a transport table.
+
+        ``build_transport_average`` materialises only the non-zero offsets, but
+        the block's offset axis starts with the on-site slot. Splitting this out
+        of :meth:`forward` lets ``GELT.attn`` pay the concatenation once for the
+        whole stack instead of once per layer per forward pass.
+        """
+        nc = T.shape[-1]
+        B = T.shape[0]
+        spatial = T.shape[2:-2]
+        identity_T = (
+            torch.eye(nc, dtype=T.dtype, device=T.device)
+            .view(1, 1, *([1] * self.D), nc, nc)
+            .expand(B, 1, *spatial, nc, nc)
+        )
+        if T_dag is None:
+            T_dag = self.gaugegroup.dagger(T)
+        # The identity is its own dagger, so the same block prepends to both.
+        return torch.cat([identity_T, T], dim=1), torch.cat([identity_T, T_dag], dim=1)
 
     def forward(self, W, T, T_dag=None):
         """Run the block.
@@ -395,28 +564,28 @@ class GEMHSA(nn.Module):
         """
 
         # External T carries only the non-zero offsets; the Δx = 0 entry
-        # (whose transport is the identity) is synthesised here.
-        expected_external = self.n_offsets - 1
-        assert T.shape[1] == expected_external, (
-            f"Expected T.shape[1] == {expected_external} (non-zero offsets), "
-            f"got {T.shape[1]}"
-        )
+        # (whose transport is the identity) is synthesised here — unless the
+        # caller already did it. ``GELT.attn`` prepends once and reuses the
+        # result across the whole stack, which is worth doing: the concatenation
+        # copies the full (B, n_off, *Λ, nc, nc) transport table, and it used to
+        # run twice per layer per forward (and again inside every
+        # gradient-checkpoint recompute).
+        if T.shape[1] == self.n_offsets:
+            prepend = False
+        elif T.shape[1] == self.n_offsets - 1:
+            prepend = True
+        else:
+            raise ValueError(
+                f"Expected T.shape[1] == {self.n_offsets - 1} (non-zero offsets) "
+                f"or {self.n_offsets} (identity already prepended), "
+                f"got {T.shape[1]}"
+            )
 
         nc = W.shape[-1]
-        B = T.shape[0]
-        spatial = T.shape[2:-2]
-        identity_T = (
-            torch.eye(nc, dtype=T.dtype, device=T.device)
-            .view(1, 1, *([1] * self.D), nc, nc)
-            .expand(B, 1, *spatial, nc, nc)
-        )
-        T = torch.cat([identity_T, T], dim=1)
-        if T_dag is None:
+        if prepend:
+            T, T_dag = self.prepend_self_offset(T, T_dag)
+        elif T_dag is None:
             T_dag = self.gaugegroup.dagger(T)
-        else:
-            # T_dag was computed for the external (non-zero) offsets;
-            # prepend the identity (its own dagger) so it lines up with T.
-            T_dag = torch.cat([identity_T, T_dag], dim=1)
 
         # Augment, then mix channels to build Q, K, V of shape
         # (B, H, d_qkv, *Λ, nc, nc).
@@ -429,11 +598,15 @@ class GEMHSA(nn.Module):
         w_QKV_flat = self.w_QKV.view(4 * self.H * self.d_qkv, self.C_prime)
         QKV = torch.matmul(w_QKV_flat, W_aug_flat)  # (B, 4·H·d, N)
         QKV = QKV.view(B, 4, self.H, self.d_qkv, *trailing)
-        Q, K, V, Q_v = QKV.unbind(dim=1)
+        Q, Q_v = QKV[:, 0], QKV[:, 3]
+        # K and V are adjacent along the fused axis and the (4, H) strides merge,
+        # so this is a view: attend() then gathers and transports the pair in one
+        # pass instead of two plus a concatenation.
+        KV = QKV[:, 1:3].reshape(B, 2 * self.H, self.d_qkv, *trailing)
 
         # Transport, score, softmax, multiplicative value. Q is the score-path
         # query (Re Tr[Q†·K̃]); Q_v is the independent value-path query (Q_v†·Ṽ).
-        out = self.attend(Q, K, V, Q_v, T, T_dag)  # (B, H, d_qkv, *Λ, nc, nc)
+        out = self.attend(Q, KV, Q_v, T, T_dag)  # (B, H, d_qkv, *Λ, nc, nc)
 
         # Channel mix back to C output channels. Expressed as a single matmul
         # ``(C, H·d) @ (B, H·d, |Λ|·nc·nc) -> (B, C, |Λ|·nc·nc)``
@@ -455,12 +628,13 @@ class GEMHSA(nn.Module):
         # Diagnostic intermediates — residual stream magnitudes. Ratio
         # |W_act|/|W_in| tells you whether the sublayer is actually
         # contributing to the residual stream or has collapsed to ≈0.
-        with torch.no_grad():
-            self._last_W_in_norm = W.detach().abs().pow(2).mean().sqrt().item()
-            self._last_W_mix_norm = W_mix.detach().abs().pow(2).mean().sqrt().item()
-            self._last_W_act_norm = W_act.detach().abs().pow(2).mean().sqrt().item()
-            self._last_gate_mean = g.detach().mean().item()
-            self._last_gate_std = g.detach().std(unbiased=False).item()
+        if self.diagnostics:
+            with torch.no_grad():
+                self._last_W_in_norm = W.detach().abs().pow(2).mean().sqrt().item()
+                self._last_W_mix_norm = W_mix.detach().abs().pow(2).mean().sqrt().item()
+                self._last_W_act_norm = W_act.detach().abs().pow(2).mean().sqrt().item()
+                self._last_gate_mean = g.detach().mean().item()
+                self._last_gate_std = g.detach().std(unbiased=False).item()
 
         return W + W_act
 
@@ -655,7 +829,28 @@ class GELT(nn.Module):
             nn.init.zeros_(self.mlp.fc2.weight)
             nn.init.zeros_(self.mlp.fc2.bias)
 
+    def set_introspection(self, store_attention=None, diagnostics=None):
+        """Turn the per-layer introspection stashes on or off across the stack.
+
+        Both are off by default because both cost time on every forward pass
+        (see ``GEMHSA.__init__``). ``store_attention=True`` is what the
+        interpretability scripts need: it keeps ``_last_alpha`` / ``_last_score``
+        alive after the forward.
+        """
+        for layer in self.gemhsa_models:
+            if store_attention is not None:
+                layer.store_attention = store_attention
+            if diagnostics is not None:
+                layer.diagnostics = diagnostics
+        return self
+
     def attn(self, W, T, T_dag):
+        # The Δx = 0 slot is the same for every layer, so prepend it once here
+        # rather than in each layer's forward (where it also re-ran inside every
+        # gradient-checkpoint recompute).
+        first = self.gemhsa_models[0]
+        if T.shape[1] == first.n_offsets - 1:
+            T, T_dag = first.prepend_self_offset(T, T_dag)
         for layer in self.gemhsa_models:
             if self.grad_checkpoint and self.training and torch.is_grad_enabled():
                 # use_reentrant=False: T/T_dag carry no grad (only W and the

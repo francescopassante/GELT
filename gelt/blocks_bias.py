@@ -89,6 +89,15 @@ class GEMHSA(nn.Module):
             raise ValueError(f"gate must be 'relu' or 'softplus', got {gate}")
         self.gate = gate
 
+        # Introspection switches, both off by default and identical in meaning to
+        # the ones in blocks_rope (the two variants are ~90% shared code and are
+        # meant to be merged; keeping the switches symmetric is part of that).
+        # store_attention keeps _last_score / _last_alpha; diagnostics keeps the
+        # _last_*_norm scalars, each of which is a reduction over an
+        # offset-expanded tensor followed by a GPU-syncing .item().
+        self.store_attention = False
+        self.diagnostics = False
+
         # offsets is a list of the Δx_i in the L1 ball of radius R. The
         # Δx = 0 self-offset is prepended (transport is the identity), so
         # the attention has an explicit "attend to self" slot in addition
@@ -304,14 +313,21 @@ class GEMHSA(nn.Module):
         # to introspect per-layer attention state. Stored detached / no-grad so
         # they don't retain the autograd graph. Scalars for activations, full
         # tensors for score/alpha (cheap: (B, H, n_off, *Λ) reals).
-        with torch.no_grad():
-            self._last_score = score.detach()
-            self._last_alpha = alpha.detach()
-            self._last_Q_norm = Q.detach().abs().pow(2).mean().sqrt().item()
-            self._last_Q_v_norm = Q_v.detach().abs().pow(2).mean().sqrt().item()
-            self._last_K_tilde_norm = K_tilde.detach().abs().pow(2).mean().sqrt().item()
-            self._last_V_tilde_norm = V_tilde.detach().abs().pow(2).mean().sqrt().item()
-            self._last_bilin_norm = bilin.detach().abs().pow(2).mean().sqrt().item()
+        if self.store_attention:
+            with torch.no_grad():
+                self._last_score = score.detach()
+                self._last_alpha = alpha.detach()
+        if self.diagnostics:
+            with torch.no_grad():
+                self._last_Q_norm = Q.detach().abs().pow(2).mean().sqrt().item()
+                self._last_Q_v_norm = Q_v.detach().abs().pow(2).mean().sqrt().item()
+                self._last_K_tilde_norm = (
+                    K_tilde.detach().abs().pow(2).mean().sqrt().item()
+                )
+                self._last_V_tilde_norm = (
+                    V_tilde.detach().abs().pow(2).mean().sqrt().item()
+                )
+                self._last_bilin_norm = bilin.detach().abs().pow(2).mean().sqrt().item()
 
         return bilin
         # return self.alpha_attn * V_weighted + self.alpha_bilin * bilin
@@ -394,12 +410,13 @@ class GEMHSA(nn.Module):
         # Diagnostic intermediates — residual stream magnitudes. Ratio
         # |W_act|/|W_in| tells you whether the sublayer is actually
         # contributing to the residual stream or has collapsed to ≈0.
-        with torch.no_grad():
-            self._last_W_in_norm = W.detach().abs().pow(2).mean().sqrt().item()
-            self._last_W_mix_norm = W_mix.detach().abs().pow(2).mean().sqrt().item()
-            self._last_W_act_norm = W_act.detach().abs().pow(2).mean().sqrt().item()
-            self._last_gate_mean = g.detach().mean().item()
-            self._last_gate_std = g.detach().std(unbiased=False).item()
+        if self.diagnostics:
+            with torch.no_grad():
+                self._last_W_in_norm = W.detach().abs().pow(2).mean().sqrt().item()
+                self._last_W_mix_norm = W_mix.detach().abs().pow(2).mean().sqrt().item()
+                self._last_W_act_norm = W_act.detach().abs().pow(2).mean().sqrt().item()
+                self._last_gate_mean = g.detach().mean().item()
+                self._last_gate_std = g.detach().std(unbiased=False).item()
 
         return W + W_act
 
@@ -583,6 +600,19 @@ class GELT(nn.Module):
         if mlp_zero_init:
             nn.init.zeros_(self.mlp.fc2.weight)
             nn.init.zeros_(self.mlp.fc2.bias)
+
+    def set_introspection(self, store_attention=None, diagnostics=None):
+        """Turn the per-layer introspection stashes on or off across the stack.
+
+        Mirrors ``blocks_rope.GELT.set_introspection``; both are off by default
+        because both cost time on every forward pass.
+        """
+        for layer in self.gemhsa_models:
+            if store_attention is not None:
+                layer.store_attention = store_attention
+            if diagnostics is not None:
+                layer.diagnostics = diagnostics
+        return self
 
     def attn(self, W, T, T_dag):
         for layer in self.gemhsa_models:

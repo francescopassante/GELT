@@ -75,6 +75,9 @@ def readout(beta):
 
     model = build_model()
     model.load_state_dict(torch.load(ckpt, map_location=tz.device, weights_only=True))
+    # The per-layer attention stash is opt-in (it retains a
+    # (B, H, n_off, *Λ) tensor per layer); this study reads it.
+    model.set_introspection(store_attention=True)
     model.eval()
 
     offsets = model.gemhsa_models[0].offsets

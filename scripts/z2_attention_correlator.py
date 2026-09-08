@@ -232,6 +232,9 @@ def build_model(ckpt=None, seed=None):
     ).to(device)
     if ckpt is not None:
         model.load_state_dict(torch.load(ckpt, map_location=device, weights_only=True))
+    # The per-layer attention stash is opt-in (it retains a
+    # (B, H, n_off, *Λ) tensor per layer); this study reads it.
+    model.set_introspection(store_attention=True)
     model.eval()
     return model
 

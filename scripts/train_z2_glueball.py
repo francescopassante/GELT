@@ -279,6 +279,10 @@ def attention_stats(model, W, T, n_viz=16):
     dist = torch.tensor([sum(abs(c) for c in o) for o in offsets], dtype=torch.float32)
     n_off = len(offsets)
     ells = [[] for _ in model.gemhsa_models]
+    # The α stash is opt-in (it retains a (B, H, n_off, *Λ) tensor per layer, and
+    # costs a write of it on every forward), so it is switched on only around
+    # this readout and off again afterwards — the training steps must not pay it.
+    model.set_introspection(store_attention=True)
     with torch.no_grad():
         for c in tqdm(range(min(n_viz, len(W))), desc="attention"):
             obar_from(model, W[c : c + 1], T[c : c + 1])
@@ -287,6 +291,7 @@ def attention_stats(model, W, T, n_viz=16):
                 ells[l].append(
                     (a * dist.view(1, 1, n_off, 1, 1)).sum(dim=2).flatten(2)
                 )
+    model.set_introspection(store_attention=False)
     ell = torch.stack([torch.cat(e) for e in ells])  # (layers, b·Lt, H, n_sites)
     return ell.mean(dim=(1, 3)), ell.std(dim=(1, 3)), offsets  # (layers, H)
 
