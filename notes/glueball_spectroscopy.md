@@ -432,6 +432,17 @@ state the significance honestly *(added; see below)*; (iii) on-the-fly
 smearing costs ~55% step time (1863 s/epoch vs ~1200) — cache smeared links if
 this direction gets iterated heavily.
 
+> **SUPERSEDED IN PART (2026-09-08).** The "beats the GEVP" headline below is
+> measured against `GEVP_LEVELS = [0,2,4,6]` of the **1×1 plaquette** — four
+> smearing levels of one loop shape. `scripts/su2_fair_fight.py` rebuilt the
+> classical arm as strongly as the theory allows and the advantage does not
+> survive: ΔA₀ = +0.013 ± 0.029 against a 21-operator basis once the network is
+> retrained on the same smearing ladder, and +0.052 ± 0.033 (1.5σ) against the
+> input-matched `deep` arm. The numbers below are correct as stated *against the
+> published basis*; the claim they support is not. See
+> `notes/audit_2026-09-06.md` §6.1 and §6.4 — §6.4 is the current source of
+> truth for what §6.2 delivers.
+
 ### Run 5 final (2026-07-03) — §6.2 delivered: the learned operator beats the GEVP
 
 Warm-started retrain with the scale pin: stable throughout (C(0) held at O(1),

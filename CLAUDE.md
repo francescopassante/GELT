@@ -284,6 +284,25 @@ site-coherent smeared inputs otherwise pump to float32 overflow. Still open
 from the §6.2 list: the matched-parameter L-CNN baseline on the same
 per-timeslice task (the fresh-ensemble replication is done — see below).
 
+**§6.2 RE-STATED (2026-09-08, `notes/audit_2026-09-06.md` §6.4):** the fair-fight
+audit rebuilt the classical comparator as strongly as the theory allows, and the
+"beats the GEVP" headline does **not** survive it. The published arm is four
+smearing levels of the **1×1 plaquette**; a deeper ladder (`deep`) or added loop
+shapes (`shapes_sm`) each close the gap independently, and against the
+21-operator `full` basis — with the network retrained on the same ladder
+(`--input-smear-levels=0,2,4,6,8,12,16 --d-model=24`, A₀ 0.903 → **0.955**) —
+ΔA₀ = **+0.013 ± 0.029 (0.5σ)**. Input-matched (`deep`, the same 1×1 channels the
+net receives) it is +0.052 ± 0.033 (1.5σ): a hint, not a result. What survives is
+**economy, not overlap** — one learned operator equals the optimal linear
+combination of 21 classical ones on the same information. Two limits: one
+ensemble (±0.029 cannot resolve below ≈6%), and **A₀ has saturated** (every
+strong arm at 0.93–0.96 against a ceiling of 1), so this observable can no longer
+discriminate methods on this ensemble. The Z₂ side moved too: the strengthened
+classical arm matches the trained attention field against the dual truth, so the
+abstract's "the only arm consistent with the exact answer" is **withdrawn**
+(§6.2 of the audit). Everything below is correct *against the published basis*
+and is kept for the record.
+
 **Presentation layer (2026-07-04):** how the Run-5 result is *reported* in
 LGT-standard form — masses quoted from a cosh fit (not single m_eff points)
 and operator quality quoted as the **ground-state overlap fraction A₀**
