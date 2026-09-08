@@ -188,6 +188,23 @@ removed pending rewrites; the spec now lives across the notes below.)
   n_ops=1` at all five β), the Z₂ nets trained on four channels of which three
   are byte-identical, and the dual accuracy table faces a handicapped opponent.
   **SU(2) is verified clean** (1.4e-15), so §6.2 is untouched. Ranked plan in §4.
+- `notes/performance_audit.md` — **performance audit of the training step**, and
+  the source of truth for anything touching the GELT hot path. Why one
+  `train_glueball.py` step cost **7.77 s on a V100** for a ~5k-parameter model
+  (~8% of the bandwidth roofline), the four exactly-equivalent fixes that landed
+  (closed-form SU(2) polar — the APE ladder was issuing ~4.5 M batched 2×2 SVDs
+  *per step*; batch-vectorised `ape_smear`, 7.4×; opt-in introspection stashes;
+  and the GEMHSA hot path, 2.16× on forward + backward — where the neighbour
+  gather's atomic-scatter-add backward measured 63.5× its own forward), with the
+  algebra and the measurement behind each. §4 is why
+  `profile_glueball_step.py` had to be rewritten — it profiled a pipeline the
+  training loop does not run, which is where CLAUDE.md's old "transport is 1.9%"
+  came from. §5 is the ranked backlog: the adjoint (real SO(3)) transport, the
+  Q/K/V layout, unmaterialised contractions, offset chunking (**memory, not
+  time**), the schedule, `torch.compile`. §6 is what was rejected and why
+  (per-config W/T caching, fp16, larger batch, real-valued projections). §7 is
+  what the numbers do **not** establish — every timing is CPU, and
+  bit-reproducibility against earlier dumps is gone at the 4e-7 level.
 - `notes/resources.md` — curated textbooks, lecture notes, and ML-for-LGT
   papers with suggested reading order.
 - `notes/tunnel-visualization.md` — exploratory notes on visualising
@@ -370,12 +387,75 @@ Full record in `notes/topological_localization.md` §6.1.
 spatial-only spectroscopy path is byte-identical). Both results are written up
 in `glueball_report/glueball_spectroscopy.tex` § 10.
 
+**Performance (2026-09-08 — full record in `notes/performance_audit.md`).** The
+ens1 replication logged **7.77 s/step, 1942 s/epoch** on a 32 GB V100 at
+`BATCH_CONFIGS=6` — for a ~5k-parameter model, i.e. an order of magnitude off any
+roofline. Four exactly-equivalent changes, each measured and each covered by a
+test:
+
+- **`SU(2).project` in closed form** (`gelt.lattice._polar_factor_2x2`). The APE
+  ladder `INPUT_SMEAR_LEVELS = (0, 2, 4, 6)` is six smearing iterations *per
+  optimizer step*, each reprojecting `3·Lt·L³` links, so `SU.project` was issuing
+  ~4.5 M batched 2×2 complex SVDs *and* as many LU determinants per step.
+  `H = M†M` is 2×2 Hermitian PSD, so `√H = (H + √det H·𝟙)/√(tr H + 2√det H)` and
+  the polar factor is two matmuls plus real scalar arithmetic — the *same map*,
+  agreeing with the SVD route to 3.9e-7 (complex64 rounding) on 248 832 real
+  production APE matrices, with a *better* unitarity residual (1.2e-7 vs 6e-7).
+  `H` is formed in float64 (squaring M squares its condition number); MPS, which
+  has no float64, stays in complex64 — where it now runs at all, which the SVD
+  path could not.
+- **`ape_smear` vectorised over the configuration batch** (`staple_sum` gained
+  `batched=True`): the Python loop went from `n_steps × B × len(dirs)` iterations
+  to `n_steps × len(dirs)`, sliced only by a `chunk_bytes` budget to bound
+  `staple_sum`'s temporaries. Bit-exact under any chunking. Ladder A/B on real
+  configs, CPU: **7.4×** (5.85 s → 0.79 s per training step), outputs agreeing to
+  4.9e-7 after six smearing steps.
+- **The introspection stashes are opt-in** (backlog item 4 below). The two K̃/Ṽ
+  norms alone re-read and re-materialise ~12% of the block's memory traffic, and
+  the ~10 `.item()` calls per block are ~10 GPU syncs — all of it running again
+  inside every gradient-checkpoint recompute.
+- **The GEMHSA hot path**: K and V share one gather (they are adjacent in the
+  fused QKV output, so the pair is a view — the concatenation the size of the
+  whole offset-expanded neighbourhood is gone); the Δx = 0 transport slot is
+  prepended once in `GELT.attn` instead of twice per layer per forward; the RoPE
+  rotation is folded into the *query* (`GEMHSA.rope_score` — Q carries no offset
+  axis, so this is n_offsets times less data to touch than rotating K̃); and the
+  neighbour gather's backward is written as a gather (`_OffsetGather`) instead of
+  the `index_put_(accumulate=True)` atomic scatter-add autograd emits, which
+  measured **64× the forward** and was the most expensive single op in the block.
+  Per-layer materialised bytes 43.7 → 29.8 GiB at the production shape, non-view
+  kernels 76 → 44, `.item()` syncs ~10 → 0. Block A/B on CPU, forward + backward:
+  **2.16×** (fwd 1.92×, bwd 2.34×), outputs identical to 1.2e-7.
+
+`scripts/profile_glueball_step.py` was rewritten because it profiled a pipeline
+the training loop does not run (one thin plaquette level, no APE ladder) — that
+is where the "transport is only 1.9%" figure came from, true of the transport but
+against a denominator missing a whole stage. It now goes through
+`train_glueball.config_inputs`, breaks that into its three stages, and carries a
+per-stage forward/**backward** micro-benchmark plus `PROFILE_LEGACY_SMEAR` /
+`PROFILE_DIAGNOSTICS` / `PROFILE_COMPILE` switches. **Run it on the V100 before
+spending effort on the next tier** — the ranked remaining candidates, with the
+byte and flop counts behind each, are `notes/performance_audit.md` §5: the adjoint
+(real SO(3)) representation of the transport, which would replace the two
+tiny-2×2 `bmm`s (383 MiB/layer, `bwd/fwd ≈ 2.2`); killing the transport's
+permute+`clone` (189 MiB/layer) via the Q/K/V memory layout; unmaterialised
+score/value contractions (190 MiB/layer); offset chunking (a *memory* win, not a
+time win — it buys larger R and larger batch, not fewer FLOPs); and the schedule,
+where the ens1 run's val minimum sat near epoch 15 and `PATIENCE = 10` epochs
+carried it to 25. **No total speedup is claimed** — every timing behind these
+numbers is CPU, and how the two halves (smearing 7.4×, attention 2.16×) weight
+into the step is what the profiler is for.
+
 Known caveats (see `notes/fable_audit.md` for the full list and the
 prioritized fixes):
 
-1. **The trained variant (`blocks_rope`) is the untested one.** The tests
-   and the invariance check exercise `blocks_bias`. Parametrizing the
-   equivariance tests over both modules is the cheap fix.
+1. **(largely resolved)** The trained variant (`blocks_rope`) now has its own
+   suite, `tests/test_blocks_rope.py`: gauge equivariance for SU(2) (both gates)
+   and Z₂, plus an equivalence test against a naive oracle of the whole block —
+   two gathers, a concatenation, `apply_rope` on K̃, the plain Frobenius score —
+   agreeing on outputs *and* input gradients to 1e-12 for SU(2)/SU(3)/Z₂. What is
+   still `blocks_bias`-only is `check_gelt_invariance.py` and the worst-case-Ω
+   stress test.
 2. **(resolved)** The dead parameters are gone: `self.alpha` (ReZero) was
    deleted from both variants (the residual stays `W + W_act`, and the
    `alpha_init` plumbing was removed from `GEMHSA`/`GELT`/`train_gelt.py`),
@@ -420,7 +500,11 @@ Library lives in `gelt/`; entry-point scripts in `scripts/`; pytest in
 ### `gelt/`
 
 - **`lattice.py`** — `GaugeGroup` ABC with `Z2` and `SU(N)` implementations;
-  pure tensor functions:
+  pure tensor functions. `SU.project` (nearest group element: polar factor,
+  rescaled by det^(1/nc)) takes a closed-form route at `nc == 2`
+  (`_polar_factor_2x2`, plus a closed-form determinant) — the same map, no
+  `linalg` kernels, ~23× faster; see § "Performance" for why the smearing hot
+  path made that worth doing:
   - `random_links(L, D, group, dtype, Lt=None)` → `(D, *Λ, nc, nc)`. `Lt` gives
     a non-cubic `Λ = (Lt,) + (L,)*(D-1)` lattice (time = axis 0) for anisotropy.
   - `plaquette_tensor(U, group)` → `(D(D-1)/2, *Λ, nc, nc)`.
@@ -459,6 +543,11 @@ Library lives in `gelt/`; entry-point scripts in `scripts/`; pytest in
   SU(2)**); `haar_ensemble` (Haar-uniform, ignores β — shares the sampler
   interface for sanity checks). To plug in U(1)/SU(N) later, add a proposal
   (and/or sweep) and register it in `_PROPOSAL_FN` / `_SWEEP_FN`.
+  - `staple_sum(..., batched=True)` accepts a leading configuration axis
+    (`(B, D, *Λ, nc, nc)`); every op in it is already elementwise over that axis,
+    so this only shifts the direction indexing and the roll axes by one. It is
+    bit-identical to looping, and it is what lets `ape_smear` vectorise. The MCMC
+    sweeps are a single sequential chain and keep the unbatched form.
   - **Anisotropy:** `staple_sum` and all sweeps take `xi=1.0, time_axis=0`; for
     `xi ≠ 1` the per-plane coupling ratio ξ^±1 is folded into the staple (β stays
     the single overall scale), so `xi = 1` is bit-exact backward-compatible. Opt
@@ -513,7 +602,10 @@ Library lives in `gelt/`; entry-point scripts in `scripts/`; pytest in
     (each spatial link replaced by the group projection of
     `(1−α)U + (α/n_staples)·Σ daggered spatial staples`, reusing
     `staple_sum`); time links untouched so the transfer-matrix interpretation
-    holds. The crucial enabler for a reachable plateau (§7).
+    holds. The crucial enabler for a reachable plateau (§7). Vectorised over the
+    configuration batch, sliced by a `chunk_bytes` budget (bit-exact under any
+    chunking — smearing never couples two configurations) so `staple_sum`'s ~10
+    same-shaped temporaries stay bounded on a 400-config eval batch.
   - `glueball_operator(U, group, R=1, T=1)` → `(B, *Λ)` real scalar field:
     sum of spatial-plane R×T Wilson loops (a rotational scalar; R=T=1 is the
     spatial plaquette).
@@ -572,8 +664,17 @@ Library lives in `gelt/`; entry-point scripts in `scripts/`; pytest in
   score `Re Tr[Q† K̃]` (+ RoPE rotation or offset bias) → softmax →
   multiplicative value `Σ α · Q_v† · Ṽ` → channel mix → residual + L-Act
   gate. `GELT.forward(W, T)` computes `T_dag` once and threads
-  `(T, T_dag)` through the stack. `_last_score` / `_last_alpha` are stashed
-  per layer (under `no_grad`) for the interpretability program.
+  `(T, T_dag)` through the stack; `GELT.attn` also prepends the Δx = 0 transport
+  slot once for the whole stack. `_last_score` / `_last_alpha` are stashed per
+  layer (under `no_grad`) for the interpretability program — **opt-in**, via
+  `GELT.set_introspection(store_attention=True)`, along with the `_last_*_norm`
+  scalars under `diagnostics=True`.
+  In `blocks_rope` the score path is `GEMHSA.rope_score`: the RoPE rotation
+  applied to the query instead of to the transported keys (an algebraic identity
+  — `apply_rope` is kept as the reference the tests check against), and the
+  neighbour gather is `_OffsetGather`, autograd's own forward with the gradient
+  written as a gather rather than an atomic scatter-add. Both are pinned to a
+  naive oracle in `tests/test_blocks_rope.py`; see § "Performance".
 - **`__init__.py`** — re-exports `GELT` (from `blocks_bias`), `LatticeCNN`,
   the dataset builders, the `lattice` primitives, and the ensembles.
 
@@ -702,6 +803,16 @@ loop inline (there is no shared `gelt/train.py`). Device order: cuda → mps
   `τ_int` (via `integrated_autocorrelation_time`) so the production `n_skip` can
   be set to `≳ 2·τ_int` of the smeared operator. Writes
   `glueball_autocorrelation.png`.
+- **`profile_glueball_step.py`** — where does one `train_glueball.py` optimizer
+  step go? Times the real pipeline (`tg.config_inputs` → forward → loss →
+  backward → step), splits `config_inputs` into smearing / plaquettes /
+  transport, and micro-benchmarks each attention stage **forward and backward
+  separately** — which is the number that matters, since the gather's backward
+  (an atomic scatter-add before `_OffsetGather`) dwarfed its forward. Projects
+  s/epoch and h/run and prints the ens1 run's measured 7.77 s/step as the
+  reference. Env: `PROFILE_DIAGNOSTICS` / `PROFILE_LEGACY_SMEAR` (both A/B a
+  change against its predecessor in the same run) / `PROFILE_MICRO` /
+  `PROFILE_COMPILE`. See § "Performance".
 
 ### `tests/`
 
@@ -709,6 +820,11 @@ loop inline (there is no shared `gelt/train.py`). Device order: cuda → mps
   `action` under `link_gauge_transformation` (bit-exact in Z₂ float64), plus
   **anisotropic-action** gauge invariance (SU(2) + Z₂, `xi ≠ 1`), the `xi = 1`
   match to the isotropic action, and the non-cubic `random_links(..., Lt=)` shape.
+  Plus **`SU(2).project`'s closed-form route**, checked against the SVD polar it
+  replaced twice: on far-from-group input (the hard case) and on the near-group
+  input the smearing hot path actually feeds it, where the two agree to
+  complex64 rounding — so the swap changes no measured number. `SU(3)` is
+  asserted to still take the general route.
 - **`test_data_model.py`** — split-validation and CNN-baseline shape
   guards.
 - **`test_transport.py`** — coverage for `l1_ball_offsets` and
@@ -721,6 +837,17 @@ loop inline (there is no shared `gelt/train.py`). Device order: cuda → mps
   and finite-grad backward pass on a batched SU(3) example. **Tests the
   `blocks_bias` variant** (not the trained `blocks_rope`); the full suite
   passes now that the dead parameters are resolved (see Status).
+- **`test_blocks_rope.py`** — the same guarantee for the **trained** variant
+  (caveat 1 above): gauge equivariance for SU(2) on both gates and for Z₂, then
+  the optimised attention path against a naive oracle — two gathers, a
+  concatenation, `apply_rope` on K̃, the plain Frobenius score — matching on
+  outputs, `_last_score`, `_last_alpha` *and* input gradients to 1e-12 for
+  SU(2)/SU(3)/Z₂. Plus `_OffsetGather`'s hand-written backward against autograd's
+  (including the forced-chunking path, which may only change summation order),
+  the assertion that its inverse index really is the forward index with the
+  offsets negated (a mismatch would corrupt the gradient at every mixed-sign
+  offset and no shape check would catch it), that the Δx = 0 prepend is
+  idempotent-by-refusal, and that the introspection stashes are off by default.
 - **`test_sampler.py`** — SU(2) heat-bath + overrelaxation correctness:
   overrelaxation conserves the Wilson action to machine precision and stays
   on the group; heat-bath stays on the group and reproduces the *exact* 2D
@@ -804,6 +931,8 @@ python scripts/su2_attention_correlator.py  # one Table 5 row, SU(2) β=2.4 (~40
 python scripts/operator_decomposition.py    # O_GELT = P + r against the classical span (offline, seconds)
 SFF_NOCACHE=1 python scripts/su2_fair_fight.py  # reproduce §6.2's ΔA₀ offline; drop it for the strengthened arms
 python scripts/z2_fair_fight.py             # is the Z₂ classical comparator a straw man? (GPU)
+PROFILE_DIAGNOSTICS=1 PROFILE_LEGACY_SMEAR=1 python scripts/profile_glueball_step.py
+#                                       # where one training step goes, per stage
 python -m gelt.cnn_baseline            # torchsummary for a 5×5 CNN
 pytest tests                           # unit tests
 ```
@@ -879,8 +1008,12 @@ in `notes/explainability.md`):
    equivariance tests over all variants** (this is also the §7-style stress
    test the trained variant currently lacks).
 3. **Enforce RoPE axis coverage** (`d_qkv ≥ 2D`; set `d_qkv=8` for D=4).
-4. **Gate the `.item()` diagnostics** behind a flag (they force a GPU sync
-   every layer/step); default off in training.
+4. ~~**Gate the `.item()` diagnostics** behind a flag (they force a GPU sync
+   every layer/step); default off in training.~~ **Done:** both variants carry
+   `store_attention` (the `_last_score`/`_last_alpha` stash) and `diagnostics`
+   (the `_last_*_norm` scalars), off by default, with
+   `GELT.set_introspection(...)` to fan them out; the five interpretability
+   scripts switch `store_attention` on. See § "Performance".
 5. **Offset-chunked attention + on-the-fly transport** — the memory gate on
    the whole explainability program at physical R.
 6. **Add cooling/smearing of `q(x)`** (prerequisite for the localization
