@@ -26,9 +26,13 @@ across studies rather than results of any one of them.
   paste-ready.
 - `glueball/*_test_obars.pt` (also in `dumps/`) — the per-configuration Ō(t) the
   cosh fits and every offline audit run on. **Table `tab:overlap`** / ΔA₀.
-- `fair_fight/su2_fair_fight.pt` — ΔA₀ against every strengthened classical arm.
-  Read it together with `notes/audit_2026-09-06.md` §6.4/§6.5: the headline
-  survives against `deep`, and `full`/`shapes_sm` are numerically unusable.
+- `fair_fight/su2_fair_fight.pt` — the offline (dump-only) reproduction of the
+  published ΔA₀. The **strengthened** arms need the SU(2) ensemble and were run
+  on the V100; the local `*_obars_*.pt` cache holds the `published` basis only,
+  so a local run reproduces the published comparison and says so instead of
+  claiming a verdict. The verdict is in `notes/audit_2026-09-06.md` §6.4/§6.5:
+  the headline survives against `deep`, and `full`/`shapes_sm` are numerically
+  unusable.
 
 ## Two artifacts whose producing script is gone
 
