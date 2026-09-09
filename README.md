@@ -1,7 +1,7 @@
 # GELT — Gauge-Equivariant Lattice Transformer
 
-Master's thesis: a gauge-equivariant attention network (GELT) for SU(N_c)
-lattice gauge theory. The architecture is built on the L-CNN framework
+Master's thesis: a gauge-equivariant attention network for SU(N_c) lattice gauge
+theory. The architecture is built on the L-CNN framework
 ([Favoni et al., 2021](https://arxiv.org/abs/2012.12901)) with two departures:
 
 - **Matrix-bilinear value path.** The standard scalar-weighted value is replaced
@@ -14,96 +14,99 @@ lattice gauge theory. The architecture is built on the L-CNN framework
 
 The gauge-invariant attention score `Re Tr[Q† · K̃]` is a two-loop correlator —
 the natural matrix generalisation of the standard inner product `q†k`, and a
-well-known observable in lattice QCD (glueball propagators, Polyakov-loop
-correlators, string-tension measurements).
+well-known observable in lattice QCD.
+
+> **Scope of this repository (2026-09-09).** It holds what reproduces
+> **`../report/main.tex`**, plus two audits of that content: the SU(2) fair fight
+> and the operator decomposition. Studies that closed negative or never reached
+> the paper — the dual-Ising ground truth and the ν-exponent fits, the
+> topological-localization readout, the ℓ_att attention-range statistic, the
+> rotation-irrep projection, the Z₂ fair fight — were **deleted**, not archived.
+> They are in the history at commit `cfa0a7e` and their design records with them.
 
 ---
 
-## Results so far
+## Reproducing the report
 
-**0⁺⁺ glueball spectroscopy.** Trained as a variational operator on the Rayleigh
-loss `−C(1)/C(0)`, GELT saturates the transfer-matrix bound on an anisotropic
-SU(2) lattice (L=12, Lt=24, β=2.4, ξ=3.0) and **beats the classical multi-level
-GEVP on ground-state overlap**: ΔA₀ = +0.078 ± 0.022 (3.6σ), combining the
-original run with an independent fresh-ensemble replication, at a consistent
-mass. Multi-level smeared input channels were the enabler — with thin-plaquette
-input the operator only relearns APE×2's staple content. Written up in
-`glueball_report/`.
+`../report/main.tex`, section by section. Everything marked *GPU* is a V100-scale
+run; everything marked *offline* is CPU-seconds from artifacts already in the
+repo.
 
-**Attention as a lattice operator.** Because the attention score is gauge
-invariant, any reduction of the attention map is a local scalar lattice
-operator — so its connected correlator has a mass. Measured on 3D Z₂ near
-criticality, `ξ_A = 1/m_A` tracks the classical correlation length at Pearson
-**0.9966** over a factor 2.7 in ξ, surviving a non-monotonic excursion. The
-random-init control also tracks ξ, so the *structural* claim is established
-while the *learning* claim rests on the correlated ΔA₀ (5.4σ–23.5σ). Written up
-in `attention_report/`.
+| main.tex | claim | how |
+|---|---|---|
+| §Validation and tests | "gauge equivariance is verified to machine precision in complex128" | `pytest tests/test_blocks.py` (equivariance + the naive-oracle equivalence); `python scripts/check_gelt_invariance.py` prints the drift (8.9e-16) |
+| §Validation and tests, `fig:wilson_loop_regression` | CNN (~500k par.) vs GELT (~1.5k par.) on a per-site 1×2 Wilson loop | `python scripts/train_cnn.py` and `python scripts/train_gelt.py` — same D, L, group, sampler, loop and splits by construction; scatters land in `results/wilson_regression/` |
+| §SU(2) Glueball spectroscopy, `tab:meff` + `fig:glueball_meff` | learned operator vs classical GEVP, m_eff(Δ) | *GPU:* `python scripts/measure_glueball.py` (ensemble + classical baseline), then `python scripts/train_glueball.py` |
+| §…, ΔA₀ = +0.078 ± 0.022 (3.6σ) | cosh fits, overlap A₀, correlated differences, `fig:glueball_overlap` | *offline:* `python scripts/fit_glueball_overlap.py dumps/best_glueball_gelt_sm0-2-4-6_test_obars.pt` (and the `_ens1` dump for the replication) |
+| §…, the replication | the second, independently sampled ensemble | *GPU, ~24 h:* `bash scripts/overnight_replication.sh` |
+| §Attention as a physical field, `tab:train_rnd_gevp` | ξ_A and A₀, trained / random / GEVP, four β in 3D Z₂ | *GPU:* `python scripts/z2_beta_scan.py` (ensembles + classical mass), `Z2G_R=6 Z2G_N_USE=800 python scripts/train_z2_glueball.py <β>` once per β, then `python scripts/z2_attention_correlator.py`. *offline replot:* `ZAC_REPLOT=results/attention/z2_attention_correlator_diag_R6.pt python scripts/z2_attention_correlator.py` |
+| §…, `tab:su2_train_rnd_gevp` | the same measurement on SU(2) at β = 2.4 | *GPU, ~40 min:* `python scripts/su2_attention_correlator.py` |
 
-Both reports also record the negative results, which are part of the record:
-attention does **not** localize on topological charge, and the attention-*range*
-statistic `ℓ_att` is bounded by R and centred by the ball geometry, making it
-unusable as a correlation-length probe. See `notes/topological_localization.md`.
+Two audits of the above, neither of which main.tex quotes:
 
----
+| question | how |
+|---|---|
+| Is the classical comparator a straw man? | *offline:* `SFF_NOCACHE=1 python scripts/su2_fair_fight.py` reproduces the published ΔA₀; drop the flag (and give it the SU(2) ensemble) for the strengthened `deep` / `shapes` / `full` arms. Verdict in `notes/audit_2026-09-06.md` §6.4/§6.5 |
+| Did the network find operator content the classical basis cannot express? | *offline:* `python scripts/operator_decomposition.py` — 12.9% of the norm² outside the span, ΔA₀ = +0.076 ± 0.019 (4.0σ). `notes/operator_decomposition.md` |
 
-## Architecture overview
-
-```
-Input: link configuration U  (D, *Λ, N_c, N_c)
-          │
-          ▼
-    Preprocessing:  1×1 plaquettes  →  D(D-1)/2 W-channels
-          │
-          ▼  (×n_blocks)
-    GEMHSA block
-    ├── Augment W → [𝟙, W, W†]
-    ├── Q, Q_v, K, V projections  (per-site, per-head, gauge-covariant)
-    ├── build_transport_average(U, R)  →  T_Δx(x) for |Δx|₁ ≤ R (U batched)
-    ├── K̃, Ṽ = T_Δx · K · T_Δx†    (parallel transport to site x)
-    ├── score = Re Tr[Q† · K̃]  +  RoPE rotation *or* learned offset bias
-    ├── α = softmax(scores)
-    ├── W_out += Σ_y  α_{x→y} · Q_v†_x · Ṽ_{y→x}   (matrix-bilinear value)
-    ├── channel mix  →  C_out W-channels
-    └── residual + L-Act gate
-          │
-          ▼
-    Readout:  Re Tr → per-site MLP → spatial reduction
-```
-
-`_last_score` / `_last_alpha` are stashed per layer under `no_grad` — the hook
-the interpretability program reads the attention out through.
+**Known caveat that touches the Z₂ table.** Projected Z₂ APE smearing has no
+tunable radius at any α, and at the production `SMEAR_ALPHA = 0.5` it is not
+gauge covariant: the classical Z₂ comparator is one operator, not four, and the
+Z₂ networks were trained on four input channels of which three are byte-identical.
+SU(2) is verified clean (1.4e-15), so the spectroscopy headline is untouched.
+Full measurement and fix in `notes/audit_2026-09-06.md` §2.
 
 ---
 
-## Repository layout
+## Layout
 
 ```
-gelt/                    library (installed editable via pyproject.toml)
-  lattice.py             GaugeGroup ABC + Z2/SU(N); plaquettes, Wilson action
-                         (anisotropic), topological charge, Wilson loops,
-                         l1_ball_offsets, build_transport_average
-  sampler.py             Metropolis (Z2 + SU(2)), Z2 heat-bath, SU(2)
-                         heat-bath + overrelaxation, mcmc_ensemble,
-                         haar_ensemble, integrated_autocorrelation_time
-  blocks_rope.py         GELT with rotary positional encoding  ← the trained one
-  blocks_bias.py         GELT with a learned offset bias       ← the tested one
-  lcnn.py                Favoni et al. L-CNN — equivariant baseline
-  cnn_baseline.py        LatticeCNN — non-equivariant reference (2D only)
-  glueball.py            0⁺⁺ spectroscopy: APE smearing, correlators, m_eff,
-                         multi-level GEVP, cosh fits, overlap A₀, jackknife
-  topology.py            cooling + cooled charge density
-  data.py                dataset construction and splits
+gelt/                  library (installed editable via pyproject.toml)
+  lattice.py           GaugeGroup ABC + Z2/SU(N); plaquettes, Wilson action
+                       (anisotropic), topological charge, Wilson loops,
+                       l1_ball_offsets, build_transport_average
+  sampler.py           Metropolis (Z2 + SU(2)), Z2 heat-bath, SU(2) heat-bath +
+                       overrelaxation, mcmc_ensemble, haar_ensemble,
+                       integrated_autocorrelation_time
+  blocks.py            GEMHSA / ChannelLift / Trace / MLP / GELT — the one block
+  glueball.py          0⁺⁺ spectroscopy: APE smearing, correlators, m_eff,
+                       multi-level GEVP, cosh fits, overlap A₀, jackknife
+  lcnn.py              Favoni et al. L-CNN — equivariant baseline
+  cnn_baseline.py      LatticeCNN — non-equivariant reference
+  data.py              dataset construction and splits
 
-scripts/                 entry points (each self-contained; see CLAUDE.md)
-tests/                   pytest — gauge invariance/equivariance, sampler
-                         exactness, transport, glueball arithmetic
-notes/                   design records and the run-by-run experimental log
-glueball_report/         LaTeX write-up of the spectroscopy result
-attention_report/        LaTeX write-up of the attention-as-operator result
+scripts/               entry points, flat and self-contained (table below)
+tests/                 pytest: gauge invariance/equivariance, sampler exactness,
+                       transport, glueball arithmetic
+notes/                 design records and the run-by-run experimental log
+reports/               LaTeX write-ups and their PDFs (paper / glueball / attention)
+dumps/                 the two test-split Ō dumps — tracked on purpose
+results/               generated figures, checkpoints, dumps (gitignored)
+datasets/              cached ensembles (gitignored)
+PLANS.md               future directions — proposals, none implemented
+CLAUDE.md              module-by-module detail, conventions, status, caveats
 ```
 
-**`CLAUDE.md` is the maintained source of truth** for module-by-module detail,
-conventions, current status, and known caveats. This README is the summary.
+### scripts/
+
+| script | what it does |
+|---|---|
+| `validate_sampler_z2.py`, `validate_sampler_su2.py` | four-panel Metropolis sanity check against the exact mean plaquette |
+| `validate_anisotropy.py` | ξ=1 regression, the ⟨P_st⟩ > ⟨P_ss⟩ split, renormalized vs bare anisotropy |
+| `check_gelt_invariance.py` | sixty-second gauge-invariance check on the full model |
+| `train_cnn.py`, `train_gelt.py`, `train_lcnn.py` | per-site Wilson-loop regression: CNN, GELT, L-CNN |
+| `check_glueball_autocorrelation.py` | τ_int of the smeared operator — sets the production `n_skip` |
+| `measure_glueball.py` | classical 0⁺⁺ baseline: correlator, GEVP m_eff, ensemble cache |
+| `train_glueball.py` | GELT as a variational operator on the Rayleigh loss |
+| `fit_glueball_overlap.py` | cosh fits, overlap A₀, correlated (Δm, ΔA₀) — offline |
+| `overnight_replication.sh` | fresh ensemble + from-scratch training, unattended |
+| `operator_decomposition.py` | O_GELT = P + r against the classical span — offline |
+| `su2_fair_fight.py` | the strengthened classical arms — is the comparator fair? |
+| `z2_beta_scan.py` | 3D Z₂ classical mass vs β: the ensembles and the reference ξ |
+| `train_z2_glueball.py` | one variational operator per β, 3D Z₂ |
+| `z2_attention_correlator.py` | ξ_A and A₀ of the attention field vs classical vs random |
+| `su2_attention_correlator.py` | the same measurement on anisotropic SU(2) |
+| `profile_glueball_step.py` | where one training step goes, per stage, fwd and bwd |
 
 ---
 
@@ -114,39 +117,10 @@ git clone git@github.com:francescopassante/GELT.git
 cd GELT
 uv venv && source .venv/bin/activate
 uv pip install -e .
+pytest tests
 ```
 
----
-
-## Usage
-
-```bash
-# Sampler validation (four-panel, one per group)
-python scripts/validate_sampler_z2.py
-python scripts/validate_sampler_su2.py
-python scripts/validate_anisotropy.py
-
-# Classical 0⁺⁺ baseline: correlator + GEVP effective mass
-python scripts/measure_glueball.py
-
-# Train GELT as a variational glueball operator (V100-scale)
-python scripts/train_glueball.py
-
-# Cosh fits + ground-state overlap A₀ (offline, CPU)
-python scripts/fit_glueball_overlap.py
-
-# Attention readouts
-python scripts/visualize_glueball_attention.py
-python scripts/z2_attention_correlator.py
-
-# Quick gauge-invariance check on the full model
-python scripts/check_gelt_invariance.py
-
-# Unit tests
-pytest tests/
-```
-
-Device order is cuda → mps → cpu. `datasets/`, `*.pth`, `*.png` and `download/`
+Device order is cuda → mps → cpu. `datasets/`, `results/`, `*.pth` and `*.png`
 are gitignored; the training scripts cache their ensembles under `datasets/`.
 
 ---
@@ -161,8 +135,8 @@ are gitignored; the training scripts cache their ensembles under `datasets/`.
 | Transport T | `(N, n_offsets, *Λ, N_c, N_c)` | offsets in `l1_ball_offsets` order |
 
 - Periodic BCs via `torch.roll` throughout — no manual index arithmetic.
-- Color axes are always present, even for Z₂ (`N_c = 1`), so every matmul
-  ports verbatim to U(1)/SU(N). Never broadcast across color axes implicitly.
+- Color axes are always present, even for Z₂ (`N_c = 1`), so every matmul ports
+  verbatim to U(1)/SU(N). Never broadcast across color axes implicitly.
 - Wilson action: `S = β Σ_p (1 − Re Tr P_p / N_c)`. Anisotropic when `ξ ≠ 1`
   (temporal plaquettes weighted `β·ξ`, spatial `β/ξ`); `ξ = 1` is bit-exact.
 - Time is lattice axis 0 throughout the spectroscopy code.
@@ -178,9 +152,9 @@ plaquette" — a product the convolutional kernel cannot express with its additi
 inductive bias. R² ≈ 0 across all L confirms this on Haar-random data.
 With plaquettes as input, R² ≈ 0.99: the task collapses to a linear sum.
 
-The GELT closes this gap by construction: the matrix-bilinear value path
-`Q† · Ṽ` directly encodes multiplicative loop content, and the attention scores
-weight neighbors by physical relevance.
+GELT closes this gap by construction: the matrix-bilinear value path `Q† · Ṽ`
+directly encodes multiplicative loop content, and the attention scores weight
+neighbours by physical relevance.
 
 ---
 
@@ -188,6 +162,8 @@ weight neighbors by physical relevance.
 
 - Favoni, Ipp, Müller, Schuh (2021). *Lattice Gauge Equivariant Convolutional Neural Networks.*
   [arXiv:2012.12901](https://arxiv.org/abs/2012.12901)
+- Morningstar, Peardon (1999). *Efficient glueball simulations on anisotropic lattices.*
+  [hep-lat/9901004](https://arxiv.org/abs/hep-lat/9901004)
 - Nagai, Tomiya (2021). *Gauge covariant neural network for 4-dimensional non-Abelian gauge theory.*
   [arXiv:2103.11965](https://arxiv.org/abs/2103.11965)
 - Nagai, Ohno, Tomiya (2025). *CASK: gauge-covariant surrogate action.*
