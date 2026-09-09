@@ -301,24 +301,32 @@ site-coherent smeared inputs otherwise pump to float32 overflow. Still open
 from the §6.2 list: the matched-parameter L-CNN baseline on the same
 per-timeslice task (the fresh-ensemble replication is done — see below).
 
-**§6.2 RE-STATED (2026-09-08, `notes/audit_2026-09-06.md` §6.4):** the fair-fight
-audit rebuilt the classical comparator as strongly as the theory allows, and the
-"beats the GEVP" headline does **not** survive it. The published arm is four
-smearing levels of the **1×1 plaquette**; a deeper ladder (`deep`) or added loop
-shapes (`shapes_sm`) each close the gap independently, and against the
-21-operator `full` basis — with the network retrained on the same ladder
-(`--input-smear-levels=0,2,4,6,8,12,16 --d-model=24`, A₀ 0.903 → **0.955**) —
-ΔA₀ = **+0.013 ± 0.029 (0.5σ)**. Input-matched (`deep`, the same 1×1 channels the
-net receives) it is +0.052 ± 0.033 (1.5σ): a hint, not a result. What survives is
-**economy, not overlap** — one learned operator equals the optimal linear
-combination of 21 classical ones on the same information. Two limits: one
-ensemble (±0.029 cannot resolve below ≈6%), and **A₀ has saturated** (every
-strong arm at 0.93–0.96 against a ceiling of 1), so this observable can no longer
-discriminate methods on this ensemble. The Z₂ side moved too: the strengthened
-classical arm matches the trained attention field against the dual truth, so the
-abstract's "the only arm consistent with the exact answer" is **withdrawn**
-(§6.2 of the audit). Everything below is correct *against the published basis*
-and is kept for the record.
+**§6.2 RE-STATED, then CORRECTED (2026-09-08/09, `notes/audit_2026-09-06.md`
+§6.4/§6.5):** the fair-fight audit rebuilt the classical comparator as strongly
+as the theory allows. The published arm is four smearing levels of the **1×1
+plaquette**; the network was retrained on the same deep ladder the classical
+side gets (`--input-smear-levels=0,2,4,6,8,12,16 --d-model=24`, A₀ 0.903 →
+0.955 on run5) and the fight re-run against every strengthened arm, on **two
+independent ensembles** (run5 + ens1). Two of those arms — `full` (21 ops) and
+`shapes_sm` (20 ops) — turned out **numerically unusable**: `full`'s C(t0) is
+singular on *both* ensembles (cond = ∞) and its ΔA₀ swings 8× between them
+(+0.013 vs +0.105), and `shapes_sm` outright fell back to a single operator on
+ens1 (cond 2.8e9). §6.4's "does not survive" was read off `full` alone on one
+ensemble, before this was known — **withdrawn**. The one strong classical arm
+that is clean on both ensembles (`deep`, cond ~1.9e6/7.0e6, gate never fires,
+same estimator both times) is also the correct input-matched comparator, and
+against it **the claim survives**: ΔA₀ = +0.052 ± 0.033 (run5), +0.127 ± 0.027
+(ens1), combined **+0.097 ± 0.021 (4.6σ)**. `published` combines to
++0.131 ± 0.029 (4.5σ). What is genuinely **open, not closed**: whether a
+classical basis with real loop-shape variety (not just depth) closes the gap —
+`full`/`shapes_sm` were meant to test exactly that and neither can be read;
+fixing them needs pruning near-degenerate operators before the GEVP, not a
+bigger `GEVP_EPS` floor (that would hide the instability, not resolve it). The
+Z₂ side is unaffected by this correction: the strengthened classical arm
+matches the trained attention field against the dual truth, so the abstract's
+"the only arm consistent with the exact answer" is still **withdrawn** (§6.2 of
+the audit). Everything below is correct *against the published basis* and is
+kept for the record.
 
 **Presentation layer (2026-07-04):** how the Run-5 result is *reported* in
 LGT-standard form — masses quoted from a cosh fit (not single m_eff points)

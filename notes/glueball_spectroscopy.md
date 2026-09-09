@@ -432,16 +432,20 @@ state the significance honestly *(added; see below)*; (iii) on-the-fly
 smearing costs ~55% step time (1863 s/epoch vs ~1200) — cache smeared links if
 this direction gets iterated heavily.
 
-> **SUPERSEDED IN PART (2026-09-08).** The "beats the GEVP" headline below is
-> measured against `GEVP_LEVELS = [0,2,4,6]` of the **1×1 plaquette** — four
-> smearing levels of one loop shape. `scripts/su2_fair_fight.py` rebuilt the
-> classical arm as strongly as the theory allows and the advantage does not
-> survive: ΔA₀ = +0.013 ± 0.029 against a 21-operator basis once the network is
-> retrained on the same smearing ladder, and +0.052 ± 0.033 (1.5σ) against the
-> input-matched `deep` arm. The numbers below are correct as stated *against the
-> published basis*; the claim they support is not. See
-> `notes/audit_2026-09-06.md` §6.1 and §6.4 — §6.4 is the current source of
-> truth for what §6.2 delivers.
+> **RE-STATED, then CONFIRMED (2026-09-08/09).** The "beats the GEVP" headline
+> below is measured against `GEVP_LEVELS = [0,2,4,6]` of the **1×1 plaquette** —
+> four smearing levels of one loop shape. `scripts/su2_fair_fight.py` rebuilt
+> the classical arm as strongly as the theory allows; on a single ensemble two
+> of the strengthened arms looked like they closed the gap, but both turned out
+> to have a singular/near-singular C(t0) (cond = ∞ and 2.8e9) and gave
+> irreproducible numbers on a second, independent ensemble. The one strengthened
+> arm that is numerically clean on both ensembles — `deep`, the input-matched
+> comparator (same smearing levels the net was retrained on) — gives
+> ΔA₀ = +0.097 ± 0.021 (4.6σ) combined. **The claim below holds** at matched
+> smearing depth; whether a classical basis with real loop-shape variety (not
+> just depth) closes it is still open, because the two arms built to test that
+> are not currently readable. See `notes/audit_2026-09-06.md` §6.1–§6.5 — §6.5
+> is the current source of truth for what §6.2 delivers.
 
 ### Run 5 final (2026-07-03) — §6.2 delivered: the learned operator beats the GEVP
 
