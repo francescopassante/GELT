@@ -70,7 +70,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from gelt.blocks_rope import GELT
+from gelt.blocks import GELT
 from gelt.glueball import ape_smear, connected_correlator, fit_cosh_correlator
 from gelt.lattice import Z2, build_transport_average, plaquette_tensor
 from gelt.sampler import mcmc_ensemble, z2_heatbath_sweep
@@ -120,7 +120,7 @@ BETA = float(sys.argv[1]) if len(sys.argv) > 1 else 0.756
 #
 # That reasoning is now obsolete for the study it was written for: ℓ_att failed
 # at BOTH R=6 and R=12 because it is centred by the ball geometry, not because
-# it was censored by R (notes/topological_localization.md §6.1). The replacement
+# it was censored by R. The replacement
 # statistic — the correlator of the attention *field* — has no R ceiling at all,
 # so R is free to go back to the value where the operators were good.
 R = int(os.environ.get("Z2G_R", 12))

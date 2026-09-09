@@ -52,7 +52,7 @@ import torch
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import train_glueball as tg
 
-from gelt.blocks_rope import GELT
+from gelt.blocks import GELT
 from gelt.glueball import ape_smear
 from gelt.lattice import build_transport_average, plaquette_tensor, random_links
 from gelt.sampler import staple_sum
@@ -275,7 +275,7 @@ def micro_bench(device, b):
 
     Shapes are the production per-layer shapes at the given batch.
     """
-    from gelt.blocks_rope import GEMHSA
+    from gelt.blocks import GEMHSA
 
     Lt, L, NC = tg.LT, tg.L, tg.NC
     B = b * Lt

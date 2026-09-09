@@ -1,7 +1,7 @@
 """Phase A of the Z₂ attention-range study: find a regime where ξ is large.
 
 The SU(2) glueball cannot answer "does the attention range track the physical
-correlation length" (notes/topological_localization.md §6): ξ_s = 1/(m·a_s)
+correlation length": ξ_s = 1/(m·a_s)
 stays ≤ 1.1 lattice spacings across every accessible β, because the 0⁺⁺ is
 heavy and ξ_s depends on the lattice *spacing*, not the volume. Enlarging L
 does not help; only a finer a_s does, which means β ≈ 2.8 and L ≥ 24 in 4D —
@@ -15,8 +15,8 @@ attention offsets need in order to have anything to track. Z₂ is also the
 cheapest object in the codebase (nc = 1, real links) and the project's declared
 testbed.
 
-This script is the gate, structured like scripts/beta_scan.py: it measures the
-mass classically — no network — at several β approaching β_c, and reports
+This script is the gate, structured like the SU(2) β-scan it was modelled on
+(retired in the 2026-09-09 cleanup): it measures the mass classically — no network — at several β approaching β_c, and reports
 ξ = 1/m. Only if ξ spans roughly 1 → 5 is Phase B (one variational operator per
 β, reading ℓ_att) worth its training runs.
 
@@ -85,8 +85,10 @@ BETA_C = 0.7614
 # SU(2) β=2.7.
 #
 # **That guard failed, and it failed because it was set with the number it was
-# supposed to protect.** The dual Ising ground truth (notes/dual_ground_truth.md
-# §7.5) puts the true ξ(0.7600) at ≈10, not 6 — the ξ ≈ 6 came from the
+# supposed to protect.** An exact reference measurement (the dual 3D Ising model,
+# whose code was removed in the 2026-09-09 cleanup; the reasoning survives in
+# notes/attention_as_operator.md §8) puts the true ξ(0.7600) at ≈10, not 6 —
+# the ξ ≈ 6 came from the
 # contaminated classical operator, which reads low, so the guard was computed
 # from an underestimate of exactly the quantity it was bounding. β = 0.7600 is
 # therefore measuring the box (everything 50–58% low) and is dropped;

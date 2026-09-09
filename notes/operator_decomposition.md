@@ -60,7 +60,7 @@ Three things follow, and they are what make the decomposition worth doing:
    than the GEVP vector, better than APE×max, better than any classical operator
    selected for any other reason. So `ΔA₀(GELT − P) > 0` is a **lower bound** on
    the advantage over the whole span, and it cannot be attacked as "you compared
-   against a badly chosen classical operator" (cf. `scripts/z2_fair_fight.py`,
+   against a badly chosen classical operator" (cf. the fair-fight audit,
    which attacks exactly that in the Z₂ study — see §6).
 
 2. **The difference is far better conditioned than the published one.** The
@@ -101,7 +101,7 @@ Three things follow, and they are what make the decomposition worth doing:
 - **Contact-term test.** The whole decomposition is repeated under the metrics
   `C_ab(τ)` for τ = 1, 2, which weight the light states more heavily. A contact
   term — UV content living in C(0) and gone by Δ = 2, which is exactly what
-  `notes/rotational_symmetry.md` found the E-irrep contamination to be — must
+  the (retired) rotational-symmetry study found the E-irrep contamination to be — must
   **shrink** as τ grows. Anything that grows is not a contact term.
 
 ## 4. Results (2026-09-06)
@@ -207,7 +207,7 @@ The out-of-span fraction under the `C(τ)` metric:
 
 It **grows** — the out-of-span content is *more* prominent in the light-state
 sector than in the full operator. That is the opposite of the E-irrep
-contamination in `notes/rotational_symmetry.md`, which lived in C(0), left ξ
+contamination of the retired rotational-symmetry study, which lived in C(0), left ξ
 untouched (2.27 → 2.26 etc.) and was gone by Δ = 2. The right panel of the
 figure shows the same thing directly: ρ(Δ) for `r` is flat from Δ ≈ 3, i.e. `r`
 couples to the same ground state rather than dying with the UV.

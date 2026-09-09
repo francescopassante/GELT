@@ -1,11 +1,12 @@
 """The attention map as a lattice operator: does it carry the mass gap?
 
 Clause 2 of the conference abstract ("whether the attention range correlates
-with physical correlation length") is closed **negative twice** in
-``notes/topological_localization.md`` §6 (SU(2): ξ_s ≤ 1.1 spacings, unaskable)
-and §6.1 (3D Z₂: ξ reaches 5.3, but ℓ_att sat on its uniform value at both R=6
-and R=12). This script tests the diagnosis in ``notes/attention_as_operator.md``:
-both failures measured the wrong object.
+with physical correlation length") was closed **negative twice** by the ℓ_att
+readouts (SU(2): ξ_s ≤ 1.1 spacings, unaskable; 3D Z₂: ξ reaches 5.3, but ℓ_att
+sat on its uniform value at both R=6 and R=12). Those scripts were deleted in
+the 2026-09-09 cleanup — see the repo history at cfa0a7e. This script tests the
+diagnosis in ``notes/attention_as_operator.md``: both failures measured the
+wrong object.
 
 ``ℓ_att = Σ_Δ |Δ|₁ ᾱ(Δ)`` is the first radial moment of the attention averaged
 over the lattice — a property of the learned *kernel*, bounded above by R and
@@ -111,7 +112,7 @@ import train_z2_glueball as tz  # noqa: E402  (path fix must precede the import)
 
 sys.argv = _ARGV
 
-from gelt.blocks_rope import GELT  # noqa: E402
+from gelt.blocks import GELT  # noqa: E402
 from gelt.glueball import (  # noqa: E402
     connected_correlator,
     connected_correlator_matrix,
@@ -132,14 +133,14 @@ for _d in ("results/sampler", "results/glueball", "results/attention",
 
 # ── Tunables ──────────────────────────────────────────────────────────────────
 BETA_C = 0.7614
-# β = 0.7600 was dropped on 2026-08-14. The dual Ising ground truth
-# (notes/dual_ground_truth.md §7.5) puts the true ξ there at ≈10 against L = 24,
-# so that ensemble is measuring the box and not a mass gap: classical 4.72,
-# trained 5.60, truth ≈10.1 — everything 50–58% low. It is also the entire
-# source of the ξ(0.7585) > ξ(0.760) excursion, which the dual reproduces at
-# neither volume. Dropping it costs **no dynamic range** (β = 0.7585 already
-# carries the largest clean ξ, 6.36) and raises Pearson(ξ_A, ξ_true) from 0.744
-# to 0.995. Restoring it requires L ≥ 48, not more statistics.
+# β = 0.7600 was dropped on 2026-08-14: an exact reference measurement put the
+# true ξ there at ≈10 against L = 24, so that ensemble is measuring the box and
+# not a mass gap — classical 4.72, trained 5.60, truth ≈10.1, everything 50–58%
+# low. It was also the entire source of the ξ(0.7585) > ξ(0.760) excursion.
+# Dropping it costs **no dynamic range** (β = 0.7585 already carries the largest
+# clean ξ, 6.36). Restoring it requires L ≥ 48, not more statistics. The
+# reference was the dual 3D Ising model, whose code was removed in the
+# 2026-09-09 cleanup; the reasoning survives in notes/attention_as_operator.md §8.
 BETAS = [0.7450, 0.7520, 0.7560, 0.7585]
 
 # Training used configs[:N_USE]; everything from there on is unseen by every
@@ -216,9 +217,9 @@ if SMOKE:
 def build_model(ckpt=None, seed=None):
     """The Phase-B architecture, optionally loaded from a checkpoint.
 
-    Mirrors ``scripts/z2_attention_readout.py``'s builder — every geometric
-    hyperparameter has to match the checkpoint or the offsets (and hence the
-    attention rows) would not line up.
+    Every geometric hyperparameter has to match the checkpoint or the offsets
+    (and hence the attention rows) would not line up — the values come from
+    ``train_z2_glueball.py``, which trained these weights.
     """
     if seed is not None:
         torch.manual_seed(seed)
@@ -953,34 +954,6 @@ def report(rows):
             print("  content-dependence requires the first to dominate the second.")
 
 
-def fit_exponent(betas, xis, errs):
-    """Effective ν from ξ ~ (β_c − β)^(−ν), weighted log-log line.
-
-    **Updated 2026-08-14.** This used to return ≈ 0.39–0.48 against the 3D Ising
-    ν = 0.629971, and the paper recorded that as a limitation ("not the
-    asymptotic scaling regime, should not be read as a measurement of ν"). The
-    diagnosis was wrong. The whole discrepancy was β = 0.7600, whose true ξ ≈ 10
-    outgrows L = 24 (notes/dual_ground_truth.md §7.5): a point pinned ~55% low at
-    the end of the lever arm drags the slope down hard. With it dropped the same
-    fit returns **0.622 (classical), 0.656 (attention), 0.592 (random)**.
-
-    Still a *consistency* check rather than a measurement of ν — four couplings,
-    a diagonal-weighted line, and corrections to scaling at t* ≈ 0.035 are all
-    real — but the honest comparator is now available: the dual ground truth,
-    fitted the same way on the same four couplings, gives **0.626**. The gauge
-    arms agree with it. Quote the agreement, not the number.
-    """
-    b, x, e = np.asarray(betas), np.asarray(xis), np.asarray(errs)
-    ok = np.isfinite(x) & (x > 0) & np.isfinite(e) & (e > 0)
-    if ok.sum() < 3:
-        return float("nan")
-    t = np.log(BETA_C - b[ok])
-    y = np.log(x[ok])
-    w = (x[ok] / e[ok]) ** 2  # weight of log ξ
-    p = np.polyfit(t, y, 1, w=np.sqrt(w))
-    return -p[0]
-
-
 def _finite_max(*arrays, default=1.0):
     """Largest finite entry across the arguments; NaN-only input gives default.
 
@@ -1024,11 +997,11 @@ def plot(rows):
     xi_m, xi_me = np.array(xi_m), np.array(xi_me)
     xi_r, xi_re = arm("random")
 
-    fig, ax = plt.subplots(2, 2, figsize=(13, 10))
+    fig, ax = plt.subplots(1, 3, figsize=(19, 5.5))
 
-    # (0,0) the headline: ξ from the attention field against ξ from the classical
+    # (0) the headline: ξ from the attention field against ξ from the classical
     # basis, measured on the same configurations.
-    a = ax[0, 0]
+    a = ax[0]
     lim = [0, _finite_max(xi_c, xi_m, xi_r) * 1.25]
     a.plot(lim, lim, ls=":", color="gray", label="y = x")
     a.errorbar(xi_c, xi_m, xerr=xi_ce, yerr=xi_me, fmt="o", capsize=4,
@@ -1046,8 +1019,8 @@ def plot(rows):
     a.set_ylim(lim)
     a.legend()
 
-    # (0,1) cross-evaluation matrix: rows = training β, columns = ensemble β.
-    a = ax[0, 1]
+    # (1) cross-evaluation matrix: rows = training β, columns = ensemble β.
+    a = ax[1]
     rown = names
     M = np.array([[_xi_cell(rows, j, n) for j in range(len(rows))] for n in rown])
     im = a.imshow(M, cmap="viridis", aspect="auto")
@@ -1063,26 +1036,8 @@ def plot(rows):
                        color="w", fontsize=9)
     fig.colorbar(im, ax=a, label=r"$\xi_A$")
 
-    # (1,0) scaling: both lengths against β_c − β, with the effective exponent.
-    a = ax[1, 0]
-    d = BETA_C - np.array(betas)
-    nu_c = fit_exponent(betas, xi_c, xi_ce)
-    nu_a = fit_exponent(betas, xi_m, xi_me)
-    a.errorbar(d, xi_c, yerr=xi_ce, fmt="o-", capsize=4,
-               label=rf"classical ($\nu_{{\rm eff}}$ = {nu_c:.2f})")
-    a.errorbar(d, xi_m, yerr=xi_me, fmt="s-", capsize=4,
-               label=rf"attention ($\nu_{{\rm eff}}$ = {nu_a:.2f})")
-    if np.isfinite(np.asarray(xi_c, dtype=float)).any() or np.isfinite(xi_m).any():
-        a.set_xscale("log")
-        a.set_yscale("log")
-    a.invert_xaxis()
-    a.set_xlabel(r"$\beta_c - \beta$")
-    a.set_ylabel(r"$\xi$")
-    a.set_title(r"$\xi$ scaling — vs 3D Ising $\nu$ = 0.630 (dual fit: 0.626)")
-    a.legend()
-
-    # (1,1) how good an operator the gaze is, and the null that must be flat.
-    a = ax[1, 1]
+    # (2) how good an operator the gaze is, and the null that must be flat.
+    a = ax[2]
     A_m, A_me = [], []
     for r, n in zip(rows, matched):
         e = r["nets"].get(n)

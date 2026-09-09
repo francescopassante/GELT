@@ -1,8 +1,9 @@
 """Is the classical comparator a straw man? — the fair-fight audit, SU(2)
 
-The Z₂ companion (``scripts/z2_fair_fight.py``) audits the attention-field
-comparison of Table 5 against exact dual ground truth. This script audits the
-claim the thesis actually rests on, on the group it is actually about:
+A Z₂ companion once audited the attention-field comparison against exact dual
+ground truth; it was removed in the 2026-09-09 cleanup (repo history at cfa0a7e)
+together with the dual model it needed. This script audits the claim the thesis
+actually rests on, on the group it is actually about:
 
     §6.2 / Table `tab:overlap` — the trained GELT operator carries more
     ground-state weight than the optimal combination of the classical

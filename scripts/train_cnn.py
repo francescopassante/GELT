@@ -123,7 +123,10 @@ if __name__ == "__main__":
     beta = 1
     # Same per-site Wilson loop target as scripts/train_gelt.py, so the CNN
     # baseline and GELT are trained against the identical regression problem.
-    loop_R, loop_T, mu, nu = 2, 2, 0, 1
+    # 1×2 is the loop main.tex § "Validation and tests" compares the two on;
+    # the two scripts must be changed together or the figure stops being a
+    # comparison.
+    loop_R, loop_T, mu, nu = 1, 2, 0, 1
     dataset_parameters = {
         "N": 1000,
         "D": D,

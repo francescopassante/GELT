@@ -53,8 +53,8 @@ What each outcome licenses
   classical answer with noise that happens not to hurt; the win is then a
   statistical accident of the GEVP and should be reported as such.
 * **r shrinks as the metric time grows** → r is a contact term, i.e. UV content
-  that dies by Δ = 2, exactly like the E-irrep contamination in
-  `notes/rotational_symmetry.md`. It would then be irrelevant to the mass and
+  that dies by Δ = 2, exactly like the E-irrep contamination measured in the
+  (retired) rotational-symmetry study. It would then be irrelevant to the mass and
   must not be quoted as physics. The metric scan below is the test.
 * **ΔA₀(GELT − P) ≈ 0** → the advantage lives *inside* the span after all and
   the GEVP simply failed to find it. That is still a real result, but it is a

@@ -46,7 +46,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from gelt.blocks_rope import GELT
+from gelt.blocks import GELT
 from gelt.glueball import (
     ape_smear,
     connected_correlator,

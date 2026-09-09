@@ -14,7 +14,7 @@ Why this is worth doing, and why it was not obvious that it could be
 -------------------------------------------------------------------
 Z₂ was chosen for the *range* study because it is the one lattice family in this
 repo where the spatial correlation length reaches several lattice spacings
-(``notes/topological_localization.md`` §6: SU(2) sits at ξ_s ≤ 1.1). But ξ_s is
+(the closed ℓ_att study measured SU(2) at ξ_s ≤ 1.1). But ξ_s is
 the wrong number here. The attention field is a **per-timeslice** operator and
 its correlator is measured in **time**, and the anisotropic lattice
 (a_t = a_s/ξ, ξ = 3) is precisely the one that made the 0⁺⁺ mass resolvable:
@@ -138,7 +138,7 @@ import z2_attention_correlator as zac  # noqa: E402
 
 sys.argv = _ARGV
 
-from gelt.blocks_rope import GELT  # noqa: E402
+from gelt.blocks import GELT  # noqa: E402
 from gelt.glueball import smearing_operator_basis  # noqa: E402
 from gelt.lattice import random_links  # noqa: E402
 from gelt.sampler import heatbath_overrelaxation_sweep, mcmc_ensemble  # noqa: E402
@@ -160,7 +160,7 @@ for _d in ("results/attention", "datasets"):
 #
 # The scan is still one variable away:
 #     SAC_BETAS=2.1,2.3,2.4,2.5,2.7
-# which is beta_scan.py's set, so its recorded m·a_t cross-checks the classical
+# which is the retired beta_scan.py's set, so its recorded m·a_t cross-checks the classical
 # arm at every point. Note β = 2.7 is NOT monotonic in ξ (it reads the same mass
 # as β = 2.4): unlike Z₂'s dropped β = 0.760 this is not a finite-volume
 # artefact — ξ_s ≈ 1.0 against L = 12 is L/ξ_s = 12 — but coarse-a_s strong
@@ -213,8 +213,10 @@ OUT_PT = "results/attention/su2_attention_correlator.pt"
 OUT_PNG = "results/attention/su2_attention_correlator.png"
 OUT_TEX = "results/attention/su2_attention_correlator_table.tex"
 
-# beta_scan.py's recorded classical masses — an independent measurement of the
-# same quantity on independently sampled ensembles, printed as a cross-check.
+# The retired beta_scan.py's recorded classical masses — an independent
+# measurement of the same quantity on independently sampled ensembles, printed
+# as a cross-check. The script was deleted in the 2026-09-09 cleanup and this
+# dump is kept as reference data; the cross-check skips if it is absent.
 BETA_SCAN = "results/attention/beta_scan.pt"
 
 # SAC_DEVICE forces the backend. MPS cannot run this path at all — the SU(2)
@@ -955,7 +957,7 @@ def plot(rows):
         bs = torch.load(BETA_SCAN, map_location="cpu", weights_only=False)
         m = np.array(bs["m_at"], dtype=float)
         a.plot(bs["betas"], 1.0 / m, "x:", color="gray",
-               label="beta_scan.py GEVP (indep. ensembles)")
+               label="classical GEVP scan (indep. ensembles)")
     a.set_xlabel(r"$\beta$")
     a.set_ylabel(r"$\xi_t = 1/(m\,a_t)$")
     a.set_title("Both operators, coupling by coupling")

@@ -7,10 +7,14 @@ __pycache__/
 .claude/
 gelt.egg-info/
 .DS_Store
+.pytest_cache/
 
 # generated run artifacts, grouped by study (figures, checkpoints, dumps).
 # Report figures are resolved from here via \graphicspath in the .tex files.
 results/
+
+# run logs (unbuffered tqdm output from the V100 batches)
+logs/
 
 # LaTeX build artifacts
 *.aux

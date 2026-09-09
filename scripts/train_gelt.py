@@ -6,10 +6,9 @@ from tqdm import tqdm
 
 import functools
 
-from gelt import haar_ensemble, mcmc_ensemble
-from gelt.blocks_rope import GELT
-from gelt.lattice import topological_charge_density
-from gelt.sampler import heatbath_overrelaxation_sweep
+from gelt import haar_ensemble
+from gelt.blocks import GELT
+from gelt.lattice import rectangular_wilson_loop
 
 # Output artifacts are grouped by study under results/; create the dirs the
 # first time this runs in a fresh clone (they hold generated files only).
@@ -130,63 +129,35 @@ def train_model(
 
 if __name__ == "__main__":
     torch.manual_seed(0)
-    from gelt import SU, Z2, build_plaquette_datasets, load_plaquette_datasets
+    from gelt import Z2, build_plaquette_datasets, load_plaquette_datasets
 
-    # Topological charge density q_x is defined only in D=4 (the ε_μνρσ needs
-    # four directions) and is non-trivial only for non-abelian SU(N≥2); SU(2)
-    # is the minimal physically meaningful case.
+    # ── The comparison of main.tex § "Validation and tests" ──────────────────
+    # Per-site rectangular Wilson-loop regression, GELT against the CNN of
+    # scripts/train_cnn.py. Every setting in this block that has a twin over
+    # there (D, L, group, β, sampler, loop size, splits) is deliberately the
+    # same value: the point of the figure is that the two architectures see the
+    # *identical* regression problem and only the inductive bias differs.
     #
-    # These are the PHYSICS settings for the topological-localization study
-    # (notes/topological_localization.md §3), not the former laptop-debug ones
-    # (L=4, β=1, R=1, N=1000, which were 4⁴ = 256 sites of strong-coupling
-    # noise — no topology in them, and no room for a "region"). Restore those
-    # four values for a fast local smoke test; this configuration is a V100 run.
-    D = 4
-    L = 8  # 8⁴ = 4096 sites: a lump needs room to be localized *in*
-    gaugegroup = SU(2)
-    R = 2  # R=1 is nearest-neighbour only, so ℓ_att ∈ [0,1] and the attention
-    #        range has nowhere to go — the study needs it to be able to vary
+    # The 1×2 loop is the published one. It is the smallest target the CNN
+    # cannot reach by summing its inputs — a plaquette is linear in the input
+    # channels, a 1×2 loop is a product of links at two sites — and it is
+    # exactly what GELT's bilinear value path is built to compose.
+    D = 3
+    L = 8
+    gaugegroup = Z2()
+    R = 2  # transport radius: the L1-ball the attention may reach into
     model_dtype = torch.float32 if isinstance(gaugegroup, Z2) else torch.complex64
 
-    beta = 2.4  # SU(2) scaling window; β=1 is strong coupling with no topology
-
-    # The pivot switch of notes/topological_localization.md §4. Naive q(x) is
-    # quadratic in the plaquettes AT x, so the task needs zero receptive field
-    # and the attention may legitimately collapse to pure self-attention (an
-    # R² of 1.0 says the network found that exact algebraic solution). If
-    # scripts/topology_attention.py reports COLLAPSED, flip this to True:
-    # cooled q(x) depends on a whole neighbourhood of thin links, so it cannot
-    # be solved on-site and the attention is forced to carry range.
-    #
-    # The cost is that the localization ground truth then IS the training
-    # target, making "attention sits where the target is large" partly
-    # circular — so with this on, the claim to make is mechanistic (does the
-    # attention range match the cooling/instanton scale?), not existential.
-    TARGET_COOLED = False
-    N_COOL = 35  # from scripts/check_cooling.py
-
-    if TARGET_COOLED:
-        from gelt.topology import cool
-
-        def _target(configs, gaugegroup):
-            # Cooling is 400 configs × 35 steps × 4 directions of serial
-            # staple_sum — minutes to tens of minutes, and the dataset builder
-            # keeps configs on the CPU. Run it on the GPU when there is one
-            # (it is dense matmul + projection), and ALWAYS show a bar: without
-            # one this stage looks like a hang, because nothing prints and the
-            # GPU sits at 0%.
-            dev = "cuda" if torch.cuda.is_available() else "cpu"
-            cooled = cool(
-                configs.to(dev), gaugegroup, n_steps=N_COOL, progress=True
-            )
-            return topological_charge_density(cooled, gaugegroup).cpu()
-    else:
-        _target = topological_charge_density
-    # Per-site topological charge density target: q_x has shape (B, *Λ). Paired
-    # with ``reduction="none"`` on GELT, the model's per-site readout is
-    # supervised directly — every site contributes a sample, and the equivariant
-    # trace head outputs the locally gauge-invariant quantity at x.
-    N = 400  # 400 × 4096 = 1.6M per-site labels; statistics are not the binder
+    beta = 1
+    # Haar links (β is ignored by haar_ensemble): the regression is a statement
+    # about representational reach, not about the ensemble — every plaquette is
+    # an independent ±1, so there is no correlation for either model to exploit.
+    loop_R, loop_T, mu, nu = 1, 2, 0, 1
+    # Per-site Wilson-loop target: y has shape (B, *Λ). Paired with
+    # ``reduction="none"`` on GELT the per-site readout is supervised directly —
+    # every site is a sample, and the equivariant trace head outputs the locally
+    # gauge-invariant quantity at x.
+    N = 1000
     dataset_parameters = {
         "N": N,
         "D": D,
@@ -195,69 +166,52 @@ if __name__ == "__main__":
         "R": R,
         "splits": [0.7, 0.15, 0.15],
         "save": True,
-        "prefix": f"{gaugegroup}_L{L}_D{D}_N{N}_beta{beta}_R{R}_topo"
-        + ("_cooled" if TARGET_COOLED else ""),
+        "prefix": f"{gaugegroup}_L{L}_D{D}_N{N}_beta{beta}_R{R}_wloop{loop_R}x{loop_T}",
         "structured": True,
-        # mcmc_ensemble's registry default for SU(2) is METROPOLIS, whose
-        # decorrelation at β=2.4 in 4D is poor. Heat-bath + overrelaxation is
-        # exact and tuning-free and must be requested explicitly.
-        "sampler": functools.partial(
-            mcmc_ensemble,
-            sweep_fn=functools.partial(heatbath_overrelaxation_sweep, n_or=4),
-        ),
+        "sampler": haar_ensemble,
         "beta": beta,
-        "target": _target,
+        "target": functools.partial(
+            rectangular_wilson_loop, R=loop_R, T=loop_T, mu=mu, nu=nu
+        ),
         "n_therm": 200,
         "n_skip": 5,
-        "dtype": torch.complex64,
+        "dtype": torch.float32 if isinstance(gaugegroup, Z2) else torch.complex64,
     }
 
     train_parameters = {
-        # ReZero α and zero-init mlp.fc2 mean the gradient-flow unfreezing
-        # cascade (fc2 → fc1 → α → Q/K/V/mix) is slow at lr=1e-3 — pushing the
-        # LR up gets training past the identity-branch stall in a few epochs.
+        # The zero-init of mlp.fc2 makes the gradient-flow unfreezing cascade
+        # (fc2 → fc1 → Q/K/V/mix) slow at lr=1e-3 — pushing the LR up gets
+        # training past the identity-branch stall in a few epochs.
         "lr": 3e-3,
-        # Batch is over CONFIGS, and each expands to 4096 sites × 40 offsets of
-        # gathered K/V per layer — the memory knob. 64 (the L=4 debug value)
-        # asks for ~2.7 GB per gathered tensor at L=8 and OOMs; 8 is the V100
-        # setting. Drop to 4 if it still OOMs.
-        "batch_size": 8,
-        # 280 train configs / batch 8 = 35 steps/epoch. The old 3000/3000 was
-        # sized for the 256-site debug task; this is a supervised MSE fit and
-        # converges in far fewer.
-        "epochs": 150,
-        "patience": 20,
-        # Read back by scripts/topology_attention.py — keep the two in step.
-        "checkpoint_path": f"results/attention/best_gelt_topo_L{L}_b{beta}_R{R}"
-        + ("_cooled" if TARGET_COOLED else "")
-        + ".pth",
+        "batch_size": 64,
+        "epochs": 300,
+        "patience": 30,
+        "checkpoint_path": "results/wilson_regression/best_gelt.pth",
     }
 
-    # Debug-capacity GELT for the per-site topological charge density target.
-    # q_x is *quadratic* in the on-site plaquettes (a single matrix bilinear
-    # Tr[F_μν F_ρσ], F = (P−P†)/2i), so in principle one GEMHSA value path
-    # suffices — the depth/head count here is generous slack for the softmax
-    # self-selection and the L-Act gate, not an algebraic requirement. Note
-    # H·d_qkv ≥ 3 is needed to hold the three dual-plane products.
+    # Small GELT for the per-site Wilson-loop target: ~1k parameters against the
+    # CNN's ~500k, which is the point of the figure. The 1×2 loop is a product
+    # of plaquettes at neighbouring sites, so the model needs at least one
+    # transport + one bilinear value path; the depth here is slack for the
+    # softmax self-selection and the L-Act gate, not an algebraic requirement.
     model_parameters = {
         "gaugegroup": gaugegroup,
         "L": L,
         "D": D,
         "R": R,
-        # 2 heads, so the head-specialization / ablation arm of the attention
-        # readout has something to compare (a single head cannot specialize).
-        "nhead": 2,
+        # One head, four layers: depth is what composes the loop (each block
+        # roughly doubles the reachable loop length through the bilinear value
+        # path), head count is not. This lands at ~1.5k parameters.
+        "nhead": 1,
         "gemhsa_layers": 4,
-        # d_qkv ≥ 2D is REQUIRED here: RoPE assigns pair p to axis p % D, so in
-        # D=4 anything below 8 leaves whole axes on the identity rotation
-        # (CLAUDE.md known caveat 3). The old value of 4 was harmless at the
-        # debug scale and is not harmless now.
-        "d_qkv": 8,
+        # d_qkv ≥ 2D is REQUIRED: RoPE assigns pair p to axis p % D, so anything
+        # below 2D leaves whole axes on the identity rotation (README caveat).
+        "d_qkv": 6,
         "gate": "softplus",
         # Z2 can run as a real model. SU(N) must stay complex; otherwise
         # GELT.forward would cast complex plaquettes/transports down to real.
         "dtype": model_dtype,
-        "mlp_hidden": 32,  # was 3 (debug capacity); this is a real fit now
+        "mlp_hidden": 4,
         "mlp_out": 1,
         # Per-site target → no spatial reduction. Use "sum" for the Wilson
         # action, "mean" for the average ⟨W⟩.
@@ -269,16 +223,10 @@ if __name__ == "__main__":
         "init_scale": 10,
         "qk_init_scale": 1.0,
         "mlp_zero_init": True,
-        # Widen the residual-stream beyond the small plaquette channel count
-        # D(D-1)/2 ∈ {1, 3, 6} via the front-end ChannelLift. Decouples the
-        # GEMHSA working width from the input dimensionality so intermediate
-        # layers don't collapse to 1–6 channels. In D=4 the plaquette input is
-        # already 6 channels, so d_model must be ≥ 6.
-        "d_model": 16,  # was 8; matches the glueball operator's working width
-        # Recompute each GEMHSA layer in backward instead of storing its
-        # activations — the gathered K/V neighbourhoods are the memory wall at
-        # 4096 sites × 40 offsets, exactly as in train_glueball.py.
-        "grad_checkpoint": True,
+        # Widen the residual stream beyond the plaquette channel count
+        # D(D-1)/2 ∈ {1, 3, 6} via the front-end ChannelLift, so intermediate
+        # layers don't collapse to 1–6 channels.
+        "d_model": 6,
     }
 
     # Reuse a previously saved dataset if one exists under this prefix;
@@ -376,7 +324,7 @@ if __name__ == "__main__":
     # ``test_loss`` and the saved arrays are in normalized space (y was
     # standardized in place above). R² is invariant under linear label
     # transforms, so we can compute it either way. Denormalize to show the
-    # scatter plot in physical (un-standardized) topological-charge-density units.
+    # scatter plot in physical (un-standardized) Wilson-loop units.
     all_targets = all_targets * sigma_y + mu_y
     all_outputs = all_outputs * sigma_y + mu_y
     test_label_var = all_targets.var(unbiased=False).item()

@@ -45,8 +45,8 @@ def ape_smear(
     axis is clean — which is what the transfer-matrix argument requires.
 
     ``directions`` overrides that choice: passing ``range(D)`` smears every
-    direction with every staple, which is 4D cooling (see ``gelt.topology``)
-    and is emphatically NOT safe for spectroscopy — it mixes timeslices and
+    direction with every staple, which is 4D cooling and is emphatically NOT
+    safe for spectroscopy — it mixes timeslices and
     voids the transfer-matrix bound. It is the right thing for topology, where
     the goal is to strip UV fluctuation from ``q(x)`` and no temporal
     interpretation is at stake.

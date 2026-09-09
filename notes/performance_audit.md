@@ -3,7 +3,7 @@
 **What this is.** A record of why one `scripts/train_glueball.py` optimizer step
 cost 7.77 s on a 32 GB V100 for a ~5k-parameter model, what was changed, what was
 measured, and what is left. It is the source of truth for performance work on the
-GELT hot path; read it before optimising anything in `gelt/blocks_rope.py`,
+GELT hot path; read it before optimising anything in `gelt/blocks.py`,
 `gelt/glueball.py`'s smearing, or `SU.project`.
 
 Everything in §3 is **exactly equivalent** to what it replaced — same map, same
@@ -162,13 +162,14 @@ syncs per block per forward, and with gradient checkpointing all of it runs twic
 
 Now: `store_attention` (the `_last_score`/`_last_alpha` stash) and `diagnostics`
 (the scalars), both `False` by default, both settable across a stack with
-`GELT.set_introspection(...)`. Applied symmetrically to `blocks_bias` so the two
-variants stay mergeable (architecture backlog item 2).
+`GELT.set_introspection(...)`. It was applied symmetrically to the (since
+retired) `blocks_bias` so the two variants stayed mergeable; the 2026-09-09
+cleanup merged them by deleting that one, and `gelt/blocks.py` is what is left.
 
-Only `_last_alpha` has consumers, and all five now switch it on explicitly:
+Only `_last_alpha` has consumers, and all of them switch it on explicitly:
+`z2_attention_correlator.py`, `su2_attention_correlator.py` (three more —
 `z2_attention_readout.py`, `topology_attention.py`,
-`visualize_glueball_attention.py`, `z2_attention_correlator.py`,
-`su2_attention_correlator.py`. `train_z2_glueball.py`'s `attention_stats` turns it
+`visualize_glueball_attention.py` — were retired in the cleanup). `train_z2_glueball.py`'s `attention_stats` turns it
 on around the readout and off again, so its training steps do not pay for it.
 `_last_score` and the scalars have no consumers at all — the
 `scripts/train_gelt_diagnosis.py` the docstring points at does not exist.
@@ -249,7 +250,7 @@ Outputs identical to 1.19e-7 on `|out| ~ 3.6`. The ratio grows with batch (more
 of the cost sits in the big tensors rather than fixed overhead), so at the
 production `B = 144` it should be at least 2.16×.
 
-Tests: `tests/test_blocks_rope.py` — a new file, because the trained variant had
+Tests: `tests/test_blocks.py` — a new file, because the trained variant had
 none (CLAUDE.md caveat 1). It contains gauge equivariance for SU(2) on both gates
 and for Z₂; the whole optimised block against a **naive oracle** written out in
 the test (two gathers, a concatenation, `apply_rope` on K̃, the plain Frobenius
@@ -339,7 +340,7 @@ real in SO(N²−1). For N = 3: 64 real MACs (~128 flops) against 2·27 complex 
 
 This is a change of colour basis, so it is exactly equivalent — but it touches
 every index in the block. **Gate it on the oracle test and the equivariance tests
-in `tests/test_blocks_rope.py`**, which is exactly what they were written for.
+in `tests/test_blocks.py`**, which is exactly what they were written for.
 
 ### 5.2 Q/K/V memory layout — kill the transport's `permute` + `clone`
 
@@ -487,7 +488,7 @@ path, but a genuinely different map on far-from-group input. Not worth giving up
    order from autograd's atomics: ~1e-6 relative differences in float32 (exact in
    float64, which is what the test asserts). Immaterial for stochastic training,
    but it is a real difference.
-5. **The two block variants have drifted further apart.** Only `blocks_rope`'s
+5. **The two block variants have drifted further apart.** Only `blocks`'s
    `attend` was optimised (`blocks_bias` got the introspection switches, for
    symmetry). That makes architecture backlog item 2 — merge them behind a
    `pos_encoding` switch — *more* pressing, not less. It is the honest cost of

@@ -2,8 +2,8 @@
 
 Written 2026-08-10, before the run. The rescue attempt for clause 2 of the
 conference abstract ("whether the attention range correlates with physical
-correlation length"), which `notes/topological_localization.md` §6 and §6.1
-closed **negative twice** — once in SU(2) (ξ_s ≤ 1.1 spacings, unaskable) and
+correlation length"), which the ℓ_att readouts (retired, see the repo history
+at `cfa0a7e`) closed **negative twice** — once in SU(2) (ξ_s ≤ 1.1 spacings, unaskable) and
 once in 3D Z₂ (ξ reaches 5.3, but ℓ_att sat on its uniform value at both R=6
 and R=12).
 
@@ -34,7 +34,8 @@ a convolution's filter width. Averaging is exactly the operation that throws
 away the one thing attention has and convolution does not: **site-to-site,
 configuration-to-configuration variation**.
 
-The R=12 readout (`z2_attention_readout.pt`) already shows the discarded signal
+The R=12 readout (`results/attention/z2_attention_readout.pt`, whose producing
+script is retired) already shows the discarded signal
 is large. Offset entropy relative to its uniform ceiling, per head, at
 β = 0.745: 0.87, 0.92, 0.93, 0.97, **0.42**, 0.73, 0.97, **0.72**. Several heads
 are strongly structured — while their ℓ_att sits at 8.3 against a uniform 8.31.
@@ -83,7 +84,7 @@ Three consequences, in increasing order of interest:
 Any local gauge-invariant scalar has a correlator decaying at the gap — a
 random-init network's attention field included. So `ξ_A ≈ ξ` on its own
 establishes point 2 above (attention maps in an *equivariant* network are
-physical fields, which is precisely `notes/explainability.md`'s premise made
+physical fields, which is the interpretability premise of the thesis made
 quantitative) but **not** that anything was learned. The design therefore has
 three arms:
 
@@ -109,7 +110,8 @@ near β_c, so single deletion would understate). The classical smeared-plaquette
 basis is re-measured **on the same configurations**, so ξ_A − ξ_class can be
 quoted as a correlated difference rather than two independent numbers.
 
-From `notes/topological_localization.md` §5, still binding:
+From the statistical conventions of the topological-localization study, still
+binding:
 
 - the independent unit is the **configuration**;
 - **quote every statistic against its null** — the mistake that produced two
@@ -462,14 +464,13 @@ See §8.
 
 ## 8. Amendment (2026-08-14): β = 0.760 is dropped
 
-The dual Ising ground truth (`notes/dual_ground_truth.md`) settled §7's open
-questions, and the answer is that **β = 0.7600 was never measuring a mass gap**:
-its true ξ ≈ 10 against L = 24, so classical (4.72), trained (5.60) and random
-(4.80) are all 50–58% low together, measuring the box. It is dropped from
-`BETAS` in `z2_attention_correlator.py` and `z2_beta_scan.py`, and the operator
-trained on that ensemble goes with it (`net_names` iterates `BETAS`, so the
-`train@0.76` row of the transfer matrix disappears too — correct, since its
-training data was the compromised ensemble).
+**β = 0.7600 was never measuring a mass gap**: its true ξ ≈ 10 against L = 24, so
+classical (4.72), trained (5.60) and random (4.80) are all 50–58% low together —
+they are measuring the box. It is dropped from `BETAS` in
+`z2_attention_correlator.py` and `z2_beta_scan.py`, and the operator trained on
+that ensemble goes with it (`net_names` iterates `BETAS`, so the `train@0.76`
+row of the transfer matrix disappears too — correct, since its training data was
+the compromised ensemble). The four β that remain are what main.tex quotes.
 
 Recomputed offline from the saved dumps (`ZAC_REPLOT`; no per-β number changes,
 the ensembles were always measured independently):
@@ -484,50 +485,36 @@ the ensembles were always measured independently):
 | cross-matrix ensemble/training ratio | 11.9× | **12.3×** |
 
 **Nothing is lost.** β = 0.7585 already carried the largest clean ξ (true value
-6.36, not the 5.59 the contaminated classical operator reported), so the range
-is unchanged. What is gained is that ξ_A now tracks the *exact* correlation
-length at 0.9946 rather than tracking a contaminated operator at 0.9966 — a
-better sentence, and one that no longer needs the excursion to carry it.
+6.36, not the 5.59 the contaminated classical operator reported), so the range is
+unchanged. What is gained is that ξ_A tracks the *exact* correlation length at
+0.9946 rather than tracking a contaminated operator at 0.9966.
 
-### 8.1 §7's ν caveat was β = 0.760, and it is withdrawn
+### 8.1 Where "the exact truth" came from, and why it is no longer in the repo
 
-§7 said the effective exponent from these points is "≈ 0.39, not the 3D Ising
-ν = 0.63", and the paper's Limitations repeats it as 0.35–0.48. **That was one
-bad point at the end of the lever arm.** The same weighted log-log fit, on the
-same code, with β = 0.760 removed:
+The exact reference was the **dual 3D Ising model**: 3D Z₂ gauge theory is
+Kramers–Wannier–Wegner dual to it (β* = −½ ln tanh β), the 0⁺⁺ mass gap *is* the
+Ising mass gap, and in the broken phase the Ising order parameter interpolates it
+with near-unit overlap while being the non-local 't Hooft operator on the gauge
+side — hence outside any smeared-loop variational basis. It was implemented in
+`gelt/ising.py` + `scripts/dual_ground_truth.py`, validated by the parameter-free
+duality check ⟨P⟩ = tanh β + [1 − ⟨ss⟩(β*)]/sinh 2β, and run on two volumes
+(matched 48×24², large 96×48²).
 
-| arm | ν (five β) | ν (four β) |
-|---|---|---|
-| classical | 0.426 | **0.622** |
-| attention, trained | 0.480 | **0.656** |
-| attention, random | 0.420 | 0.592 |
-| **dual ground truth** | 0.631 | **0.626** |
+That whole line — the duality, the effective-exponent ν fits it licensed, and the
+`z2_fair_fight.py` accuracy audit that used it — was **removed from the repo in
+the 2026-09-09 cleanup** because main.tex carries none of it. The code and its
+design record are in the history at commit `cfa0a7e`
+(`notes/dual_ground_truth.md`, `scripts/dual_ground_truth.py`, `gelt/ising.py`,
+`tests/test_ising.py`), and `results/dual/` held its dumps. Two of its findings
+are load-bearing for what main.tex *does* say and are therefore kept here:
 
-The dual arm gives 0.631 either way — it was never fooled, because at L = 48 it
-can hold ξ = 11 — which is what identifies the finite volume as the cause rather
-than "not the asymptotic regime".
-
-Quote this as *agreement with the dual arm fitted identically on the same four
-couplings* (0.622 and 0.656 against 0.626), **not** as a measurement of ν: four
-couplings, a diagonally-weighted line, and corrections to scaling at t* ≈ 0.035
-are all real. But the standing claim that the scan cannot see 3D Ising scaling
-is false and should be removed from the paper.
-
-### 8.2 What the paper must change
-
-1. Drop β = 0.760 from every table and figure of §"The attention map as a
-   lattice operator".
-2. **Delete the non-monotonic-excursion argument.** The dual is monotonic at
-   both volumes; the excursion was finite volume, inherited by both operators
-   because both were measured on the same L = 24 configurations. §7.3 of
-   `dual_ground_truth.md` replaces it and is a stronger argument.
-3. Replace the ν limitation with §8.1.
-4. Add the accuracy result: against exact ground truth the trained attention
-   field is unbiased (+1.2%) where the classical basis and the untrained network
-   read ~11% and ~10% low.
-5. `attention_as_operator.md` §6.1's headline framing survives unchanged; only
-   the fifth row of its table goes.
-
+1. the ξ(0.760) ≈ 10 above, i.e. why the scan has four couplings and not five;
+2. the accuracy ordering against exact truth on the matched volume — trained
+   +3.8%, classical −8.9%, random −8.0% — which was later **withdrawn** as a
+   claim: the strengthened classical arm of the fair-fight audit matches the
+   trained attention field against the dual truth
+   (`notes/audit_2026-09-06.md` §6.2), so "the only arm consistent with the exact
+   answer" must not be quoted.
 
 ## 9. Transporting the result to SU(2) (queued 2026-08-16)
 
@@ -537,7 +524,7 @@ thesis is actually about. Read this before touching that script.
 
 ### 9.1 Why SU(2) is measurable after all
 
-`topological_localization.md` §6 closed the *range* question on SU(2) with
+The ℓ_att study closed the *range* question on SU(2) with
 "ξ_s ≤ 1.1 spatial spacings, smaller than the integer grid the attention lives
 on". That is the correct verdict for ℓ_att and the wrong number for ξ_A. The
 attention field is a **per-timeslice** operator and its correlator runs in

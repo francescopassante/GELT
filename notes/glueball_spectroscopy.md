@@ -7,7 +7,7 @@ of the architecture — the loss value at convergence *is* the physics answer
 (the glueball mass), the trained network *is* the optimal interpolating
 operator, and the attention map becomes a measurement of what spatial loop
 structure that operator uses. It lands directly on the thesis spine in
-`notes/explainability.md` ("the attention map is a measurement"), applied to a
+the interpretability thesis ("the attention map is a measurement"), applied to a
 real, hard observable instead of a toy target.
 
 ## Status & findings (updated 2026-06-29)
@@ -108,7 +108,7 @@ in Δ, than the hand-built GEVP basis (a *learned* variational operator).
 ## Audit (2026-07-01) — what's broken, what to change, thesis-worth
 
 A code + plan audit of this document and everything it touches
-(`gelt/glueball.py`, `gelt/sampler.py`, `gelt/blocks_rope.py`,
+(`gelt/glueball.py`, `gelt/sampler.py`, `gelt/blocks.py`,
 `scripts/measure_glueball.py`, `scripts/check_glueball_autocorrelation.py`).
 Bottom line: the classical baseline code is sound, but §6.2 as written in §2/§3
 has one conceptual flaw that would silently invalidate the result, plus two
@@ -144,7 +144,7 @@ network on the spatial links of each timeslice.**
    smearing" analogy of §7 gets cleaner, not weaker. The *absence* of temporal
    loop content is not a limitation; it is the definition of a valid
    interpolating operator.
-2. **GEMHSA is cubic-only.** `blocks_rope.py` builds `_nbr_idx` with a single
+2. **GEMHSA is cubic-only.** `blocks.py` builds `_nbr_idx` with a single
    `torch.arange(L)` and `% L` on *every* axis — the model literally cannot
    ingest the 24 × 12³ anisotropic ensemble (wrong neighbor wrap on the time
    axis). Moot under fix 1: each timeslice is a cubic 12³ lattice, and Lt only
@@ -232,7 +232,7 @@ network itself) is a physics-aware design decision, not a retreat.
 for an ML-for-LGT thesis: the loss is a variational principle, so the converged
 number is falsifiable against an independent classical measurement built
 in-house, and "the trained network *is* the interpolating operator" gives the
-interpretability chapter (attention as measurement, `notes/explainability.md`)
+interpretability chapter (attention as measurement)
 a real observable instead of a toy regression. Nothing in the published
 gauge-equivariant-network line (L-CNN, the covariant ResNet, CASK's
 attention-for-smearing) does Rayleigh-quotient-trained glueball operators, so
@@ -540,7 +540,7 @@ physics), **ΔA₀ = +0.066 ± 0.031 (2.1σ)**. The GEVP gains only ~0.03 of
 overlap over its best member; GELT gains ~0.10 over the whole basis. The
 2.1σ is complementary to (not weaker than) the 3.9σ: the shared fit window
 starts at Δ = 2, so ΔA₀ never uses the Δ = 1 point where GELT's advantage is
-sharpest. Written up in `glueball_report/glueball_spectroscopy.tex` §
+sharpest. Written up in `reports/glueball/glueball_spectroscopy.tex` §
 "Quoting the result like a lattice paper" (Table 3 / Figure 5).
 
 ### Replication batch (2026-07-04, ran overnight 07-04 → 07-05) — two fresh ensembles
@@ -714,7 +714,7 @@ Two structural gifts:
 
 GELT already emits the right object. With `reduction="none"`,
 `GELT.forward` returns a per-site gauge-invariant scalar field
-`O(x)` of shape `(B, *Λ)` (`blocks_rope.py:668-670`) — an operator density.
+`O(x)` of shape `(B, *Λ)` (`blocks.py:668-670`) — an operator density.
 No new head is needed. Instantiate `GELT(..., reduction="none")` and do the
 zero-momentum projection in the training loop.
 
