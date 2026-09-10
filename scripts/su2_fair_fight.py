@@ -72,6 +72,8 @@ jackknifed on the same blocks — the protocol is *imported* from
 the call graph.
 
   gelt        the trained operator, straight from the dump
+  thin        thin links × 1×1 — one operator, the leftmost point of the
+              input↔architecture curve (notes/fable5.1_10-09_audit.md)
   published   APE [0,2,4,6] × 1×1 — the paper's arm, straight from the dump
   deep        APE [0,2,4,6,8,12,16] × 1×1 — does more radius help?
   shapes      thin links × cubic-symmetrised R×T loops — extent without smearing
@@ -99,6 +101,18 @@ Env knobs:
   SFF_NOCACHE=1           dump-only mode: reproduce the published comparison
                           without the ensemble (no new arms)
   SFF_REPLOT=<dump.pt>    re-report and re-plot offline
+  SFF_BASES=1|<obars.pt>  offline mode for every arm: read the Ō series from the
+                          kept obars cache (per ensemble, or one given file)
+                          instead of re-smearing the ensemble; the slice gate
+                          then compares the cached `published` to the dump's
+  SFF_TRUNCATE=1          GEVP whitening drops the directions of C(t0) below
+                          SFF_GEVP_EPS · s_max instead of flooring them
+  SFF_PRUNE=<rho_max>     greedy collinearity pruning before the GEVP (off);
+                          the kept set is chosen once and fixed across replicas
+  SFF_OUT=<path.pt>       output path; default su2_fair_fight_<dump stem>.pt for
+                          a single dump, su2_fair_fight.pt for several, either
+                          with _trunc / _prune<ρ> appended
+  Every SFF_<NAME> also reads --<name>=value from argv.
 
 Run:  python scripts/su2_fair_fight.py
 """
@@ -231,9 +245,31 @@ KEEP_OBARS = os.environ.get("SFF_KEEP_OBARS", "1") == "1"
 # for the published 4-operator arm, fatal for a 21-operator one at 400 configs.
 GEVP_EPS = float(os.environ.get("SFF_GEVP_EPS", 1e-4))
 GEVP_TD_ = int(os.environ.get("SFF_GEVP_TD", 2))  # only for the Rayleigh gate
+# The estimator knobs of the input↔architecture curve (notes/fable5.1_10-09_
+# audit.md WP1): drop near-null directions instead of flooring them, and prune
+# collinear operators before the GEVP. Both off by default, so every existing
+# number regenerates unchanged.
+TRUNCATE = _flag("truncate", "0") == "1"
+PRUNE = float(_flag("prune", "0") or 0)  # rho_max; 0 = off
+BASES = _flag("bases", "")
 
-OUT_PT = "results/fair_fight/su2_fair_fight.pt"
-OUT_PNG = "results/fair_fight/su2_fair_fight.png"
+# One output per dump (the curve needs one file per point), one for a multi-dump
+# run as before, and the estimator in the name so the WP1 settings do not
+# overwrite each other.
+_EST = ("_trunc" if TRUNCATE else "") + (f"_prune{PRUNE:g}" if PRUNE else "")
+
+
+def _stem(dump):
+    return os.path.basename(dump).removesuffix(".pt").removesuffix("_test_obars")
+
+
+if _flag("out", ""):
+    OUT_PT = _flag("out", "")
+elif len(DUMPS) == 1:
+    OUT_PT = f"results/fair_fight/su2_fair_fight_{_stem(DUMPS[0][0])}{_EST}.pt"
+else:
+    OUT_PT = f"results/fair_fight/su2_fair_fight{_EST}.pt"
+OUT_PNG = os.path.splitext(OUT_PT)[0] + ".png"
 
 # Cubic-symmetrised spatial loop shapes. `glueball_operator` already sums over
 # the three spatial planes, which is the rotational scalar for R = T; a rectangle
@@ -245,6 +281,10 @@ SHAPES_FULL = ((1, 1), (1, 2), (2, 2))
 
 ARM_SPEC = {
     # name        levels                     shapes         from the dump?
+    # `thin` is the classical side of the curve's leftmost point: the thin 1×1
+    # plaquette alone, i.e. the input a thin-link net gets. One operator, so no
+    # GEVP — and its signal dies by Δ ≈ 3, so the fit may not converge.
+    "thin":      ([0],                       ((1, 1),),     False),
     "published": ([0, 2, 4, 6],              ((1, 1),),     True),
     "deep":      ([0, 2, 4, 6, 8, 12, 16],   ((1, 1),),     False),
     "shapes":    ([0],                       SHAPES_EXT,    False),
@@ -430,6 +470,49 @@ def verify_slice(rebuilt, dumped):
     return ok
 
 
+def _cached_bases(dump):
+    """``(path, bases, labels)`` from a kept obars cache — the SFF_BASES route.
+
+    ``SFF_BASES=<file.pt>`` names the cache; any other value takes the one this
+    script keeps per ensemble, which is keyed by the dump's `_ens` tag. Looked up
+    in ``dumps/`` too, like the dumps themselves.
+    """
+    path = (BASES if BASES.endswith(".pt")
+            else f"results/fair_fight/su2_fair_fight_obars_{_tag(dump)}.pt")
+    path = _resolve(path)
+    if not os.path.exists(path):
+        raise SystemExit(f"SFF_BASES: no obars cache at {path}")
+    ob = torch.load(path, map_location="cpu", weights_only=False)
+    return path, {n: v.double() for n, v in ob["bases"].items()}, ob["labels"]
+
+
+def _prune(basis, rho_max, td):
+    """Indices of a collinearity-pruned sub-basis, chosen once on the full sample.
+
+    Ported from ``z2_attention_correlator._prune`` with **no cap** on the size:
+    rank the operators by long-distance signal C(td)/C(0), add greedily, skip any
+    whose |corr| with one already kept exceeds ``rho_max``. The caller fixes the
+    index set here and every jackknife replica reuses it, as ``_jack`` does
+    there, so the replicas vary the data and not the basis. The superset
+    property of the arms then holds only approximately — which is why pruning
+    is the last resort of the WP1 selection rule.
+    """
+    n = basis.shape[0]
+    if n == 1:
+        return [0]
+    rho = torch.corrcoef(basis.reshape(n, -1)).abs().nan_to_num(0.0)
+    sig = []
+    for i in range(n):
+        C = connected_correlator(basis[i])
+        sig.append(float(C[td] / C[0]) if C[0] > 0 else float("-inf"))
+    order = sorted(range(n), key=lambda i: -sig[i])
+    kept = []
+    for i in order:
+        if all(rho[i, j] < rho_max for j in kept):
+            kept.append(i)
+    return kept
+
+
 def measure(dump_path, cache_path, cov_done):
     print(f"\n── {os.path.basename(dump_path)} " + "─" * 30)
     blob = torch.load(dump_path, map_location="cpu", weights_only=False)
@@ -455,8 +538,34 @@ def measure(dump_path, cache_path, cov_done):
     bases = {"published": dumped_basis}
     labels = {"published": [f"n{n}·1x1" for n in meta.get("gevp_levels", [])]}
 
-    configs = test_configs(cache_path)
-    if configs is None:
+    cached = _cached_bases(dump_path) if BASES else None
+    configs = None if cached else test_configs(cache_path)
+    if cached:
+        path, cbases, clabels = cached
+        print(f"  offline: arms from the kept Ō cache {path} "
+              f"({', '.join(cbases)})")
+        # The gate, cached form: the cache's `published` must be the dump's own
+        # basis, i.e. the cache was built on these very configurations.
+        if not verify_slice(cbases["published"], dumped_basis):
+            return None
+        by_label = {}
+        for n in cbases:
+            for lab, series in zip(clabels[n], cbases[n]):
+                by_label.setdefault(lab, series)
+        for name in ARMS:
+            if name == "published":
+                continue
+            lv = [l for l in ARM_SPEC[name][0] if l <= MAX_LEVEL]
+            keys = [_label(l, sh) for l in sorted(lv) for sh in ARM_SPEC[name][1]]
+            missing = [k for k in keys if k not in by_label]
+            if missing:
+                print(f"  {name:<10} skipped — not in the cache: {', '.join(missing[:3])}"
+                      + (" …" if len(missing) > 3 else ""))
+                continue
+            bases[name] = torch.stack([by_label[k] for k in keys])
+            labels[name] = keys
+            print(f"  {name:<10} {len(keys):>2} operators")
+    elif configs is None:
         print(f"  ensemble cache absent ({cache_path}) — dump-only mode: the "
               "published comparison is reproduced, no strengthened arms")
     else:
@@ -488,18 +597,28 @@ def measure(dump_path, cache_path, cov_done):
             print(f"  {name:<10} {len(labels[name]):>2} operators")
 
     names = [n for n in ARM_SPEC if n in bases]
+    raw_bases = dict(bases)  # the obars cache keeps the unpruned series
+    labels_raw = dict(labels)
+    if PRUNE:
+        for n in names:
+            kept = _prune(bases[n], PRUNE, td)
+            if len(kept) < bases[n].shape[0]:
+                print(f"  prune |ρ| > {PRUNE:g}: {n:<10} {bases[n].shape[0]:>2} → "
+                      f"{len(kept):>2} operators")
+            bases[n] = bases[n][kept]
+            labels[n] = [labels[n][i] for i in kept]
 
     # σ_Δ fixed from the full sample, per operator, exactly as fit_glueball_
     # overlap.py does it: every replica then minimises the same χ² surface.
     proj_full, proj_info = {}, {}
     for n in names:
         proj_full[n], proj_info[n] = _project(bases[n], t0, td)
-    print(f"\n  {'arm':<12} {'n_ops':>6} {'cond C(t0)':>12}   variational gate")
+    print(f"\n  {'arm':<12} {'n_ops':>6} {'kept':>5} {'cond C(t0)':>12}   variational gate")
     for n in names:
         i = proj_info[n]
         note = (f"FELL BACK to member {i['best']} — the GEVP picked a near-null "
                 "direction" if i["fell_back"] else "ok")
-        print(f"  {n:<12} {i['n_ops']:>6} {i['cond']:>12.2e}   {note}")
+        print(f"  {n:<12} {i['n_ops']:>6} {i['kept']:>5} {i['cond']:>12.2e}   {note}")
     sig = {"gelt": fgo.blocked_jackknife(
         lambda m: connected_correlator(gelt[m]), B, jb)[1]}
     for n in names:
@@ -524,7 +643,8 @@ def measure(dump_path, cache_path, cov_done):
 
     mean, err = fgo.blocked_jackknife(stats, B, jb)
     order = ["gelt"] + names
-    out = {"dump": dump_path, "n_cfg": B, "labels": labels, "arms": {}, "delta": {}}
+    out = {"dump": dump_path, "n_cfg": B, "labels": labels, "arms": {}, "delta": {},
+           "gevp": {n: proj_info[n] for n in names}}
     for i, n in enumerate(order):
         C = connected_correlator(gelt if n == "gelt" else proj_full[n])
         out["arms"][n] = {"m": mean[2 * i].item(), "m_err": err[2 * i].item(),
@@ -541,15 +661,23 @@ def measure(dump_path, cache_path, cov_done):
     # Re-deriving the strengthened arms needs the ensemble and a GPU pass, and
     # `operator_decomposition.py` needs precisely this pairing to run against
     # `full` rather than the published basis (audit 2026-09-06 §4 item 3).
+    # Write-once: the cache is keyed by ensemble only, and it is the input of
+    # every SFF_BASES run, so a later run (another dump, a subset of arms, a
+    # pruned basis) must never replace it. Its `gelt` is whichever dump wrote it
+    # first — take the trained series from the dumps, never from here.
     if KEEP_OBARS:
         ob_path = ("results/fair_fight/su2_fair_fight_obars_"
                    f"{_tag(dump_path)}.pt")
-        torch.save({"dump": dump_path, "n_cfg": B, "labels": labels,
-                    "t0": t0, "td": td,
-                    "gelt": gelt.to(torch.float32),
-                    "bases": {n: bases[n].to(torch.float32) for n in names}},
-                   ob_path)
-        print(f"  kept Ō series → {ob_path}")
+        if cached or os.path.exists(ob_path):
+            print(f"  Ō cache {ob_path} exists — left untouched")
+        else:
+            torch.save({"dump": dump_path, "n_cfg": B,
+                        "labels": {n: labels_raw[n] for n in names},
+                        "t0": t0, "td": td,
+                        "gelt": gelt.to(torch.float32),
+                        "bases": {n: raw_bases[n].to(torch.float32) for n in names}},
+                       ob_path)
+            print(f"  kept Ō series → {ob_path}")
 
     print(f"\n  {'operator':<12} {'m·a_t':>18} {'A₀':>18}   ΔA₀ (GELT − arm)")
     for n in order:
@@ -587,19 +715,21 @@ def _project(basis, t0, td, eps=GEVP_EPS):
     whether the gate fired, both of which belong in the report.
     """
     if basis.shape[0] == 1:
-        return basis[0], {"cond": 1.0, "fell_back": False, "n_ops": 1}
+        return basis[0], {"cond": 1.0, "fell_back": False, "n_ops": 1, "kept": 1}
     C = connected_correlator_matrix(basis)
     Ct0 = 0.5 * (C[t0] + C[t0].transpose(-1, -2))
     ev = torch.linalg.eigvalsh(Ct0)
     cond = float(ev[-1] / ev[0]) if ev[0] > 0 else float("inf")
-    v0 = gevp_ground_vector(C, t0=t0, td=td, eps=eps)
+    kept = int((ev > eps * ev[-1]).sum()) if TRUNCATE else basis.shape[0]
+    v0 = gevp_ground_vector(C, t0=t0, td=td, eps=eps, truncate=TRUNCATE)
     proj = torch.einsum("i,ibt->bt", v0, basis)
     singles = [_rayleigh(basis[i]) for i in range(basis.shape[0])]
     best = int(np.argmax(singles))
     if _rayleigh(proj) < singles[best] - 1e-9:
         return basis[best], {"cond": cond, "fell_back": True,
-                             "n_ops": basis.shape[0], "best": best}
-    return proj, {"cond": cond, "fell_back": False, "n_ops": basis.shape[0]}
+                             "n_ops": basis.shape[0], "kept": kept, "best": best}
+    return proj, {"cond": cond, "fell_back": False, "n_ops": basis.shape[0],
+                  "kept": kept}
 
 
 def _chunked_table(configs, levels, shapes):
@@ -698,7 +828,9 @@ def report(rows):
     # A run with no strengthened arm (SFF_NOCACHE, or every one skipped) has no
     # verdict to give: falling back to `published` would print "survives its
     # strongest opponent" about the very comparison under audit.
-    challengers = [n for n in names if n != "published"]
+    # `thin` is a strict subset of `published` — the curve's weakest input, not a
+    # strengthening — so it is never the opponent a verdict is taken against.
+    challengers = [n for n in names if n not in ("published", "thin")]
     if not challengers:
         print("\n  → No strengthened arm ran (dump-only mode), so there is no verdict:")
         print("    the numbers above are the published comparison reproduced, nothing")
@@ -817,7 +949,10 @@ def main():
 
     print(f"device: {device} | SU(2) {tg.L}³×{tg.LT}, β = {tg.BETA}, ξ = {tg.XI} | "
           f"arms = {','.join(ARMS)} | strongest = {STRONGEST} | "
-          f"max level = {MAX_LEVEL}"
+          f"max level = {MAX_LEVEL} | estimator: "
+          + ("truncate" if TRUNCATE else "floor") + f" eps {GEVP_EPS:g}"
+          + (f", prune {PRUNE:g}" if PRUNE else "")
+          + (" | offline (SFF_BASES)" if BASES else "")
           + ("  [MATCHED INPUT: the classical arms see only the smearing levels "
              "the network was trained on]" if MAX_LEVEL <= max(tg.INPUT_SMEAR_LEVELS)
              else ""))
@@ -828,7 +963,7 @@ def main():
         if not os.path.exists(dump):
             print(f"  missing dump {dump} — skipped")
             continue
-        if cov is None and not NOCACHE and os.path.exists(cache):
+        if cov is None and not NOCACHE and not BASES and os.path.exists(cache):
             cfg = test_configs(cache)
             ok, cov, moved = selftest(cfg[:8].to(device))
             if not ok:
@@ -843,7 +978,9 @@ def main():
                     "strongest": STRONGEST, "covariance": cov, "moved": moved,
                     "meta": {"L": tg.L, "Lt": tg.LT, "beta": tg.BETA, "xi": tg.XI,
                              "fit_window": fgo.FIT_WINDOW,
-                             "smear_alpha": tg.SMEAR_ALPHA}}, OUT_PT)
+                             "smear_alpha": tg.SMEAR_ALPHA},
+                    "estimator": {"truncate": TRUNCATE, "prune": PRUNE,
+                                  "gevp_eps": GEVP_EPS, "bases": BASES}}, OUT_PT)
         print(f"  saved → {OUT_PT} ({len(rows)} ensembles)")
 
     if not rows:

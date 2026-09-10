@@ -268,7 +268,29 @@ def connected_correlator_matrix(Obar: torch.Tensor) -> torch.Tensor:
     return C
 
 
-def gevp_eigenvalues(C: torch.Tensor, t0: int = 1, eps: float = 1e-12) -> torch.Tensor:
+def _whiten(Ct0: torch.Tensor, eps: float, truncate: bool) -> torch.Tensor:
+    """Whitening matrix W with Wᵀ C(t0) W = 𝟙 on the directions it keeps.
+
+    ``truncate=False`` floors the eigenvalues of C(t0) at ``eps · s_max`` and
+    keeps all ``n_ops`` directions — the historical path, bit-identical.
+    ``truncate=True`` instead **drops** every direction with s ≤ eps · s_max: a
+    near-null or negative mode of a noisy C(t0) carries no signal, and flooring
+    it only lets a small numerator divided by the floor manufacture a large
+    generalized eigenvalue in a noise direction. Returns ``(n_ops, k)``, k ≤ n_ops.
+    """
+    s, Q = torch.linalg.eigh(Ct0)  # ascending eigenvalues; C[t0] = Q diag(s) Qᵀ
+    if truncate:
+        keep = s > eps * s[-1]  # drop near-null / negative modes
+        if not bool(keep.any()):
+            raise ValueError("C(t0) has no positive direction above the cut")
+        return Q[:, keep] * s[keep].rsqrt()
+    s = s.clamp_min(eps * s[-1].clamp_min(eps))  # floor near-zero / negative modes
+    return Q * s.rsqrt()  # columns scaled: Wᵀ C[t0] W = I
+
+
+def gevp_eigenvalues(
+    C: torch.Tensor, t0: int = 1, eps: float = 1e-12, truncate: bool = False
+) -> torch.Tensor:
     """Generalized eigenvalues λ_n(Δ) of the GEVP  C(Δ) v = λ C(t0) v.
 
     ``C`` has shape ``(Nt, n_ops, n_ops)``. The reference matrix C(t0) is a
@@ -283,12 +305,14 @@ def gevp_eigenvalues(C: torch.Tensor, t0: int = 1, eps: float = 1e-12) -> torch.
     λ_n(Δ) ≈ e^{−m_n (Δ − t0)}, so the t0 offset cancels in the effective mass.
     The per-Δ descending sort only tracks states consistently for Δ ≥ t0 (at
     Δ < t0 the ordering inverts); read masses off the Δ ≥ t0 region.
+
+    ``truncate=True`` drops the directions of C(t0) below ``eps · s_max``
+    instead of flooring them (see :func:`_whiten`); the result is then
+    ``(Nt, k)`` with k ≤ n_ops the number of directions kept.
     """
     Nt = C.shape[0]
     C = 0.5 * (C + C.transpose(-1, -2))  # symmetrise the noisy estimator
-    s, Q = torch.linalg.eigh(C[t0])  # ascending eigenvalues; C[t0] = Q diag(s) Qᵀ
-    s = s.clamp_min(eps * s[-1].clamp_min(eps))  # floor near-zero / negative modes
-    W = Q * s.rsqrt()  # columns scaled: Wᵀ C[t0] W = I
+    W = _whiten(C[t0], eps, truncate)
     lams = []
     for dt in range(Nt):
         M = W.transpose(-1, -2) @ C[dt] @ W
@@ -298,7 +322,7 @@ def gevp_eigenvalues(C: torch.Tensor, t0: int = 1, eps: float = 1e-12) -> torch.
 
 
 def gevp_ground_vector(
-    C: torch.Tensor, t0: int = 1, td: int = 2, eps: float = 1e-12
+    C: torch.Tensor, t0: int = 1, td: int = 2, eps: float = 1e-12, truncate: bool = False
 ) -> torch.Tensor:
     """Ground-state generalized eigenvector v₀ of  C(td) v = λ C(t0) v.
 
@@ -321,12 +345,14 @@ def gevp_ground_vector(
     with the overall sign fixed by the largest-|·| component (the projected
     operator's correlator is sign-blind anyway).
 
+    ``truncate=True`` solves the GEVP only on the directions of C(t0) above
+    ``eps · s_max`` (see :func:`_whiten`); v₀ is still returned in the full
+    operator basis.
+
     ``C`` : ``(Nt, n_ops, n_ops)``. Returns ``(n_ops,)``.
     """
     C = 0.5 * (C + C.transpose(-1, -2))  # symmetrise the noisy estimator
-    s, Q = torch.linalg.eigh(C[t0])  # ascending; C[t0] = Q diag(s) Qᵀ
-    s = s.clamp_min(eps * s[-1].clamp_min(eps))  # floor near-zero / negative modes
-    W = Q * s.rsqrt()  # Wᵀ C[t0] W = I
+    W = _whiten(C[t0], eps, truncate)  # Wᵀ C[t0] W = I, (n_ops, k)
     M = W.transpose(-1, -2) @ C[td] @ W
     M = 0.5 * (M + M.transpose(-1, -2))
     _, V = torch.linalg.eigh(M)  # ascending → last column = ground state

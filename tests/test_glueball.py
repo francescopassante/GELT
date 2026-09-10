@@ -152,6 +152,46 @@ def test_gevp_ground_vector_kills_excited_state():
     assert torch.allclose(meff, torch.full_like(meff, 0.3), atol=1e-8)
 
 
+def test_gevp_truncate_is_identity_when_well_conditioned():
+    # Same synthetic two-state model. C(t0) is well conditioned, so no direction
+    # falls below the cut and truncation must change nothing: same eigenvalues,
+    # same ground vector.
+    masses = torch.tensor([0.3, 0.9], dtype=torch.float64)
+    Nt = 10
+    Z = torch.tensor([[1.0, 0.6], [0.4, 1.0]], dtype=torch.float64)
+    t = torch.arange(Nt, dtype=torch.float64)
+    E = torch.exp(-masses[None, :] * t[:, None])  # (Nt, 2)
+    C = torch.einsum("in,tn,jn->tij", Z, E, Z)  # (Nt, 2, 2)
+
+    lam_f = gevp_eigenvalues(C, t0=1)
+    lam_t = gevp_eigenvalues(C, t0=1, truncate=True)
+    assert lam_t.shape == lam_f.shape
+    assert torch.allclose(lam_t, lam_f, atol=1e-12, rtol=0)
+    v_f = gevp_ground_vector(C, t0=1, td=2)
+    v_t = gevp_ground_vector(C, t0=1, td=2, truncate=True)
+    assert torch.allclose(v_t, v_f, atol=1e-12, rtol=0)
+
+
+def test_gevp_ground_vector_survives_duplicated_operator():
+    # Z[2] = Z[0] exactly: a 3-operator basis of rank 2, so C(t0) is singular.
+    # The truncated whitening drops the null direction; what is left is the
+    # exact two-state problem, and the projected correlator is pure ground state.
+    masses = torch.tensor([0.3, 0.9], dtype=torch.float64)
+    Nt = 10
+    Z = torch.tensor([[1.0, 0.6], [0.4, 1.0], [1.0, 0.6]], dtype=torch.float64)
+    t = torch.arange(Nt, dtype=torch.float64)
+    E = torch.exp(-masses[None, :] * t[:, None])  # (Nt, 2)
+    C = torch.einsum("in,tn,jn->tij", Z, E, Z)  # (Nt, 3, 3)
+
+    lam = gevp_eigenvalues(C, t0=1, eps=1e-8, truncate=True)
+    assert lam.shape == (Nt, 2)
+    v0 = gevp_ground_vector(C, t0=1, td=2, eps=1e-8, truncate=True)
+    assert v0.shape == (3,)
+    Cp = torch.einsum("i,tij,j->t", v0, C, v0)
+    meff = effective_mass(Cp)
+    assert torch.allclose(meff, torch.full_like(meff, 0.3), atol=1e-8)
+
+
 def test_fit_cosh_correlator_recovers_synthetic():
     # Exact periodic single-state correlator: the profiled-A grid fit must
     # recover (m, A) and leave ~zero residual χ².

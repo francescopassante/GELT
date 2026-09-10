@@ -80,8 +80,22 @@ def _env_int(name, default):
 
 
 def _env_flag(name, default):
+    flag = f"--{name.lower().replace('glueball_', '').replace('_', '-')}"
+    for a in sys.argv[1:]:
+        if a == flag:
+            return True
+        if a.startswith(flag + "="):
+            return a.split("=", 1)[1] not in ("0", "false", "False", "")
     v = os.environ.get(name)
     return default if v is None else v not in ("0", "false", "False", "")
+
+
+def _env_str(name, default):
+    flag = f"--{name.lower().replace('glueball_', '').replace('_', '-')}="
+    for a in sys.argv[1:]:
+        if a.startswith(flag):
+            return a.split("=", 1)[1]
+    return os.environ.get(name, default)
 
 
 def _env_levels(name, default):
@@ -123,12 +137,16 @@ NC = gaugegroup.nc
 # separate robustness axes. Both default to the Run-5 values.
 ENSEMBLE_SEED = _env_int("GLUEBALL_ENSEMBLE_SEED", 0)
 INIT_SEED = _env_int("GLUEBALL_INIT_SEED", 0)
-# Artifact tag: non-default seeds get their own checkpoint / dump / plot names
-# so replication runs never clobber the Run-5 artifacts (default names are
-# unchanged).
-RUN_TAG = ("" if ENSEMBLE_SEED == 0 else f"_ens{ENSEMBLE_SEED}") + (
-    "" if INIT_SEED == 0 else f"_init{INIT_SEED}"
-)
+# RANDOM_INIT: the architecture-only baseline. Build the net at INIT_SEED, save
+# the untrained weights, and run the eval-only path on them — no training. It is
+# the "random" trace of the input↔architecture curve
+# (notes/fable5.1_10-09_audit.md WP2).
+RANDOM_INIT = _env_flag("GLUEBALL_RANDOM_INIT", False)
+# Free-form suffix appended last to every artifact name (e.g. "_p5" for the
+# protocol version). Must start with "_" so the tags stay parseable.
+USER_TAG = _env_str("GLUEBALL_RUN_TAG", "")
+if USER_TAG and not USER_TAG.startswith("_"):
+    raise SystemExit(f"GLUEBALL_RUN_TAG must start with '_' (got {USER_TAG!r})")
 
 # Same cache key as measure_glueball.py — resolves to the identical file.
 CACHE = (
@@ -233,6 +251,19 @@ INPUT_SMEAR_LEVELS = _env_levels("GLUEBALL_INPUT_SMEAR_LEVELS", (0, 2, 4, 6))
 #   bound is untouched; GELT becomes a spatially-resolved nonlinear
 #   generalization of the GEVP over the same smearing ladder. The transport T
 #   is built from the FIRST (least smeared) level.
+# Artifact tag: a non-default width, a non-default seed, the random-init
+# baseline and GLUEBALL_RUN_TAG each get their own checkpoint / dump / plot
+# names, so no run clobbers another's artifacts (default names are unchanged).
+# Order: _d<width> _ens<k> (_rnd<k> | _init<k>) <user tag>. `_ens<k>` must stay
+# in the name — su2_fair_fight.py pairs a dump with its ensemble through it.
+# The two 7-level nets of 2026-09-08/09 are d_model 24 but predate the _d tag,
+# so their names carry no width.
+RUN_TAG = (
+    ("" if D_MODEL == 16 else f"_d{D_MODEL}")
+    + ("" if ENSEMBLE_SEED == 0 else f"_ens{ENSEMBLE_SEED}")
+    + (f"_rnd{INIT_SEED}" if RANDOM_INIT else "" if INIT_SEED == 0 else f"_init{INIT_SEED}")
+    + USER_TAG
+)
 CHECKPOINT = "results/glueball/best_glueball_gelt" + (
     ""
     if tuple(INPUT_SMEAR_LEVELS) == (0,)
@@ -241,11 +272,11 @@ CHECKPOINT = "results/glueball/best_glueball_gelt" + (
 # The checkpoint name encodes the input smearing levels: changing them changes
 # the ChannelLift shape, so checkpoints at different levels are incompatible
 # and must never RESUME into (or overwrite) each other.
-RESUME = _env_flag("GLUEBALL_RESUME", True)
+RESUME = _env_flag("GLUEBALL_RESUME", True) and not RANDOM_INIT
 # RESUME: warm-start from CHECKPOINT if it exists (optimizer state and the
 # cosine schedule restart fresh); set False to train from scratch. The
 # replication driver forces it off so each phase is an independent training.
-EVAL_ONLY = _env_flag("GLUEBALL_EVAL_ONLY", False)
+EVAL_ONLY = _env_flag("GLUEBALL_EVAL_ONLY", False) or RANDOM_INIT
 # EVAL_ONLY: skip training entirely: load CHECKPOINT and run only the
 # test-split eval, the Ō-array dump, and the plots — one forward pass over
 # val (if RESUME) + test. The cheap way to (re)produce the offline-analysis
@@ -438,6 +469,7 @@ def main():
     np.random.seed(ENSEMBLE_SEED)
     print(
         f"seeds: ensemble={ENSEMBLE_SEED} init={INIT_SEED}"
+        + ("  RANDOM INIT (untrained, eval only)" if RANDOM_INIT else "")
         + (f"  (run tag {RUN_TAG!r})" if RUN_TAG else "")
     )
     device = torch.device(
@@ -530,7 +562,7 @@ def main():
     ).to(device)
     n_params = sum(p.numel() for p in model.parameters())
     print(
-        f"GELT(D=3, R={R}, layers={GEMHSA_LAYERS}, d_qkv={D_QKV}) | "
+        f"GELT(D=3, R={R}, layers={GEMHSA_LAYERS}, d_qkv={D_QKV}, d_model={D_MODEL}) | "
         f"input smear levels {list(INPUT_SMEAR_LEVELS)} | params {n_params:,}"
     )
 
@@ -538,6 +570,12 @@ def main():
     # Cosine anneal over the (now short) run — StepLR(150) never fired at 40
     # epochs. One smooth decay from LR to ~0 across EPOCHS.
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
+
+    # ── Random-init baseline: the untrained weights ARE the checkpoint, so the
+    # eval below loads exactly them and the dump pairs with a real file.
+    if RANDOM_INIT:
+        torch.save(model.state_dict(), CHECKPOINT)
+        print(f"RANDOM_INIT: untrained weights (init seed {INIT_SEED}) → {CHECKPOINT}")
 
     # ── Optional warm start: reload the best checkpoint of a previous run and
     # keep training. best_val_loss is seeded with the checkpoint's own val loss
@@ -708,6 +746,8 @@ def main():
                 "best_val_loss": best_val_loss,
                 "ensemble_seed": ENSEMBLE_SEED,
                 "init_seed": INIT_SEED,
+                "d_model": D_MODEL,
+                "random_init": RANDOM_INIT,
             },
         },
         obar_dump,

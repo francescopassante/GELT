@@ -178,8 +178,9 @@ editable via `pyproject.toml`. Device order: cuda → mps → cpu.
     `effective_mass`; `jackknife_effective_mass`.
   - **Multi-level GEVP**: `smearing_operator_basis`, `connected_correlator_matrix`,
     `gevp_eigenvalues` (eigh-whitening with an eigenvalue floor, not Cholesky —
-    low statistics can make `C(t0)` indefinite), `gevp_effective_mass`,
-    `jackknife_gevp_effective_mass`.
+    low statistics can make `C(t0)` indefinite; `truncate=True` on it and on
+    `gevp_ground_vector` drops the near-null directions instead of flooring
+    them), `gevp_effective_mass`, `jackknife_gevp_effective_mass`.
   - **Fit / overlap layer**: `gevp_ground_vector(C, t0, td)` → the ground-state
     generalized eigenvector, defining the *projected operator* — the optimal
     single operator in a basis's span, i.e. the apples-to-apples comparator for a
@@ -206,9 +207,13 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   transfer-matrix bound and makes the loss gameable toward m → 0),
   `mlp_zero_init=False` (zero init ⇒ exactly zero Rayleigh gradient — training
   never starts), `INPUT_SMEAR_LEVELS = (0, 2, 4, 6)`, `SCALE_REG` pinning the
-  `Ō → λŌ` flat direction. Env overrides: `GLUEBALL_ENSEMBLE_SEED`,
-  `GLUEBALL_INIT_SEED`, `GLUEBALL_RESUME`, `GLUEBALL_EVAL_ONLY`; non-default
-  seeds get a `RUN_TAG` suffix so Run-5 artifacts are never overwritten. Dumps
+  `Ō → λŌ` flat direction. Env overrides (each also `--name=value` in argv):
+  `GLUEBALL_ENSEMBLE_SEED`, `GLUEBALL_INIT_SEED`, `GLUEBALL_RESUME`,
+  `GLUEBALL_EVAL_ONLY`, `GLUEBALL_INPUT_SMEAR_LEVELS`, `GLUEBALL_D_MODEL`,
+  `GLUEBALL_RANDOM_INIT` (the untrained, eval-only baseline) and
+  `GLUEBALL_RUN_TAG`. Artifact names are `_sm<levels>` + `_d<width>` +
+  `_ens<k>` + `_rnd<k>|_init<k>` + tag, so no run overwrites another; the two
+  7-level nets are d_model 24 but predate the `_d` tag. Dumps
   the test-split Ō arrays to `datasets/…_test_obars.pt` (also kept in `dumps/`).
 - **`z2_attention_correlator.py`** — the Z₂ table. GEVP t0=1/td=2, window
   Δ∈[2,8], cosh + A₀, blocked jackknife block 20, config-scramble null,
@@ -223,7 +228,11 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   complex `linalg.det`/`svd`) — use `SAC_DEVICE=cpu` for a smoke test.
 - **`su2_fair_fight.py`** — the strengthened classical arms (`published` /
   `deep` / `shapes` / `full`), gated on reproducing the published numbers first.
-  `SFF_NOCACHE=1` runs the dump-only path offline.
+  `SFF_NOCACHE=1` runs the dump-only path offline. `SFF_BASES=1` runs **every**
+  arm offline from the kept per-ensemble obars cache (now write-once);
+  `SFF_TRUNCATE=1` / `SFF_PRUNE=<ρ>` are the estimator knobs of
+  `notes/fable5.1_10-09_audit.md` WP1; `thin` is the curve's one-operator arm.
+  A single-dump run writes `su2_fair_fight_<dump stem>[_trunc][_prune<ρ>].pt`.
 - **`operator_decomposition.py`** — `O_GELT = P + r` in the exact Hilbert-space
   metric `C_ab(0)`, offline from the `dumps/` Ō arrays. Prints the published
   comparison first as a gate.
@@ -256,7 +265,9 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   the operator is gauge invariant; correlator / `m_eff` / jackknife recover a
   known mass from a synthetic correlator; the GEVP recovers both masses of a
   synthetic two-state matrix; `gevp_ground_vector` kills the excited state
-  exactly; `fit_cosh_correlator` recovers `(m, A)`.
+  exactly; the truncated whitening is the identity on a well-conditioned C(t0)
+  and survives an exactly duplicated operator; `fit_cosh_correlator` recovers
+  `(m, A)`.
 - **`test_data_model.py`** — split validation and CNN-baseline shape guards.
 
 ## Conventions
@@ -357,6 +368,7 @@ python scripts/measure_glueball.py           # classical 0⁺⁺ baseline + ense
 python scripts/train_glueball.py             # GELT as a variational operator
 python scripts/fit_glueball_overlap.py [dump]      # cosh fits + A₀ (offline)
 bash   scripts/overnight_replication.sh      # fresh ensemble + retraining (~24 h)
+bash   scripts/curve_batch.sh                # the curve's random trace + 3 trainings
 python scripts/operator_decomposition.py     # O = P + r (offline, seconds)
 SFF_NOCACHE=1 python scripts/su2_fair_fight.py     # reproduce ΔA₀ offline
 python scripts/z2_beta_scan.py               # Z₂ classical mass vs β
