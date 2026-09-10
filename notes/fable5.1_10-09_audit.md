@@ -680,6 +680,102 @@ The per-stage micro-benchmark's `transport (2 bmm)` case OOMed (a 4.45 GiB
 allocation) and has no number. It is a benchmark case, not the training path,
 which ran at the 20 GiB peak above.
 
+### 8.1 WP1 — the estimator table and the shape verdict (2026-09-10)
+
+Inputs: the V100 obars caches (every arm, both ensembles), now tracked as
+`dumps/su2_fair_fight_obars_{run5,ens1}.pt`, and the four test dumps in
+`dumps/`. Sixteen offline runs, 45 s on the laptop in total:
+
+    SFF_BASES=dumps/su2_fair_fight_obars_<ens>.pt [SFF_TRUNCATE=1 [SFF_PRUNE=ρ]] \
+      python scripts/su2_fair_fight.py dumps/<dump>
+
+(a) floor, eps 1e-4; (b) truncate, eps 1e-4; (c) (b) + prune 0.999;
+(d) (b) + prune 0.99. Per-dump outputs:
+`results/fair_fight/su2_fair_fight_<stem>[_trunc][_prune<ρ>].pt`.
+
+**Classical A₀ per arm** (the same for every dump of an ensemble). `kept` is
+the number of C(t0) directions above 1e-4·s_max under (b); `prune` is the
+number of operators left by (c)/(d), before truncation.
+
+    arm        n_ops  kept(b)  prune(c/d)  A₀ run5: (a) → (b) → (d)     A₀ ens1: (a) → (b) → (d)
+    thin          1      1       1 / 1     0.390(60)                    0.484(128)
+    published     4      4       4 / 4     0.837(56), unchanged         0.925(71), unchanged
+    deep          7      5       7 / 7     0.903 → 0.905 → 0.905        0.939 → 0.939 → 0.939
+    shapes        5      5       5 / 5     0.500(110)                   0.612(110)  FELL BACK in every setting
+    shapes_sm    20     11      20 / 16    0.934 → 0.913 → 0.910        1.003 → 1.004 → 1.004  FELL BACK in every setting
+    full         21      9      20 / 14    0.942 → 0.938 → 0.936        0.960 → 0.960 → 0.978
+
+(c) prunes one operator of `full` and reads (b) to 0.001 everywhere.
+
+**Combined ΔA₀ = GELT − arm** (run5 ⊕ ens1, inverse variance; in brackets the
+run5 − ens1 tension):
+
+    7-level GELT   (a)                     (b)                     (c)              (d)
+    thin           +0.569 ± 0.069          same                    same             same
+    published      +0.131 ± 0.029 (0.4σ)   same                    same             same
+    deep           +0.097 ± 0.021 (1.7σ)   +0.095 ± 0.021 (1.8σ)   +0.095 ± 0.021   +0.095 ± 0.021
+    shapes         +0.454 ± 0.084          same                    same             same
+    shapes_sm      +0.058 ± 0.016 (0.7σ)   +0.059 ± 0.029 (0.2σ)   +0.059 ± 0.029   +0.060 ± 0.026
+    full           +0.032 ± 0.026 (1.5σ)   +0.038 ± 0.027 (1.4σ)   +0.037 ± 0.026   +0.042 ± 0.022 (1.5σ)
+
+    4-level GELT
+    thin           +0.517 ± 0.063          same                    same             same
+    published      +0.077 ± 0.022 (0.5σ)   same                    same             same
+    deep           +0.041 ± 0.025 (1.5σ)   +0.039 ± 0.025          +0.039 ± 0.025   +0.039 ± 0.025
+    shapes         +0.402 ± 0.081          same                    same             same
+    shapes_sm      +0.002 ± 0.024          +0.006 ± 0.035          +0.006 ± 0.035   +0.008 ± 0.032
+    full           −0.022 ± 0.026 (1.4σ)   −0.013 ± 0.030          −0.013 ± 0.030   −0.011 ± 0.023
+
+**Gates.** `published` reproduces +0.066 / +0.089 against the 4-level nets,
+and its A₀ is unchanged to the third decimal under every setting. `deep`
+reproduces +0.052 / +0.127 under (a) and reads +0.050 / +0.127 under (b)–(d):
+truncation drops 2 of its 7 directions, a 0.06σ shift. The superset gate passes
+everywhere.
+
+**The selection rule has no answer as written.** It asks for the least
+invasive setting under which every arm passes the variational gate on both
+ensembles. `shapes` and `shapes_sm` fall back on ens1 under all four settings,
+and the cause is not conditioning: `shapes` does it at cond C(t0) = 87. Checked
+directly on the ens1 cache, the v₀-projected `shapes` operator beats its best
+member on C(2)/C(1) (0.640 vs 0.597), which the GEVP at (t0, td) = (1, 2)
+guarantees, and loses on C(2)/C(0) (0.092 vs 0.206), which is what the gate
+tests and what nothing guarantees at t0 = 1. The projection bought its 1 → 2
+decay with a large Δ = 0 piece (C(1)/C(0) = 0.14): GEVP-optimal, and a poor A₀
+interpolator. `shapes_sm` on ens1 is the same (C(2)/C(1) 0.720 vs 0.712;
+C(2)/C(0) 0.430 vs 0.490 under truncation). So the fallback is the right call
+for an A₀ comparison, but the gate is a theorem only at t0 = 0 (the `_project`
+docstring now says so), and no whitening change can make these two arms pass.
+
+**Deviation — proposed 2026-09-10, pending the user's confirmation.** Apply
+the rule to the arms on the curve's main chain (`thin`, `published`, `deep`,
+`full`); `shapes` is not on the curve, and `shapes_sm` is the off-chain point,
+reported with its ens1 fallback flagged. Among the settings that pass for those
+arms, take the least invasive one that removes `full`'s null directions (cond
+C(t0) = ∞ under the floor): **(b), truncate at eps 1e-4, no pruning.** The
+choice moves no conclusion: every combined number above is stable across
+(a)–(d) to ≤ 0.01, well inside its error.
+
+**Verdict on loop shapes — the question audit §6.5 left open.** `full` is
+readable. Truncation leaves a 9-dimensional GEVP that passes both gates on both
+ensembles, and its A₀ barely moves from the floor path (0.942 → 0.938,
+0.960 → 0.960). Against the 7-level GELT, ΔA₀(`full`) = +0.038 ± 0.027 (1.4σ)
+combined, against +0.095 ± 0.021 (4.5σ) for `deep`: loop shapes on top of the
+deep ladder close about 60% of the gap, and what is left is a 1–2σ GELT edge —
+the pre-registered expectation ("parity within a few hundredths or a 1–2σ GELT
+edge"). The 4-level GELT is at parity with `full` (−0.013 ± 0.030).
+
+Two statements of audit §6.5 do not survive this:
+- *"`full`'s ΔA₀ is not reproducible between ensembles (an 8× swing)."* The two
+  values differ by 1.4σ; the 8× is the ratio of two small central values, not
+  a tension.
+- *"The eigenvector is fixed by the `GEVP_EPS` floor, not by signal."* Dropping
+  the floored directions moves `full`'s A₀ by 0.004; the floor was not steering
+  the answer. What §6.5 got right is that cond = ∞ made that impossible to know
+  without this check.
+
+Saturation (§1.3): `deep` and `full` are at A₀ ≥ 0.90 on both ensembles, so this
+verdict is read off a compressed observable, and says so.
+
 ---
 
 ## 9. Superseded: the first-pass ranking (2026-09-10, earlier the same day)

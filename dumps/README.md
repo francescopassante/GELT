@@ -10,6 +10,13 @@ artifacts, so they travel with the repo instead:
 - `best_glueball_gelt_sm0-2-4-6-8-12-16_test_obars.pt`      — the 7-level net, run5
 - `best_glueball_gelt_sm0-2-4-6-8-12-16_ens1_test_obars.pt` — the 7-level net, ens1
 
+- `su2_fair_fight_obars_run5.pt`, `su2_fair_fight_obars_ens1.pt` — every
+  classical arm's Ō series on each ensemble's 400 test configurations
+  (`published`, `deep`, `shapes`, `shapes_sm`, `full`), copied from the V100's
+  `results/fair_fight/`. They are what `SFF_BASES` reads, so the fair fight runs
+  every arm offline in seconds. Their `gelt` entry is the 7-level net's; take
+  the trained series from the dumps above, never from here.
+
 The two 7-level nets are **d_model 24**, although neither the name nor the
 dump's `meta` says so (they predate the width tag). Their `Obar_basis` is still
 the 4-level `published` basis, so the fair fight's slice gate runs on them

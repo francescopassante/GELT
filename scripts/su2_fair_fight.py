@@ -474,12 +474,17 @@ def _cached_bases(dump):
     """``(path, bases, labels)`` from a kept obars cache — the SFF_BASES route.
 
     ``SFF_BASES=<file.pt>`` names the cache; any other value takes the one this
-    script keeps per ensemble, which is keyed by the dump's `_ens` tag. Looked up
-    in ``dumps/`` too, like the dumps themselves.
+    script keeps per ensemble, which is keyed by the dump's `_ens` tag — the
+    tracked copy in ``dumps/`` first (it is the one that holds every arm; an
+    older ``results/`` copy may hold `published` only), then ``results/``.
     """
-    path = (BASES if BASES.endswith(".pt")
-            else f"results/fair_fight/su2_fair_fight_obars_{_tag(dump)}.pt")
-    path = _resolve(path)
+    if BASES.endswith(".pt"):
+        path = _resolve(BASES)
+    else:
+        name = f"su2_fair_fight_obars_{_tag(dump)}.pt"
+        path = os.path.join("dumps", name)
+        if not os.path.exists(path):
+            path = os.path.join("results/fair_fight", name)
     if not os.path.exists(path):
         raise SystemExit(f"SFF_BASES: no obars cache at {path}")
     ob = torch.load(path, map_location="cpu", weights_only=False)
@@ -705,11 +710,16 @@ def _project(basis, t0, td, eps=GEVP_EPS):
     """v₀-projected operator, with the two guards `project_ground` does not have.
 
     1. a real eigenvalue floor (see GEVP_EPS), and
-    2. the variational gate from `z2_attention_correlator._gevp_is_sane`: v₀
-       maximises the Rayleigh quotient over the *span* of the basis, so the
-       projection can never be a worse interpolator than the best single member.
-       When it is, the whitening has selected a near-null direction of an
-       ill-conditioned C(t0) and the honest answer is that member.
+    2. the variational gate from `z2_attention_correlator._gevp_is_sane`: the
+       projection must not be a worse interpolator, by C(td)/C(0), than the best
+       single member; when it is, the honest answer is that member. At t0 = 0
+       this is a theorem (v₀ maximises exactly that quotient over the span), and
+       a failure means the whitening selected a near-null direction of an
+       ill-conditioned C(t0). At t0 = 1 it is not: v₀ maximises C(td)/C(t0), and
+       can buy it with a large Δ = 0 piece — `shapes` on ens1 falls back at
+       cond C(t0) = 87 (notes/fable5.1_10-09_audit.md §8.1). The gate is still
+       the right call for an A₀ comparison; it is just not only a conditioning
+       alarm.
 
     Returns ``(series, info)``; ``info`` carries the C(t0) condition number and
     whether the gate fired, both of which belong in the report.
