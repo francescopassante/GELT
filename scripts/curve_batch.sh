@@ -19,6 +19,15 @@
 # overwrite an existing checkpoint: the random nets are tagged _rnd<k>, the new
 # trainings _d24 + _p5, and every training runs with --resume=0.
 #
+# Two guards, both added after the first batch lost the GPU mid-run (the
+# driver became unreachable between two phases, and the next phase — a fresh
+# process — silently fell back to the CPU at ~15× the step time):
+#   - every phase first checks that CUDA is visible, and the batch STOPS if it
+#     is not. Nothing here is worth running on the CPU.
+#   - a phase whose test dump already exists is skipped, so a restart resumes
+#     where the batch stopped. The dump is written only at the very end of a
+#     run, so its presence means the phase completed.
+#
 # Run (from the repo root, inside the venv):
 #   mkdir -p logs
 #   nohup bash scripts/curve_batch.sh > logs/curve_batch.log 2>&1 &
@@ -31,8 +40,23 @@ mkdir -p logs
 
 stamp() { date "+%F %T"; }
 
+need_cuda() {
+  if ! python -c "import sys, torch; sys.exit(0 if torch.cuda.is_available() else 1)"; then
+    echo "[$(stamp)] ** CUDA is not available — stopping the batch rather than"
+    echo "   training on the CPU. Check nvidia-smi, then re-run this script: finished"
+    echo "   phases are skipped."
+    exit 1
+  fi
+}
+
+# run_phase <name> <dump that marks it done> <command...>
 run_phase() {
-  local name="$1"; shift
+  local name="$1" dump="$2"; shift 2
+  if [ -e "${dump}" ]; then
+    echo "[$(stamp)] ── phase ${name}: done already (${dump}) — skipped"
+    return
+  fi
+  need_cuda
   echo "[$(stamp)] ── phase ${name}: $*"
   if "$@" > "logs/${name}.log" 2>&1; then
     echo "[$(stamp)]    OK  ${name}"
@@ -44,26 +68,31 @@ run_phase() {
 export TQDM_MININTERVAL=30
 
 # ── part 1: the random trace ─────────────────────────────────────────────────
+G=results/glueball/best_glueball_gelt
 for ENS in 0 1; do
+  E=$([ "${ENS}" = 0 ] && echo "" || echo "_ens${ENS}")
   for SEED in 0 1 2; do
-    run_phase "rnd_thin_ens${ENS}_s${SEED}" python -u scripts/train_glueball.py \
+    run_phase "rnd_thin_ens${ENS}_s${SEED}" "${G}_d24${E}_rnd${SEED}_test_obars.pt" \
+      python -u scripts/train_glueball.py \
       --random-init=1 --ensemble-seed=${ENS} --init-seed=${SEED} \
       --input-smear-levels=0 --d-model=24
-    run_phase "rnd_4lv_ens${ENS}_s${SEED}" python -u scripts/train_glueball.py \
+    run_phase "rnd_4lv_ens${ENS}_s${SEED}" "${G}_sm0-2-4-6${E}_rnd${SEED}_test_obars.pt" \
+      python -u scripts/train_glueball.py \
       --random-init=1 --ensemble-seed=${ENS} --init-seed=${SEED} \
       --input-smear-levels=0,2,4,6 --d-model=16
-    run_phase "rnd_7lv_ens${ENS}_s${SEED}" python -u scripts/train_glueball.py \
+    run_phase "rnd_7lv_ens${ENS}_s${SEED}" "${G}_sm0-2-4-6-8-12-16_d24${E}_rnd${SEED}_test_obars.pt" \
+      python -u scripts/train_glueball.py \
       --random-init=1 --ensemble-seed=${ENS} --init-seed=${SEED} \
       --input-smear-levels=0,2,4,6,8,12,16 --d-model=24
   done
 done
 
 # ── part 2: the trained points ───────────────────────────────────────────────
-run_phase thin_run5 python -u scripts/train_glueball.py \
+run_phase thin_run5 "${G}_d24_p5_test_obars.pt" python -u scripts/train_glueball.py \
   --resume=0 --ensemble-seed=0 --input-smear-levels=0 --d-model=24 --run-tag=_p5
-run_phase thin_ens1 python -u scripts/train_glueball.py \
+run_phase thin_ens1 "${G}_d24_ens1_p5_test_obars.pt" python -u scripts/train_glueball.py \
   --resume=0 --ensemble-seed=1 --input-smear-levels=0 --d-model=24 --run-tag=_p5
-run_phase width_ctrl_run5 python -u scripts/train_glueball.py \
+run_phase width_ctrl_run5 "${G}_sm0-2-4-6_d24_p5_test_obars.pt" python -u scripts/train_glueball.py \
   --resume=0 --ensemble-seed=0 --input-smear-levels=0,2,4,6 --d-model=24 --run-tag=_p5
 
 echo "[$(stamp)] batch done. New dumps:"
