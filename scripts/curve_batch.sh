@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The input↔architecture curve batch (V100, unattended; ~1.5 h + 3 × ~8 h).
+# The input↔architecture curve batch (V100, unattended; ~1.5 h + 4 × ~8 h).
 #
 # notes/fable5.1_10-09_audit.md WP4. Modelled on overnight_replication.sh:
 # phases are independent, a failure is logged and the batch continues, and
@@ -11,7 +11,8 @@
 #           ~5 min each. Run first on purpose: they exercise the new artifact
 #           naming in minutes, before 24 h of training depend on it.
 #   part 2  the trained points (WP3) — thin on run5, thin on ens1, and the
-#           width control (4lv at d_model 24) on run5. The width control is
+#           width control (4lv at d_model 24) on run5 and ens1, so it combines
+#           over two ensembles like every other point. The width control is
 #           last: if the clock runs out, it is the one to drop.
 #
 # Every setting is passed as argv (env vars do not survive every container
@@ -102,6 +103,8 @@ run_phase thin_ens1 "${G}_d24_ens1_p5_test_obars.pt" python -u scripts/train_glu
   --resume=0 --ensemble-seed=1 --input-smear-levels=0 --d-model=24 --run-tag=_p5
 run_phase width_ctrl_run5 "${G}_sm0-2-4-6_d24_p5_test_obars.pt" python -u scripts/train_glueball.py \
   --resume=0 --ensemble-seed=0 --input-smear-levels=0,2,4,6 --d-model=24 --run-tag=_p5
+run_phase width_ctrl_ens1 "${G}_sm0-2-4-6_d24_ens1_p5_test_obars.pt" python -u scripts/train_glueball.py \
+  --resume=0 --ensemble-seed=1 --input-smear-levels=0,2,4,6 --d-model=24 --run-tag=_p5
 
 echo "[$(stamp)] batch done. New dumps:"
 ls -l results/glueball/*_rnd*_test_obars.pt results/glueball/*_p5_test_obars.pt 2>/dev/null
