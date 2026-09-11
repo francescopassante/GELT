@@ -28,6 +28,10 @@
 #     where the batch stopped. The dump is written only at the very end of a
 #     run, so its presence means the phase completed.
 #
+# Check first, without running anything, which phases are done and which would
+# run (no GPU needed):
+#   CURVE_DRY_RUN=1 bash scripts/curve_batch.sh
+#
 # Run (from the repo root, inside the venv):
 #   mkdir -p logs
 #   nohup bash scripts/curve_batch.sh > logs/curve_batch.log 2>&1 &
@@ -54,6 +58,10 @@ run_phase() {
   local name="$1" dump="$2"; shift 2
   if [ -e "${dump}" ]; then
     echo "[$(stamp)] ── phase ${name}: done already (${dump}) — skipped"
+    return
+  fi
+  if [ -n "${CURVE_DRY_RUN:-}" ]; then
+    echo "[$(stamp)] ── phase ${name}: WOULD RUN (no ${dump})"
     return
   fi
   need_cuda
