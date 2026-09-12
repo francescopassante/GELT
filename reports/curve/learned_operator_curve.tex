@@ -1,0 +1,1521 @@
+% ==============================================================================
+%  The learned operator, audited -- standalone report
+%
+%  Companion to reports/glueball/glueball_spectroscopy.tex and
+%  reports/attention/attention_as_operator.tex; self-contained.
+%  Build: pdflatex (run twice for refs).
+%  Figures are PNGs under ../../results/<study>/; \graphicspath lists those dirs.
+% ==============================================================================
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=2.6cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{amsmath,amssymb,mathtools}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{caption}
+\usepackage{xcolor}
+\usepackage[colorlinks=true,linkcolor=blue!50!black,citecolor=blue!50!black,urlcolor=blue!50!black]{hyperref}
+
+\emergencystretch=3em
+
+% ---- float placement: this report is table-heavy ------------------------------
+\renewcommand{\topfraction}{0.92}
+\renewcommand{\bottomfraction}{0.75}
+\renewcommand{\textfraction}{0.07}
+\renewcommand{\floatpagefraction}{0.80}
+\setcounter{topnumber}{3}
+\setcounter{totalnumber}{4}
+
+\graphicspath{{../../}{../../results/}{../../results/sampler/}{../../results/glueball/}{../../results/attention/}{../../results/fair_fight/}{../../results/wilson_regression/}}
+
+% ---- shorthand ---------------------------------------------------------------
+\newcommand{\Tr}{\operatorname{Tr}}
+\newcommand{\Obar}{\bar{O}}
+\newcommand{\meff}{m_{\mathrm{eff}}}
+\newcommand{\at}{a_t}
+\newcommand{\as}{a_s}
+\newcommand{\That}{\hat{T}}
+\newcommand{\Azero}{A_0}
+\newcommand{\dAzero}{\Delta A_0}
+\newcommand{\OG}{O_{\mathrm{GELT}}}
+\newcommand{\spn}{\operatorname{span}}
+\newcommand{\arm}[1]{\texttt{#1}}
+
+\title{One Learned Operator, Three Audits:\\
+the Input--Architecture Curve, the Strengthened Comparator,\\
+and What the Network Actually Found}
+\author{Francesco Passante}
+\date{September 12, 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+The $SU(2)$ spectroscopy chapter of this thesis rests on one number: a
+gauge-equivariant lattice transformer trained as a variational $0^{++}$
+operator carries more ground-state weight than the optimal combination of the
+classical smeared basis, $\dAzero = +0.078 \pm 0.022$ ($3.6\sigma$) over two
+independently sampled ensembles at a consistent mass. A single number of that
+shape invites three separate objections, and this report is the record of
+answering all three offline, on the same $400$ held-out configurations per
+ensemble, with the estimator and the readings fixed in writing before the
+numbers existed. \textbf{Was the opponent strong enough?} Against the
+input-matched seven-level classical ladder the claim reads
+$+0.095 \pm 0.021$; against the strongest basis the repository builds --- $21$
+operators, seven smearing levels times three loop shapes --- it falls to
+$+0.038 \pm 0.027$, so genuine loop-shape variety closes about $60\%$ of the
+gap and leaves a $1$--$2\sigma$ edge. Reading that arm at all required dropping
+the near-null directions of $C(t_0)$ rather than flooring them, and the
+pre-registered rule for choosing between the two turned out to have no answer,
+for a reason worth recording: the GEVP at $t_0=1$ maximises $C(2)/C(1)$ while
+the variational gate tests $C(2)/C(0)$. \textbf{Is it the architecture or just
+richer inputs?} Replacing the single number by $\Azero$ as a function of the
+input content handed to \emph{both} methods gives a curve on which the learned
+operator sits above the classical one at every resolvable point
+($+0.252 \pm 0.056$ on thin links, $+0.075 \pm 0.019$ at four smearing levels),
+an untrained network of identical architecture sits below the classical one
+everywhere, and a width control shows the gain is input content and not
+capacity. None of the three pre-registered readings survives its own test
+unmodified. \textbf{What did the network find?} Because the equal-time
+connected correlator \emph{is} the Hilbert-space inner product, the split
+$\OG = P + r$ into a classical projection and an orthogonal remainder is exact.
+The same trained operator is $21.1\%$, $12.8\%$ and $2.5\%$ outside the $4$-,
+$7$- and $21$-operator spans, deleting $r$ costs the entire advantage
+($+0.097 \pm 0.021$ against the strong arm), and $80\%$ of $r$ is rectangular
+Wilson loops the network rediscovered. The decisive control is an untrained
+network: it is \emph{further} outside the span ($16$--$74\%$) than the trained
+one, so the norm fraction is architectural --- what is learned is the amplitude
+share $Z_r/Z_G$ ($0.146$ against $0.047$), the fact that the residual becomes
+loop-shaped at all ($80\%$ against $0.3\%$), and the sign of
+$\dAzero(\text{net}-P)$, which flips to $-0.091 \pm 0.042$ without training.
+\end{abstract}
+
+\tableofcontents
+
+% ==============================================================================
+\section{The claim, and the three questions it invites}
+\label{sec:intro}
+% ==============================================================================
+
+The result being audited is stated in
+\texttt{reports/glueball/glueball\_spectroscopy.tex} and reproduced here in one
+sentence. On an anisotropic $SU(2)$ lattice ($12^3\times 24$, $\beta = 2.4$,
+$\xi = 3.0$), a GELT network trained per timeslice on the Rayleigh-quotient loss
+$-C(1)/C(0)$ produces a single scalar operator whose ground-state overlap
+exceeds that of the variationally optimal combination of a four-level APE
+smearing basis:
+\begin{equation}
+  \dAzero \;=\; \Azero(\text{GELT}) - \Azero(\text{GEVP})
+  \;=\; +0.078 \pm 0.022 \quad (3.6\sigma),
+  \label{eq:published}
+\end{equation}
+combining two independently sampled ensembles, at a fitted mass consistent with
+unchanged.\footnote{\texttt{notes/glueball\_spectroscopy.md}, ``Replication
+results (2026-07-05)''. The two inputs are $+0.066 \pm 0.031$ on the Run-5
+ensemble and $+0.089 \pm 0.030$ on the independent seed-1 ensemble.}
+
+Equation~\eqref{eq:published} is a comparison, and every comparison of this
+shape admits exactly three lines of attack. They are logically independent, they
+require different evidence, and this report devotes one section to each.
+
+\begin{description}
+  \item[\textnormal{\textbf{Was the opponent strong enough?}}] The classical arm
+        of Eq.~\eqref{eq:published} is four smearing levels of a \emph{single}
+        loop shape, the $1\times1$ spatial plaquette. A practitioner building a
+        Morningstar--Peardon basis would use many shapes. If a stronger
+        classical basis closes the gap, the result is about a weak comparator
+        rather than about a network. Section~\ref{sec:fairfight}.
+  \item[\textnormal{\textbf{Is it the architecture, or just richer inputs?}}]
+        The network is fed smeared link configurations, and one that merely
+        \emph{relays} its input advantage is not an interesting result. The
+        replacement for a single $\dAzero$ is a \emph{curve}: $\Azero$ as a
+        function of the input content handed to both methods, with a third trace
+        --- the same architecture, untrained --- separating architecture from
+        training. Section~\ref{sec:curve}.
+  \item[\textnormal{\textbf{What did the network actually find?}}] Granting the
+        win, a referee asks whether the advantage is \emph{new operator content}
+        or the \emph{same content in a combination the GEVP failed to locate}.
+        The first says the classical variational space has a ceiling; the second
+        says the estimator was noisy and more configurations would fix it. The
+        question has an exact answer, because operators acting on the vacuum are
+        vectors in a Hilbert space whose inner product the correlator already
+        computes. Section~\ref{sec:decomp}.
+\end{description}
+
+All three audits are pure re-analyses of arrays that already exist: the
+test-split time series $\Obar(t)$ of every operator, learned and classical, on
+the $400$ held-out configurations of each ensemble. Every number here was
+produced on a laptop CPU in seconds to minutes from files tracked in
+\texttt{dumps/} --- no GPU time, no training, and, importantly for the first two
+audits, no possibility of quietly re-training until the answer improved.
+
+\paragraph{The pre-registration.} Sections~1 and~2 of
+\texttt{notes/fable5.1\_10-09\_audit.md} fix the observable, the estimator, the
+fit conventions, the grid of measurement points, and three named readings with
+their operational tests, and were committed \emph{before} any of the numbers
+below existed. This is the only defence against the objection that a curve with
+five points and three traces offers many places to stop looking. It is also why
+this report says twice, in Sections~\ref{sec:selection} and~\ref{sec:readings},
+that a pre-registered rule failed on contact with the data --- recording the
+amendment and its reason is the cost of the discipline, and the alternative
+(silently choosing what works) is exactly what the discipline exists to
+prevent.
+
+% ==============================================================================
+\section{Method}
+\label{sec:method}
+% ==============================================================================
+
+This section is the minimum needed to read Sections~\ref{sec:fairfight}
+to~\ref{sec:decomp}. The path integral, the transfer matrix, the spectral
+decomposition of a Euclidean correlator, APE smearing, the anisotropic action,
+and the heat-bath/overrelaxation sampler are developed from first
+principles in the companion report \texttt{glueball\_spectroscopy.tex} and are not
+repeated.
+
+\subsection{Correlators, the cosh fit, and the overlap fraction}
+\label{sec:a0}
+
+Let $\Obar(t)$ be the zero-momentum, timeslice-summed value of a scalar
+operator on one gauge configuration. The $0^{++}$ channel has a nonzero vacuum
+expectation value, so the object with a spectral decomposition is the
+\emph{connected} correlator
+\begin{equation}
+  C(\Delta) \;=\; \big\langle\, d(t)\, d(t+\Delta) \,\big\rangle,
+  \qquad d(t) = \Obar(t) - \langle \Obar \rangle,
+  \label{eq:conn}
+\end{equation}
+averaged over $t$ and over configurations. On a periodic lattice of temporal
+extent $N_t$ the transfer matrix gives
+\begin{equation}
+  C(\Delta) \;=\; \sum_{n\ge1} |Z_n|^2
+  \Big[ e^{-m_n \Delta} + e^{-m_n (N_t-\Delta)} \Big],
+  \qquad Z_n = \langle 0 | \Obar | n \rangle .
+  \label{eq:spectral}
+\end{equation}
+Fitting the single-state form $C(\Delta) \approx A\,[e^{-m\Delta} +
+e^{-m(N_t-\Delta)}]$ over a window in which the excited states have died gives
+$(m, A)$; the mass $m$ is the physics and $A = |Z_0|^2$ is the operator's
+coupling to the ground state. The figure of merit for an \emph{operator}, as
+opposed to a mass, is the fraction of the operator's total norm that sits on the
+ground state,
+\begin{equation}
+  \boxed{\;\Azero \;=\; \frac{A\,\big(1 + e^{-m N_t}\big)}{C(0)}\;}
+  \label{eq:a0}
+\end{equation}
+--- the numerator is the ground-state contribution to $C(0)$ evaluated from the
+fit, the denominator the measured $C(0)$, which by Eq.~\eqref{eq:spectral}
+contains every state. A pure ground-state interpolator has $\Azero = 1$;
+excited-state contamination pushes it down.
+
+Three properties of $\Azero$ matter for what follows.
+
+\begin{enumerate}
+  \item \textbf{It is the right figure of merit at fixed mass.} Two operators
+        that agree on $m$ but differ on $\Azero$ measure the same physics with
+        different amounts of contamination --- the comparison this report needs,
+        and Morningstar and Peardon's own operator-quality metric. It is also
+        \emph{exactly what the training loss maximises}: the Rayleigh quotient
+        $-C(1)/C(0)$ is minimised by the operator of largest ground-state
+        fraction at the mass gap, so objective and metric coincide.
+  \item \textbf{$\Azero > 1$ can occur, and is a fit artifact rather than a
+        probability violation.} $\Azero$ is a ratio of a \emph{fitted} amplitude
+        to a \emph{measured} $C(0)$, estimated on a finite sample; when the
+        operator is nearly pure, the two estimates differ by noise in both
+        directions. The seed-1 ensemble reads $\Azero = 1.013 \pm 0.062$ for the
+        four-level learned operator and $1.066 \pm 0.059$ for the seven-level
+        one. These are quoted unclipped, with $1-\Azero$ carrying its sign;
+        clipping at one would bias every difference in which they appear.
+  \item \textbf{It saturates.} $\Azero \le 1$, and every strong arm on these
+        ensembles already reads $0.90$--$1.07$. Two methods separated by less
+        than the errors near the ceiling are not thereby shown to be equivalent;
+        the observable has simply run out of range. This is pre-registered as
+        the \emph{saturation clause} and is enforced mechanically in
+        Section~\ref{sec:readings}.
+\end{enumerate}
+
+\paragraph{Fit and error conventions.} $(m,A)$ come from
+\texttt{fit\_cosh\_correlator}: a profiled-$A$ grid scan with parabolic refine,
+dependency-free so that it is safe to call inside every jackknife replica, with
+diagonal $\chi^2$ weights $\sigma_\Delta$ fixed from the full sample. Errors are
+delete-block jackknife over configurations with block $10$, and the
+\emph{entire} fit --- including, for the classical arm, the re-solution of the
+GEVP eigenvector --- is redone inside every replica. Differences between two
+operators are always \emph{correlated} differences on shared configurations:
+the difference is formed inside each replica and jackknifed, not assembled from
+two independent error bars.
+
+\subsection{The classical comparator: the GEVP ground vector}
+\label{sec:gevp}
+
+A learned operator is one operator. Comparing it against a \emph{basis} would be
+unfair in the network's favour; comparing it against the best \emph{single}
+member of that basis would be unfair against it. The apples-to-apples object is
+the optimal single operator inside the basis's span, and the variational method
+supplies it. Given the correlator matrix $C_{ab}(\Delta)$ of a basis
+$\{\Obar_a\}$, solve
+\begin{equation}
+  C(t_d)\, v \;=\; \lambda\, C(t_0)\, v ,
+  \label{eq:gevp}
+\end{equation}
+take $v_0$ the eigenvector of the largest $\lambda$, and define the
+\emph{projected operator} $\Obar_{v_0} = \sum_a (v_0)_a \Obar_a$. This is the
+combination of basis members that maximises the decay ratio $C(t_d)/C(t_0)$; it
+is what \texttt{gevp\_ground\_vector} returns and what every ``classical''
+$\Azero$ in this report is measured on. Throughout, $t_0 = 1$ and $t_d = 2$.
+
+\subsection{The whitening problem: flooring versus truncation}
+\label{sec:whitening}
+
+Equation~\eqref{eq:gevp} is solved by whitening: diagonalise $C(t_0) = Q s
+Q^{\mathsf T}$, form $W = Q s^{-1/2}$, and take the top eigenvector of
+$W^{\mathsf T} C(t_d) W$. When the basis is a long ladder of near-degenerate
+operators --- seven smearing levels of the same plaquette are almost collinear,
+and $21$ operators built as levels $\times$ shapes are worse --- $C(t_0)$
+estimated on $400$ configurations is numerically singular and can be indefinite.
+The $21$-operator arm reads $\operatorname{cond} C(t_0) = \infty$ on both
+ensembles. There are two repairs:
+
+\begin{description}
+  \item[Flooring.] Clamp $s \to \max(s, \epsilon\, s_{\max})$ and keep all
+        $n_{\text{ops}}$ directions. Every direction survives, including ones
+        whose scale is set entirely by $\epsilon$.
+  \item[Truncation.] Keep only the $k$ directions with $s > \epsilon\, s_{\max}$
+        and \emph{drop} the rest, so the GEVP is solved in a $k$-dimensional
+        subspace with $k \le n_{\text{ops}}$.
+\end{description}
+
+The difference is not cosmetic. A floored near-null direction is a direction
+whose normalisation is arbitrary, and the whitened problem can and did select
+one: an early run of this audit reported the strengthened arms as \emph{worse}
+than the basis they contain --- $\Azero = 0.072$ for the $21$-operator arm
+against $0.837$ for its own $4$-operator subset --- and duly announced that the
+claim survived at $8.8\sigma$.\footnote{\texttt{notes/audit\_2026-09-06.md}
+\S6. The failure mode is instructive precisely because it pointed the
+flattering way.} Since \arm{published} is a strict \emph{subset} of the others,
+their GEVP optimises over a larger span and cannot interpolate worse; the
+violation of that superset property is what exposed the estimator. It is now a
+hard gate in the script.
+
+Because the choice of repair can move a number, it had to be made by a rule
+fixed in advance rather than by which setting gave the nicer answer. That rule,
+its failure and its amendment are Section~\ref{sec:selection}, and the evidence
+is the four-setting table there.
+
+\subsection{The decomposition: an inner product, not a fit}
+\label{sec:innerproduct}
+
+The third audit rests on an observation that is exact rather than approximate.
+Operators acting on the vacuum are vectors in a Hilbert space, and the
+equal-time connected correlator \emph{is} the inner product on that space:
+\begin{equation}
+  \langle O_a, O_b \rangle \;\equiv\; C_{ab}(0)
+  \;=\; \big\langle\, d_a(t)\, d_b(t) \,\big\rangle ,
+  \label{eq:metric}
+\end{equation}
+which is what \texttt{connected\_correlator\_matrix} already returns at
+$\Delta = 0$. Consequently ``the part of the learned operator that the classical
+basis cannot express'' is a \emph{literal orthogonal projection}:
+\begin{equation}
+  \OG \;=\; P + r,
+  \qquad P = \operatorname{proj}_{\spn\{\Obar_a\}} \OG,
+  \qquad r \perp \spn\{\Obar_a\} .
+  \label{eq:decomp}
+\end{equation}
+Nothing here is fitted to come out any particular way. Three consequences make
+the split worth measuring.
+
+\begin{enumerate}
+  \item \textbf{$P$ is the strongest possible classical opponent.} By
+        construction it is the best approximation to $\OG$ \emph{inside the
+        span} --- better than the GEVP vector, better than the most-smeared
+        member, better than any classical operator chosen for any other reason.
+        So $\dAzero(\text{GELT} - P) > 0$ is a \emph{lower bound} on the
+        advantage over the entire span, and it is immune to the objection that
+        answers Section~\ref{sec:fairfight} the hard way: one cannot claim the
+        comparator was badly chosen when the comparator is the learned
+        operator's own shadow.
+  \item \textbf{The difference is better conditioned than the published one.}
+        Equation~\eqref{eq:published} compares GELT to the GEVP vector, a
+        \emph{different} operator correlated with GELT only through shared
+        configurations. $P$ is GELT's own projection, so the two share every
+        fluctuation living in the span and much of that variance cancels.
+  \item \textbf{The same statistic gives the missing scale.} ``$12.9\%$ of the
+        norm${}^2$ lies outside a four-dimensional span'' means nothing alone:
+        any operator outside a $4$D subspace has a large orthogonal component.
+        The scale is the basis's \emph{own} increments --- how much new content
+        each rung of the smearing ladder adds to the span below it --- which
+        costs no new data and says whether the ladder is still growing.
+\end{enumerate}
+
+\paragraph{The amplitude split, at one fixed mass.} $Z$ is linear in the
+operator, so $Z_G = Z_P + Z_r$ holds \emph{exactly} --- but only if all three
+are read against the same exponential. Letting each piece fit its own mass
+destroys the additivity that makes the split interpretable, so amplitudes come
+from a least-squares fit of $C(\Delta) \approx A\,\cosh_{\text{ref}}(\Delta)$ at
+the learned operator's reference mass on that ensemble. The share $Z_r/Z_G$ is
+then read off the \emph{cross}-correlator, $C_{Gr}(\Delta) \to Z_G Z_r
+e^{-m\Delta}$ against $C_{GG}(\Delta) \to Z_G^2 e^{-m\Delta}$, which carries its
+own sign and needs no square root. For a network whose own cosh fit does not
+converge --- an untrained one --- the reference mass is passed in from the
+trained net on the same ensemble (\texttt{-{}-m-ref}).
+
+\subsection{Conventions, all pre-registered}
+\label{sec:conventions}
+
+Table~\ref{tab:conv} is the complete list. It was fixed in
+\texttt{notes/fable5.1\_10-09\_audit.md} \S1.4 before the measurements, with the
+single exception noted in its last row and explained in
+Section~\ref{sec:selection}.
+
+\begin{table}[htbp]
+\centering\small
+\caption{Fixed conventions. Every number in this report is measured under
+these, on both ensembles, with no per-point tuning.}
+\label{tab:conv}
+\begin{tabular}{@{}lll@{}}
+\toprule
+item & value & where \\
+\midrule
+fit window            & $\Delta \in [2,7]$, cosh, profiled-$A$ grid & \texttt{fit\_glueball\_overlap.py} \\
+jackknife             & delete-block, block $10$, whole fit per replica & same \\
+GEVP                  & $t_0 = 1$, $t_d = 2$, $v_0$-projected operator & \texttt{gevp\_ground\_vector} \\
+whitening             & \textbf{truncate}, $\epsilon = 10^{-4}$ relative & adopted, \S\ref{sec:selection} \\
+test split            & contiguous last $20\%$ ($400$ configs) & \texttt{train\_glueball.py} \\
+ensembles             & run5 (seed 0), ens1 (seed 1), inverse-variance & \S\ref{sec:intro} \\
+lattice               & $SU(2)$, $12^3\times24$, $\beta=2.4$, $\xi=3.0$ & --- \\
+width policy          & every new trained point at $d_{\text{model}} = 24$ & \S\ref{sec:width} \\
+random trace          & init seeds $0,1,2$; error is the larger of seed & \S\ref{sec:randomtrace} \\
+                      & spread and mean jackknife error & \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The two ensembles are sampled from scratch with different sampler seeds and
+combined inverse-variance. They are not two halves of one ensemble: run5 and
+ens1 have different classical anchors ($\meff(\Delta=1) \approx 0.357$ and
+$0.390$) and different Rayleigh-loss floors, so a result replicating across them
+has replicated across the ensemble noise, the dominant systematic here.
+
+% ==============================================================================
+\section{The fair fight: was the comparator a straw man?}
+\label{sec:fairfight}
+% ==============================================================================
+
+\subsection{The arms}
+\label{sec:arms}
+
+Six classical bases are built on the same $400$ test configurations, projected
+by the same \texttt{gevp\_ground\_vector}, fitted on the same window with the
+same fixed $\sigma_\Delta$ and jackknifed on the same blocks --- the protocol is
+\emph{imported} from \texttt{fit\_glueball\_overlap.py}, so ``same conventions
+as the published table'' is a fact about the call graph. Each basis is a set of
+spatial Wilson loops of shapes $R\times T$ built from links smeared with $n$
+cumulative APE steps:
+
+\begin{center}\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}llcl@{}}
+\toprule
+arm & content & $n_{\text{ops}}$ & role \\
+\midrule
+\arm{thin}      & $n \in \{0\}$, shape $1\times1$ & $1$ &
+   the unsmeared plaquette; the curve's left end \\
+\arm{published} & $n \in \{0,2,4,6\}$, shape $1\times1$ & $4$ &
+   the arm of Eq.~\eqref{eq:published} \\
+\arm{deep}      & $n \in \{0,2,4,6,8,12,16\}$, shape $1\times1$ & $7$ &
+   more radius; input-matched to the $7$-level net \\
+\arm{shapes}    & $n \in \{0\}$, five $R\times T$ shapes & $5$ &
+   extent without smearing \\
+\arm{shapes\_sm}& $n \in \{0,2,4,6\}$, five shapes & $20$ &
+   levels $\times$ shapes, shallow ladder \\
+\arm{full}      & $n \in \{0,2,4,6,8,12,16\}$, three shapes & $21$ &
+   the strongest basis available \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The loop shapes are cubic-symmetrised, so each ``shape'' is already a sum over
+the orientations the $0^{++}$ channel requires. \arm{deep} is the
+\emph{input-matched} comparator: its smearing levels are exactly the channels
+the seven-level network was fed, so a win there cannot be explained by the
+network having seen more smearing than the classical side. Two gates run before
+any verdict: the \emph{slice gate} (the cached basis is measured on the same
+configurations as the dump --- a failure means wrong configurations, not
+physics) and the \emph{superset gate} (no superset arm reads below
+\arm{published} by more than $2\sigma$, which by Section~\ref{sec:whitening}
+cannot happen for a correct estimator, so a violation is a bug report and not a
+result).
+
+\subsection{The estimator table, and a pre-registered rule with no answer}
+\label{sec:selection}
+
+The rule fixed in advance was: run every arm on both seven-level dumps under
+(a) floor at $\epsilon=10^{-4}$, (b) truncate at $\epsilon=10^{-4}$, (c)~(b)
+plus collinearity pruning at $\rho = 0.999$, (d)~(b) plus pruning at
+$\rho = 0.99$; then quote the \emph{least invasive setting under which every arm
+passes both gates on both ensembles and \arm{published} is unchanged to three
+decimals}. Sixteen offline runs, $45$ seconds in total on a laptop, produced
+Table~\ref{tab:est}.
+
+\begin{table}[htbp]
+\centering\small
+\caption{Classical $\Azero$ per arm under the four estimator settings, both
+ensembles. ``kept'' is the number of $C(t_0)$ directions above
+$10^{-4} s_{\max}$ under (b); ``prune'' the number of operators left by (c)/(d)
+before truncation. Setting (c) reads (b) to $0.001$ everywhere and is omitted
+from the $\Azero$ columns.}
+\label{tab:est}
+\begin{tabular}{@{}lcccll@{}}
+\toprule
+arm & $n_{\text{ops}}$ & kept (b) & prune (c/d)
+    & $\Azero$ run5: (a) $\to$ (b) $\to$ (d)
+    & $\Azero$ ens1: (a) $\to$ (b) $\to$ (d) \\
+\midrule
+\arm{thin}       & 1  & 1  & 1 / 1   & $0.390(60)$ & $0.484(128)$ \\
+\arm{published}  & 4  & 4  & 4 / 4   & $0.837(56)$, unchanged & $0.925(71)$, unchanged \\
+\arm{deep}       & 7  & 5  & 7 / 7   & $0.903 \to 0.905 \to 0.905$ & $0.939 \to 0.939 \to 0.939$ \\
+\arm{shapes}     & 5  & 5  & 5 / 5   & $0.500(110)$ \quad \textsc{fell back} & $0.612(110)$ \quad \textsc{fell back} \\
+\arm{shapes\_sm} & 20 & 11 & 20 / 16 & $0.934 \to 0.913 \to 0.910$ & $1.003 \to 1.004 \to 1.004$ \ \textsc{fb} \\
+\arm{full}       & 21 & 9  & 20 / 14 & $0.942 \to 0.938 \to 0.936$ & $0.960 \to 0.960 \to 0.978$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering\small
+\caption{Combined $\dAzero = \text{GELT} - \text{arm}$ (run5 $\oplus$ ens1,
+inverse variance) under the four settings, for both trained networks. In
+brackets, the run5\,--\,ens1 tension. ``same'' means identical to the quoted
+digits.}
+\label{tab:dest}
+\begin{tabular}{@{}lllll@{}}
+\toprule
+arm & (a) floor & (b) truncate & (c) $+$ prune $0.999$ & (d) $+$ prune $0.99$ \\
+\midrule
+\multicolumn{5}{@{}l}{\emph{seven-level GELT}}\\
+\arm{thin}        & $+0.569 \pm 0.069$ & same & same & same \\
+\arm{published}   & $+0.131 \pm 0.029$ $(0.4\sigma)$ & same & same & same \\
+\arm{deep}        & $+0.097 \pm 0.021$ $(1.7\sigma)$ & $+0.095 \pm 0.021$ $(1.8\sigma)$ & $+0.095 \pm 0.021$ & $+0.095 \pm 0.021$ \\
+\arm{shapes}      & $+0.454 \pm 0.084$ & same & same & same \\
+\arm{shapes\_sm}  & $+0.058 \pm 0.016$ $(0.7\sigma)$ & $+0.059 \pm 0.029$ $(0.2\sigma)$ & $+0.059 \pm 0.029$ & $+0.060 \pm 0.026$ \\
+\arm{full}        & $+0.032 \pm 0.026$ $(1.5\sigma)$ & $\mathbf{+0.038 \pm 0.027}$ $(1.4\sigma)$ & $+0.037 \pm 0.026$ & $+0.042 \pm 0.022$ \\
+\addlinespace
+\multicolumn{5}{@{}l}{\emph{four-level GELT}}\\
+\arm{thin}        & $+0.517 \pm 0.063$ & same & same & same \\
+\arm{published}   & $+0.077 \pm 0.022$ $(0.5\sigma)$ & same & same & same \\
+\arm{deep}        & $+0.041 \pm 0.025$ $(1.5\sigma)$ & $+0.039 \pm 0.025$ & $+0.039 \pm 0.025$ & $+0.039 \pm 0.025$ \\
+\arm{shapes\_sm}  & $+0.002 \pm 0.024$ & $+0.006 \pm 0.035$ & $+0.006 \pm 0.035$ & $+0.008 \pm 0.032$ \\
+\arm{full}        & $-0.022 \pm 0.026$ $(1.4\sigma)$ & $-0.013 \pm 0.030$ & $-0.013 \pm 0.030$ & $-0.011 \pm 0.023$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{The gates pass.} \arm{published} reproduces $+0.066/+0.089$ against
+the four-level networks --- i.e.\ Eq.~\eqref{eq:published} --- and its $\Azero$
+is unchanged to the third decimal under all four settings. \arm{deep}
+reproduces $+0.052/+0.127$ under (a) and reads $+0.050/+0.127$ under (b)--(d):
+truncation drops $2$ of its $7$ directions and moves the answer by $0.06\sigma$.
+The superset gate passes everywhere.
+
+\paragraph{The rule has no answer as written.} Two arms, \arm{shapes} and
+\arm{shapes\_sm}, fall back to their best single member on ens1 under
+\emph{all four} settings, so no setting satisfies ``every arm passes on both
+ensembles''. The interesting part is why, because the natural diagnosis ---
+ill-conditioning --- is wrong: \arm{shapes} falls back at
+$\operatorname{cond} C(t_0) = 87$, which is a perfectly healthy matrix.
+
+Checked directly on the ens1 cache, the $v_0$-projected \arm{shapes} operator
+\emph{beats} its best member on $C(2)/C(1)$, $0.640$ against $0.597$, and
+\emph{loses} on $C(2)/C(0)$, $0.092$ against $0.206$. Both are correct and they
+do not conflict: the GEVP at $(t_0,t_d) = (1,2)$ is by construction the
+maximiser of $C(2)/C(1)$ and says nothing whatever about $C(2)/C(0)$ --- while
+the variational gate, and $\Azero$ itself, are statements about
+$C(\cdot)/C(0)$. The projection bought its improved $1\to2$ decay at the cost of
+a large $\Delta=0$ piece ($C(1)/C(0) = 0.14$): GEVP-optimal and a poor $\Azero$
+interpolator at once. \arm{shapes\_sm} on ens1 is the same story
+($C(2)/C(1)$: $0.720$ vs $0.712$; $C(2)/C(0)$: $0.430$ vs $0.490$).
+
+The consequence is structural, not numerical. The variational gate is a theorem
+only at $t_0 = 0$, where the whitening metric and the normalisation of $\Azero$
+are the same matrix; at $t_0 = 1$ they are different matrices, so no change to
+the \emph{whitening} can rescue an arm that fails this way. A rule no setting in
+the family can satisfy cannot select a setting.
+
+\paragraph{The amendment, and why it moves nothing.} The rule was therefore
+amended, and recorded as a deviation: it now ranges over the arms on the curve's
+main chain (\arm{thin} $\subset$ \arm{published} $\subset$ \arm{deep} $\subset$
+\arm{full}), since \arm{shapes} is not on the curve at all and
+\arm{shapes\_sm} is the off-chain point, reported with its ens1 fallback flagged
+rather than dropped. Among the settings that pass for those arms, the least
+invasive one that removes \arm{full}'s null directions is (b): truncate at
+$\epsilon = 10^{-4}$, no pruning --- the estimator for every number in this
+report. The amendment changes no conclusion, and Table~\ref{tab:dest} is the
+evidence rather than an assurance: every combined value there is stable across
+(a)--(d) to $\le 0.01$, well inside its own error, and \arm{published} is
+identical to three decimals under all four.
+
+\subsection{The verdict on loop shapes}
+\label{sec:shapesverdict}
+
+With truncation, \arm{full} becomes readable: a nine-dimensional GEVP that
+passes both gates on both ensembles, whose $\Azero$ barely moves from the floor
+path ($0.942 \to 0.938$ on run5, $0.960 \to 0.960$ on ens1). This answers the
+question the earlier audit left explicitly open.
+
+\begin{equation}
+  \dAzero(\arm{full}) = +0.038 \pm 0.027 \ (1.4\sigma)
+  \qquad\text{against}\qquad
+  \dAzero(\arm{deep}) = +0.095 \pm 0.021 \ (4.5\sigma).
+  \label{eq:shapes}
+\end{equation}
+
+Loop shapes stacked on top of the deep ladder close about $60\%$ of the gap, and
+what is left is a $1$--$2\sigma$ edge in the network's favour. That is precisely
+the pre-registered expectation --- ``parity within a few hundredths or a
+$1$--$2\sigma$ GELT edge'' --- which is worth saying because it is one of the
+few predictions in this block that landed where it was aimed. The four-level
+network, whose inputs contain neither the deep levels nor any shapes, is at
+parity with \arm{full} ($-0.013 \pm 0.030$).
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.88\textwidth]{su2_fair_fight_best_glueball_gelt_sm0-2-4-6-8-12-16_trunc.png}
+\caption{The fair fight on the run5 ensemble, seven-level network, adopted
+(truncated) estimator. Top left: $\Azero$ of each classical arm against the
+learned operator (horizontal line). Top right: the correlated difference
+$\dAzero$ per arm on the same configurations, with the published $+0.078$
+marked. Bottom left: $C(\Delta)/C(0)$ per arm --- \arm{thin} and \arm{shapes}
+visibly lose their signal by $\Delta \approx 5$, which is why their $\Azero$ is
+poor and why neither is a serious opponent. The bottom-right panel is the
+$\mathbb{Z}_2$ smearing-freeze diagnostic, inactive here because this run reads
+the cached basis rather than re-smearing an ensemble. Regenerate with
+\texttt{SFF\_TRUNCATE=1 SFF\_BASES=1 python scripts/su2\_fair\_fight.py
+dumps/best\_glueball\_gelt\_sm0-2-4-6-8-12-16\_test\_obars.pt}.}
+\label{fig:fairfight}
+\end{figure}
+
+\paragraph{Two earlier statements that do not survive.} The first pass of this
+audit, written when \arm{full} was unreadable, recorded two claims that the
+truncated estimator refutes.\footnote{\texttt{notes/audit\_2026-09-06.md} \S6.5,
+superseded on both points by \texttt{notes/fable5.1\_10-09\_audit.md} \S8.1.}
+
+\begin{itemize}
+  \item \emph{``\arm{full}'s $\dAzero$ is not reproducible between ensembles ---
+        an $8\times$ swing.''} The two values, $+0.013 \pm 0.029$ and
+        $+0.105 \pm 0.056$, differ by $1.4\sigma$. The $8\times$ is the ratio of
+        two small central values, which is not a measure of tension.
+  \item \emph{``\arm{full}'s eigenvector is fixed by the $\epsilon$ floor, not
+        by signal.''} Dropping the floored directions entirely moves
+        \arm{full}'s $\Azero$ by $0.004$. The floor was not steering the answer.
+        What the earlier note got right is that $\operatorname{cond} = \infty$
+        made that impossible to know without this check --- the objection was
+        sound, the conclusion was not.
+\end{itemize}
+
+\paragraph{What this does and does not license.} \emph{Does}: the published
+comparator was under-powered, and the honest headline against an input-matched
+classical basis is $+0.095 \pm 0.021$ rather than $+0.078 \pm 0.022$; a
+classical basis with real loop-shape variety closes most of the remaining gap,
+and the network retains a $1$--$2\sigma$ edge over $21$ hand-built operators.
+\emph{Does not}: treat the $21$-operator comparison as a measurement of equal
+quality to the others. \arm{deep} and \arm{full} both sit at $\Azero \ge 0.90$
+on both ensembles, inside the saturation band of Section~\ref{sec:a0}, so
+Eq.~\eqref{eq:shapes} is read off a compressed observable and the $60\%$ is a
+rough fraction, not a measured ratio with an error. Extending past that ceiling
+needs a harder observable, not more configurations (Section~\ref{sec:next}).
+
+% ==============================================================================
+\section{The curve: architecture or inputs?}
+\label{sec:curve}
+% ==============================================================================
+
+\subsection{Definition}
+\label{sec:curvedef}
+
+The fair fight strengthens the opponent while holding the network fixed. The
+curve does something different: it varies the \emph{input content} $x$ handed to
+\emph{both} methods and asks how the difference behaves. Write $\Azero(x)$ for
+\begin{equation}
+  x \;\in\; \{\ \text{thin},\ \text{4lv},\ \text{7lv},\ \text{4lv+5sh},\
+  \text{7lv+3sh}\ \},
+\end{equation}
+ordered by inclusion along the main chain thin $\subset$ 4lv $\subset$ 7lv
+$\subset$ 7lv+3sh, with 4lv+5sh an off-chain point (neither a subset nor a
+superset of 7lv). Three traces are measured at each $x$:
+
+\begin{center}\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}lll@{}}
+\toprule
+trace & what it is & source \\
+\midrule
+\textbf{classical} GEVP$(x)$ & the $v_0$-projected GEVP at content $x$
+  & the arm of that name \\
+\textbf{trained} GELT$(x)$ & a GELT trained on channels with content $x$
+  & \texttt{train\_glueball.py} \\
+\textbf{random} GELT$(x)$ & the same architecture, untrained, same inputs
+  & eval-only, three init seeds \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Every point is measured on the same $400$ held-out configurations, every
+difference at fixed $x$ is a correlated blocked jackknife on shared
+configurations, and both ensembles are combined inverse-variance. The third
+trace is the load-bearing one for this section's title: if the architecture
+alone, at random initialisation, already beat the classical GEVP of the same
+inputs, ``learned'' would be the wrong word for what the trained network does.
+
+\subsection{The measurements}
+\label{sec:curvetable}
+
+Twenty-six dumps, one fair-fight run each under the adopted estimator ($73$
+seconds on a laptop for all of them), assembled by
+\texttt{scripts/input\_architecture\_curve.py}, which fits nothing and
+re-estimates nothing --- the numbers in Table~\ref{tab:curve} are the numbers
+\texttt{su2\_fair\_fight.py} printed.
+
+\begin{table}[htbp]
+\centering\small
+\caption{$\Azero$ against input content. ``classical'' is the GEVP over the same
+input content; ``trained'' is at $d_{\text{model}} = 24$; ``random'' is the mean
+over init seeds $0,1,2$ under the error rule of Table~\ref{tab:conv}. $\dAzero$
+is the correlated trained\,--\,classical difference. The last column is the
+rung-equivalence entry $\dAzero(\mathrm{GELT}(x_k) - \mathrm{GEVP}(x_{k+1}))$:
+the learned operator at one input depth against the classical basis at the
+next. Generated verbatim as
+\texttt{results/fair\_fight/input\_architecture\_curve.tex}.}
+\label{tab:curve}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lccccccc}
+\toprule
+$x$ & ens & $A_0$ classical & $A_0$ trained & $A_0$ random & $\Delta A_0$ & combined & rung $\Delta A_0$ \\
+\midrule
+thin & run5 & $0.390(60)$ & $0.651(77)$ & $0.249(62)$ & $+0.261 \pm 0.063$ & $+0.252 \pm 0.056$ & $-0.201 \pm 0.048$ \\
+ & ens1 & $0.484(128)$ & $0.706(73)$ & $0.280(109)$ & $+0.221 \pm 0.117$ &  &  \\
+\addlinespace
+4lv & run5 & $0.837(56)$ & $0.911(51)$ & $0.497(175)$ & $+0.073 \pm 0.026$ & $+0.075 \pm 0.019$ & $+0.038 \pm 0.024$ \\
+ & ens1 & $0.925(71)$ & $1.002(61)$ & $0.532(198)$ & $+0.078 \pm 0.029$ &  &  \\
+\addlinespace
+7lv & run5 & $0.905(62)$ & $0.955(57)$ & $0.730(343)$ & $+0.050 \pm 0.033$ & $+0.095 \pm 0.021$ &  \\
+ & ens1 & $0.939(65)$ & $1.066(59)$ & $0.512(148)$ & $+0.127 \pm 0.027$ &  &  \\
+\addlinespace
+\bottomrule
+\end{tabular}
+\end{table}
+
+Combined over ensembles, the classical trace reads $0.407 \pm 0.054$,
+$0.870 \pm 0.044$, $0.921 \pm 0.045$; the trained trace $0.680 \pm 0.053$,
+$0.949 \pm 0.039$, $1.008 \pm 0.041$; the random trace $0.257 \pm 0.054$,
+$0.512 \pm 0.131$, $0.547 \pm 0.136$.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{input_architecture_curve.png}
+\caption{The input--architecture curve. Left: $\Azero$ against input content for
+the three traces, ensembles inverse-variance combined, with the two off-chain
+classical points (\arm{shapes\_sm}, \arm{full}) as open triangles and the
+$\Azero \ge 0.90$ saturation band shaded. The open star is the width control
+(Section~\ref{sec:width}). Right: the correlated difference $\dAzero(x)$, and
+the rung-equivalence difference $\mathrm{GELT}(x_k) - \mathrm{GEVP}(x_{k+1})$,
+which is the quantity asking whether the architecture is worth a smearing rung.
+Note the shape of the black curve: the advantage is large where the classical
+basis is poor and shrinks as it is fed.}
+\label{fig:curve}
+\end{figure}
+
+\subsection{The three readings, evaluated by their own tests}
+\label{sec:readings}
+
+A point is \emph{resolvable} when the combined classical $\Azero < 0.90$;
+above that the observable has saturated and cannot discriminate. This excludes
+7lv ($\Azero = 0.921$) and leaves thin ($0.407$) and 4lv ($0.870$). The three
+readings and their pre-registered operational tests were fixed before any of
+Table~\ref{tab:curve} existed, and the script evaluates them mechanically.
+
+\begin{description}
+  \item[R1 --- the architecture buys input depth.] \emph{Test:} $\dAzero(x) >
+        2\sigma$ at every resolvable $x$, \textbf{and} rung-equivalence
+        $\Azero^{\text{GELT}}(x_k) \ge \Azero^{\text{GEVP}}(x_{k+1})$ within
+        errors for $k =$ thin$\to$4lv and 4lv$\to$7lv.
+        \emph{Result: splits.} The first clause holds cleanly. The rung clause
+        holds for 4lv$\to$7lv ($+0.038 \pm 0.024$: a four-level GELT matches the
+        seven-level classical basis) and \textbf{fails} for thin$\to$4lv
+        ($-0.201 \pm 0.048$: a thin-input GELT does not reach the four-level
+        basis). R1 does not hold as stated.
+  \item[R2 --- an efficient shortcut, not an extension.] \emph{Test:}
+        $\dAzero(x)$ consistent with zero at some resolvable $x$ where the GEVP
+        still has $1-\Azero$ more than $3\sigma$ from zero.
+        \emph{Result: fails.} The traces never meet before saturation.
+  \item[R3 --- an additive advantage.] \emph{Test:} $\dAzero(x)$ consistent with
+        a constant $c > 0$ over the resolvable points, $\chi^2/\text{dof} < 2$
+        and $c > 3\sigma$. \emph{Result: fails,} and informatively. The constant
+        fit gives $c = +0.094 \pm 0.018$ with $\chi^2/\text{dof} = 9.1$: the
+        advantage is not additive, it \emph{shrinks} as the inputs get richer,
+        from $+0.25$ at thin links to $+0.08$ at four smearing levels.
+\end{description}
+
+That none of the three survives unmodified is the honest outcome and is more
+informative than a clean pass would have been. What the data say is a fourth
+statement the pre-registration did not name: the advantage is real at every
+resolvable input depth, it is largest where the classical side is weakest, and
+it decays toward the saturation ceiling rather than persisting as a fixed
+offset. The rung clause splits along the same axis --- worth a whole smearing
+rung at four levels, not worth one at thin links --- which is what one expects
+if the network's contribution and the classical ladder's contribution overlap
+increasingly as the ladder grows. Section~\ref{sec:decomp} measures that overlap
+directly and finds exactly that: $21.1\% \to 12.8\% \to 2.5\%$ of the learned
+operator lies outside the $4$-, $7$- and $21$-operator spans.
+
+\subsection{The width control}
+\label{sec:width}
+
+The seven-level network is wider than the four-level one ($d_{\text{model}}$
+$24$ against $16$), because it was trained with more input channels. A curve
+drawn through both would then confound \emph{input content} with \emph{capacity}
+--- the objection this section exists to answer, reappearing one level down. The
+control is one extra training: the four-level input set at $d_{\text{model}} =
+24$, on both ensembles.
+
+\begin{center}\small
+\begin{tabular}{@{}lcc@{}}
+\toprule
+4lv trained network & run5 & ens1 \\
+\midrule
+$d_{\text{model}} = 16$ (the published Run-5 net) & $0.903(47)$ & $1.013(62)$ \\
+$d_{\text{model}} = 24$ (the curve's point)       & $0.911(51)$ & $1.002(61)$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Width $16 \to 24$ changes nothing on either ensemble. The curve is therefore
+drawn at $d_{\text{model}} = 24$ throughout, so that moving along $x$ changes
+the input content and nothing else, and the published $d_{\text{model}} = 16$
+network becomes the control rather than a point. The $4\text{lv} \to 7\text{lv}$
+gain is input content, not capacity.
+
+\subsection{The random trace}
+\label{sec:randomtrace}
+
+The pre-registered expectation was $\Azero^{\text{random}}(x) \le
+\Azero^{\text{GEVP}}(x)$ at every $x$, with the explicit note that a violation
+anywhere would mean the architecture alone beats the optimal linear combination
+of its own inputs, and that the ``learned'' attribution at that $x$ would then
+rest on trained\,--\,random only.
+
+It holds comfortably at all three points: $0.257$ against $0.407$ at thin links,
+$0.512$ against $0.870$ at four levels, $0.547$ against $0.921$ at seven. An
+untrained GELT is a legitimate gauge-invariant operator --- it has a mass and a
+correlator --- but a distinctly poor one, well below the classical basis built
+from the same configurations, so the advantage in Table~\ref{tab:curve} is
+attributable to training rather than to the architecture alone. This is also the
+first of the two controls \texttt{notes/operator\_decomposition.md} \S5 asked
+for, delivered at three input depths rather than one.
+
+\paragraph{What this does and does not license.} \emph{Does}: ``at every input
+depth this observable can resolve, one learned operator carries more
+ground-state weight than the optimal linear combination of the \emph{same}
+inputs --- $+0.252 \pm 0.056$ on thin links, $+0.075 \pm 0.019$ at four smearing
+levels; the advantage shrinks as the classical side is fed more, and at four
+levels it is worth a whole extra smearing rung while at thin links it is not.''
+\emph{Does not}: extend past 7lv. Above four levels the observable saturates and
+cannot separate the methods further, and no amount of statistics changes that,
+because the ceiling is $\Azero = 1$ and not a noise level. Nor does it license a
+statement about the right-hand end of the chain: the shape-input network was
+never trained (Section~\ref{sec:honesty}), so 7lv+3sh compares a GELT
+\emph{without} loop shapes to a GEVP \emph{with} them, which is a fair reading
+only as long as the figure says so --- it does, with that point drawn as an
+off-chain classical marker and no trained counterpart.
+
+% ==============================================================================
+\section{The decomposition: what did the network find?}
+\label{sec:decomp}
+% ==============================================================================
+
+Sections~\ref{sec:fairfight} and~\ref{sec:curve} establish that the learned
+operator wins, and against what. Neither says what it \emph{is}. This section
+does, using the exact orthogonal split of Section~\ref{sec:innerproduct}, and it
+is where the report spends most of its numbers.
+
+\subsection{The gate, and why it belongs in the report}
+\label{sec:gate}
+
+Before anything else is read, \texttt{operator\_decomposition.py} recomputes the
+published comparison from \emph{its own} code path and prints it beside the
+published values. It reproduces them to the last digit: $\Azero(\text{GELT}) =
+0.9029 \pm 0.0468$ against the GEVP's $0.8374 \pm 0.0555$, $\dAzero = +0.0656
+\pm 0.0306$ on run5 and $+0.0885 \pm 0.0302$ on ens1, $12.89(41)\%$ and
+$11.69(30)\%$ of the norm${}^2$ outside the span, and a combined
+$\dAzero(\text{GELT} - P) = +0.0761 \pm 0.0192$ ($4.0\sigma$). A second gate came
+free when the span became selectable: with \texttt{-{}-basis=\dots:deep} the
+GEVP arm reads $\Azero = 0.9053$ / $0.9390$ and $\dAzero(\text{GELT} -
+\text{GEVP}) = +0.0496$ / $+0.1266$ --- Section~\ref{sec:fairfight}'s truncated
+\arm{deep} row ($0.905/0.939$, $+0.050/+0.127$), reproduced from a script that
+shares no estimator code with \texttt{su2\_fair\_fight.py} beyond the library fit
+routine.
+
+This belongs in the report and not only in the code, because it is the only
+thing standing between a re-analysis and a silent discrepancy. The decomposition
+runs on the same dumps as the fair fight but through different projection,
+whitening and amplitude machinery; a disagreement of a few hundredths would be
+invisible in a table of decomposition results alone, and every conclusion below
+would inherit it. A gate that reproduces two independent published rows before
+printing anything new converts that risk into a precondition, at the cost of one
+extra column of an array the script already has.
+
+\subsection{The main table: one operator against three nested spans}
+\label{sec:spans}
+
+The seven-level trained network is decomposed against three classical spans of
+increasing size, combined over both ensembles. The columns are the three
+statistics the split produces.
+
+\begin{table}[htbp]
+\centering\small
+\caption{The \emph{same} trained seven-level operator against three nested
+classical spans, both ensembles combined inverse-variance. \arm{full} is at the
+script default \texttt{-{}-proj-eps} $=10^{-12}$; the last row repeats it at
+$10^{-4}$, which retains $10$ of the $21$ Gram directions.}
+\label{tab:spans}
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+span & $n_{\text{ops}}$ & norm${}^2$ outside & $Z_r/Z_G$
+     & $\dAzero(\text{GELT} - P)$ \\
+\midrule
+\arm{published} (4lv)   & 4  & $0.2114 \pm 0.0040$ & $0.2293 \pm 0.0094$ & $+0.157 \pm 0.027$ \ $(5.8\sigma)$ \\
+\arm{deep} (7lv)        & 7  & $0.1277 \pm 0.0025$ & $0.1459 \pm 0.0071$ & $+0.097 \pm 0.021$ \ $(4.5\sigma)$ \\
+\arm{full} (7lv+3sh)    & 21 & $0.0251 \pm 0.0005$ & $0.0128 \pm 0.0038$ & $+0.021 \pm 0.009$ \ $(2.3\sigma)$ \\
+\addlinespace
+\arm{full}, $\epsilon = 10^{-4}$ & $21\!\to\!10$ & $0.0452 \pm 0.0010$ & $0.0374 \pm 0.0053$ & $+0.039 \pm 0.013$ \ $(2.9\sigma)$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering\small
+\caption{Per-ensemble detail against \arm{deep}, the input-matched span. The
+last two rows are the statements that matter: dropping $r$ costs the advantage,
+and it does so at unchanged mass.}
+\label{tab:deep}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+against $\spn\{\arm{deep}\}$ & run5 & ens1 \\
+\midrule
+norm${}^2$ fraction outside the span & $0.1273 \pm 0.0037$ & $0.1279 \pm 0.0033$ \\
+$Z_r/Z_G$                            & $0.1287 \pm 0.0121$ & $0.1550 \pm 0.0088$ \\
+$\Azero(P)$ --- best classical approximation of GELT & $0.8836 \pm 0.0578$ & $0.9444 \pm 0.0662$ \\
+$\Azero(r)$ --- the remainder on its own & $0.4612 \pm 0.0697$ & $0.4165 \pm 0.0584$ \\
+$\dAzero(\text{GELT} - P)$, correlated & $+0.0712 \pm 0.0304$ & $+0.1212 \pm 0.0301$ \\
+$\Delta m(\text{GELT} - P)$            & $-0.0092 \pm 0.0133$ & $-0.0099 \pm 0.0142$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{What each column means.}
+
+\emph{The norm${}^2$ fraction outside the span} is $\|r\|^2/\|\OG\|^2$ in the
+metric~\eqref{eq:metric} --- the squared sine of the angle between the learned
+operator and the classical subspace. ``$12.8\%$ outside'' says that writing the
+learned operator as a combination of the seven classical operators as well as
+least squares allows leaves $12.8\%$ of its squared length unaccounted for. It
+involves no fit and no mass, and --- crucially for
+Section~\ref{sec:untrained} --- it says \emph{where the operator points}, not
+whether it is any good.
+
+\emph{$Z_r/Z_G$} is not a norm. It is the share of the \emph{ground-state
+amplitude} carried by the residual, read off the cross-correlator at the fixed
+reference mass (Section~\ref{sec:innerproduct}), so it carries a sign and it
+asks a physical rather than a geometric question: of the operator's coupling to
+the state we want, how much comes from the part the classical basis cannot
+express? The two columns can and do disagree --- that disagreement is the entire
+content of Section~\ref{sec:untrained}.
+
+\emph{$\dAzero(\text{GELT}-P)$} is the sharp statement, and the one to quote. It
+is not ``GELT beats a classical operator''; it is ``deleting from GELT
+everything the classical span can express costs this much ground-state weight''.
+Since $P$ is by construction the best classical approximation available, this is
+a \emph{lower bound} on the advantage over the whole span. The accompanying
+$\Delta m$, consistent with zero on both ensembles at $0.7\sigma$, says the two
+are measuring the same state --- without which the $\Azero$ comparison would be
+meaningless.
+
+\subsection{Two readings that came out sideways}
+\label{sec:sideways}
+
+Two expectations were pre-registered before this measurement, and reporting how
+they landed is more useful than reporting only the numbers.
+
+\paragraph{``A smaller out-of-span fraction than the published $12.9\%/11.7\%$''
+--- not as literally written.} Against \arm{deep}, the seven-level network reads
+$12.7\%$ and $12.8\%$: the same number. At face value that is a strengthened
+span absorbing nothing, which would be a serious problem for the whole study. It
+is not, because the literal comparison mixes two different networks: the
+published $12.9\%/11.7\%$ is the \emph{four-level} network against the
+\emph{four-level} span. The apples-to-apples question --- does a stronger span
+absorb the learned content? --- is one fixed operator against nested spans, and
+there the answer is unambiguous:
+\begin{equation}
+  21.1\% \;\longrightarrow\; 12.8\% \;\longrightarrow\; 2.5\%
+  \qquad (4 \to 7 \to 21 \text{ operators}).
+  \label{eq:nested}
+\end{equation}
+Enlarging the span from four to seven levels absorbs $40\%$ of the learned
+operator's out-of-span norm; adding loop shapes absorbs most of the rest. The
+coincidence of $12.7\%$ with $12.9\%$ is exactly that --- a coincidence between
+two different measurements. What it does reveal, read correctly, is that the
+seven-level network is \emph{further} outside the four-level span ($21.1\%$)
+than the four-level network is ($12.9\%$): richer inputs produce a more distant
+operator. A study that quoted only the headline fraction would have reported the
+same number twice and concluded nothing.
+
+\paragraph{``$\dAzero(\text{GELT}-P)$ positive but below $+0.097$'' --- positive,
+and \emph{at} the bound.} Measured: $+0.0965 \pm 0.0214$, against the fair
+fight's $\dAzero(\text{GELT} - \arm{deep}\ \text{GEVP}) = +0.097 \pm 0.021$. The
+two agree to the third decimal. The expectation was that they would not: $P$ is
+a better classical operator than the GEVP vector, so deleting $r$ should cost
+\emph{less} than losing to the GEVP.
+
+That they coincide is not a coincidence, and the mechanism is visible in
+Table~\ref{tab:deep}: $\Azero(P)$ lands on $\Azero(\text{GEVP})$ on both
+ensembles --- $0.884$ against $0.905$ on run5, $0.944$ against $0.939$ on ens1.
+The least-squares shadow of the learned operator and the variationally optimal
+classical operator are the same quality of interpolator. That is a non-trivial
+internal consistency check: the span really does have a ceiling near
+$\Azero \approx 0.9$, and \emph{the ceiling is a property of the span rather
+than an artifact of how the GEVP picks its vector}. The same check was made at
+four levels in the original study ($0.830$ against $0.837$) and it now holds at
+seven.
+
+\subsection{What $r$ is made of}
+\label{sec:shapespan}
+
+The residual $r$ is orthogonal to $\spn\{\arm{deep}\}$ by construction, but it
+need not be orthogonal to everything classical. Since
+$\spn\{\arm{full}\} \supset \spn\{\arm{deep}\}$ and the extra directions are
+exactly the loop shapes, projecting $r$ onto $\spn\{\arm{full}\}$ isolates how
+much of the learned residual is rectangular Wilson loops:
+\begin{equation}
+  \frac{\|\operatorname{proj}_{\spn\{\arm{full}\}} r\|^2}{\|r\|^2}
+  \;=\; 75.8(4)\%\ \text{(run5)},\quad 81.9(3)\%\ \text{(ens1)},
+  \quad \text{combined } 79.6 \pm 0.3\%.
+  \label{eq:shapefrac}
+\end{equation}
+This number depends on how much of \arm{full}'s near-degenerate span one is
+willing to call real. At the script default the Gram of the $21$-operator span
+is inverted with a relative cut of $10^{-12}$, keeping all $21$ directions and
+giving Eq.~\eqref{eq:shapefrac}. Cutting at $10^{-4}$, which keeps $10$
+directions, gives $55.5(7)\%$ and $60.7(8)\%$.\footnote{Both ends are quoted in
+\texttt{notes/fable5.1\_10-09\_audit.md} \S8.3. That section describes the
+$10^{-4}$ setting as truncating \arm{full} ``to the 10 directions \S8.1's
+estimator keeps''; strictly, the $10$ directions are those of the \emph{$C(0)$
+Gram} of the span under the same $\epsilon$, while \S8.1's estimator keeps $9$
+directions of $C(t_0)$. The two are different matrices, so both counts are
+correct, but they are not the same $10$ and $9$ directions.} The spread is the
+honest error on this statement, and it is larger than the jackknife error: it is
+a systematic of the projection, not of the sample.
+
+The reading, at either end: \textbf{most of what the network found outside the
+smearing ladder is rectangular loops it rediscovered} --- between a half and
+four fifths --- and the remainder, about $2.5\%$ of the operator's total
+norm${}^2$, is content that \emph{no} operator in the $21$-member classical
+basis expresses. That last piece is not negligible: it still carries
+$\dAzero = +0.021 \pm 0.009$ ($2.3\sigma$), consistent with the fair fight's
+independent $\dAzero(\text{GELT} - \arm{full}) = +0.038 \pm 0.027$.
+
+\subsection{The untrained control, and why it is the whole point}
+\label{sec:untrained}
+
+Everything above is compatible with a deflationary explanation: the L1-ball
+parallel transport of the GELT block reaches offsets and path-averages that no
+smeared plaquette contains, so \emph{any} network of this architecture ---
+trained or not --- would sit outside the classical span. If that is the case,
+the norm fraction is a fact about the architecture and carries no evidence of
+learning at all. This was written down as the expectation, in those words,
+before the control ran.
+
+Six untrained seven-level networks (init seeds $0,1,2$ on both ensembles),
+evaluated through the same pipeline against the same \arm{deep} span, with the
+reference mass for the amplitude split taken from the trained network on that
+ensemble ($0.3375$ on run5, $0.3689$ on ens1).
+
+\begin{table}[htbp]
+\centering\small
+\caption{Trained against untrained, same architecture, same inputs, same span,
+same $400$ configurations. Seed $0$'s cosh fit does not converge on either
+ensemble ($m = 1.23 \pm 0.43$ and $0.75 \pm 0.30$ against the trained $0.34$ and
+$0.37$), so it is excluded on a criterion visible without looking at $\dAzero$;
+both combinations are reported.}
+\label{tab:untrained}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+ & trained (7lv) & untrained (4 converged seeds) & untrained (all 6) \\
+\midrule
+norm${}^2$ outside span        & $0.1277 \pm 0.0025$ & $0.2371 \pm 0.0551$ & $0.4036 \pm 0.1220$ \\
+$Z_r/Z_G$                      & $0.1459 \pm 0.0071$ & $0.0474 \pm 0.0220$ & $0.1894 \pm 0.1037$ \\
+$r$ inside $\spn\{\arm{full}\}$& $0.7959 \pm 0.0027$ & $0.0028 \pm 0.0010$ & $0.0042 \pm 0.0010$ \\
+$\dAzero(\text{net} - P)$      & $\mathbf{+0.0965 \pm 0.0214}$ & $\mathbf{-0.0911 \pm 0.0420}$ & $-0.0745 \pm 0.1271$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Per seed, $\dAzero(\text{net}-P) = -0.107(61)$ and $-0.064(35)$ on run5 and
+$-0.197(60)$ and $-0.024(45)$ on ens1 for seeds $1$ and $2$; seed $0$ gives
+$+0.70 \pm 0.91$ and $-0.13 \pm 0.31$, i.e.\ no information in either direction.
+The per-seed out-of-span fractions are $16\%$, $31\%$ and $74\%$ (seeds $2$, $1$,
+$0$), and the two ensembles agree to better than $1\%$ relative on each seed ---
+as they must, since the init seed \emph{is} the network and the ensemble only
+supplies configurations to evaluate it on. Three conclusions follow, the first
+two pre-registered and the third not.
+
+\begin{enumerate}
+  \item \textbf{Being outside the span is architectural.} Untrained networks are
+        $16$--$74\%$ outside, against the trained network's $12.8\%$. Training
+        does not push the operator away from the classical span; it moves it
+        \emph{closer} while making it better. The norm fraction therefore proves
+        nothing about learning, exactly as the pre-registration said it would
+        not, and any write-up that leads with ``$12.9\%$ outside the span'' as
+        evidence of what the network learned is making an unsupported claim.
+  \item \textbf{The discriminating statistic is $Z_r/Z_G$.} Per unit of norm,
+        the trained residual is an order of magnitude more productive:
+        \begin{equation}
+          \frac{Z_r/Z_G}{\sqrt{\|r\|^2/\|\OG\|^2}}
+          \;=\; \frac{0.146}{\sqrt{0.128}} = 0.41
+          \quad\text{trained},
+          \qquad
+          \frac{0.047}{\sqrt{0.237}} = 0.10
+          \quad\text{untrained}.
+        \end{equation}
+        An untrained network has a large out-of-span component that couples to
+        almost nothing; training builds a smaller one that couples strongly.
+  \item \textbf{The sign of $\dAzero(\text{net}-P)$ flips.} For the trained
+        network, deleting the out-of-span part costs the whole advantage,
+        $+0.097 \pm 0.021$. For an untrained one, deleting it \emph{helps}: its
+        own projection onto the classical span is the better operator, by
+        $0.091 \pm 0.042$. This is the cleanest separation in the report,
+        because it is a change of sign rather than of magnitude, and no
+        normalisation convention can produce it.
+\end{enumerate}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.94\textwidth]{operator_decomposition_deep_7lv.png}\\[0.8em]
+\includegraphics[width=0.94\textwidth]{operator_decomposition_deep_7lv_rnd_fitok.png}
+\caption{The decomposition against $\spn\{\arm{deep}\}$. \textbf{Top:} the
+trained seven-level network. Left, the ladder increments of
+Section~\ref{sec:ladder} with the learned operator as a star; right,
+$\rho(\Delta) = [C(\Delta)/C(0)]/\cosh_{\text{ref}}(\Delta)$ for the three
+pieces --- flat means pure, and the excess at small $\Delta$ is excited-state
+contamination. $\OG$ (blue) sits above its own classical shadow $P$ (orange)
+across the whole fit window; $r$ (red) is flat from $\Delta \approx 3$, i.e.\ it
+couples to the same ground state rather than dying with the UV.
+\textbf{Bottom:} two untrained networks (seeds $1$ and $2$; the left panel's two
+stars are their out-of-span fractions, $31\%$ and $16\%$). The ordering in the
+right panel is \emph{inverted} --- the projection $P$ lies above the network's
+own operator --- which is the sign flip of Section~\ref{sec:untrained} drawn
+rather than tabulated. (The bottom-left legend labels both traces ``Run 5''; the
+classical ladder is in fact ensemble-specific and the two curves coincide to
+line width, which is the cosmetic reason they are indistinguishable.)}
+\label{fig:decomp}
+\end{figure}
+
+The third conclusion was not anticipated anywhere and is arguably the strongest
+of the three: \textbf{the residual is loop-shaped only when the network is
+trained.} $80\%$ of the trained $r$ is reachable inside $\spn\{\arm{full}\}$;
+$0.3\%$ of the untrained $r$ is. An untrained equivariant network sits outside
+the classical span in a direction that is outside \emph{everything} classical
+--- some accident of the random transport average, orthogonal to the space
+rectangular Wilson loops span. Training rotates that content onto the part of
+operator space the loops do span, and then keeps a small piece that is not. That
+is a much more specific description of what training does than ``it improves
+$\Azero$''.
+
+\subsection{The mechanism: constructive interference, not a better operator}
+\label{sec:mechanism}
+
+The naive reading of Section~\ref{sec:spans} --- ``the network found a better
+operator hiding outside the basis'' --- is wrong, and the data say so directly.
+On its own, $r$ is a \emph{poor} operator: $\Azero(r) = 0.46$ and $0.42$ on the
+two ensembles, against the full learned operator's $0.95$ and $1.07$
+(Table~\ref{tab:deep}); the published four-level study read $0.43$ and $0.37$.
+It does not win by being good. It wins by adding \emph{coherently}.
+
+The arithmetic is the reason the amplitude split is taken at one fixed mass.
+With $Z_G = Z_P + Z_r$ exactly, removing $r$ removes a fraction
+\begin{equation}
+  1 - \left(1 - \frac{Z_r}{Z_G}\right)^{2}
+  \label{eq:interference}
+\end{equation}
+of the ground-state \emph{intensity}. For the published four-level decomposition
+$Z_r/Z_G = 0.131$, so Eq.~\eqref{eq:interference} gives $24.5\%$ of the intensity
+removed by deleting $12.9\%$ of the norm${}^2$; against \arm{deep},
+$Z_r/Z_G = 0.146$ gives $27\%$ from $12.8\%$ of the norm${}^2$. In both cases
+the amplitude share is about twice what the norm share would suggest, the
+ground-state fraction $\Azero = A/C(0)$ falls accordingly, and that is the whole
+effect. (The numbers are of the right size to account for the observed drops ---
+$0.903 \to 0.830$ at four levels, $0.955 \to 0.884$ at seven --- but are not
+expected to match to three digits, because each arm's $\Azero$ is quoted from
+its own cosh fit rather than from the fixed-mass amplitudes.)
+
+Stated carefully for the thesis: what the network found is a \emph{direction}
+that is mediocre alone and valuable in superposition --- precisely what a
+variational method exists to exploit, and precisely what a basis of four, seven
+or twenty-one hand-built operators cannot reach unless somebody thinks of the
+right operator to add.
+
+\subsection{The scale: the classical ladder's own increments}
+\label{sec:ladder}
+
+The remaining question from Section~\ref{sec:innerproduct} is what $13\%$ means.
+The calibration is the same statistic applied to the classical operators
+themselves: how much new content does each rung of the smearing ladder add to
+the span of the rungs below it?
+
+\begin{center}\small
+\begin{tabular}{@{}lcc@{}}
+\toprule
+addition & run5 & ens1 \\
+\midrule
+APE$\times2$ outside $\spn\{\times0\}$ & $0.6891 \pm 0.0098$ & $0.7049 \pm 0.0084$ \\
+APE$\times4$ outside $\spn\{\times0,2\}$ & $0.1971 \pm 0.0047$ & $0.1957 \pm 0.0043$ \\
+APE$\times6$ outside $\spn\{\times0,2,4\}$ & $0.0486 \pm 0.0014$ & $0.0500 \pm 0.0012$ \\
+APE$\times8$ outside $\spn\{\times0,2,4,6\}$ & $0.0120 \pm 0.0004$ & $0.0124 \pm 0.0003$ \\
+APE$\times12$ outside $\spn\{\times0,\dots,8\}$ & $0.0207 \pm 0.0006$ & $0.0208 \pm 0.0006$ \\
+APE$\times16$ outside $\spn\{\times0,\dots,12\}$ & $0.0098 \pm 0.0003$ & $0.0098 \pm 0.0003$ \\
+\midrule
+\textbf{GELT outside $\spn\{\text{the whole 7-level ladder}\}$}
+  & $\mathbf{0.1273 \pm 0.0037}$ & $\mathbf{0.1279 \pm 0.0033}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Each number replicates across two independently sampled ensembles to the third
+decimal --- these are properties of the operator basis, not of the sample. The
+first three rungs fall by a factor of $3.5$--$4$ each, and the learned
+operator's $12.8\%$ exceeds every increment past the second: a seventh smearing
+level buys $1\%$ of new content, the network buys $13\%$.
+
+\paragraph{One extrapolation is withdrawn.} The original study fitted the decay
+of the first three rungs and extrapolated that the \emph{entire} remaining tail
+of the ladder --- rungs $8$, $12$, $16$ and beyond --- was worth $\approx 2\%$ of
+new content, concluding that ``the classical smearing ladder is a geometric
+series that has essentially converged''. The three rungs have since been
+measured directly and they are $1.20\%$, $2.07\%$, $0.98\%$: a tail worth
+$\approx 4\%$, not $\approx 2\%$, and \textbf{not monotone in the rung index}.
+The non-monotonicity is not noise --- the errors are at the fourth decimal and
+both ensembles show the same rise at $\times12$ --- it is that the ladder's own
+steps are $\Delta2, \Delta4, \Delta4$, so the rungs are not equally spaced and
+the series was never going to be geometric in the rung index. The extrapolation
+is withdrawn; the qualitative reading (the ladder has slowed, the network is not
+on that curve) survives, but ``the ladder has converged'' is too strong. It has
+slowed, and its tail still matters at the percent level that this whole study
+works in.
+
+The same arithmetic underwrote a prediction the decomposition made about the
+fair fight before that fight was readable: \arm{deep} could not close a $13\%$
+gap, because more smearing is the direction the ladder has already converged
+along, and only real loop geometry could move $\Azero$ materially. Both halves
+held --- \arm{deep} leaves $+0.095 \pm 0.021$, and \arm{full} is where the
+movement is --- but the numbers behind the prediction (rungs $8$, $12$, $16$ at
+$1.3\%$, $0.35\%$, $0.1\%$) were too optimistic by the factors above. The
+conclusion was right for a partly wrong reason, and both halves of that should
+be said.
+
+% ==============================================================================
+\section{Honesty section: what these three studies do not settle}
+\label{sec:honesty}
+% ==============================================================================
+
+\paragraph{The pre-registration, and what it bought.} The observable, the
+estimator family, the fit conventions, the measurement grid and the three
+readings with their tests were committed to git before any of the numbers in
+Sections~\ref{sec:fairfight}--\ref{sec:decomp} existed. What that bought is
+narrow: it removes the objection ``the opponent was chosen after the fact''. It
+does \emph{not} make the results stronger than their error bars, and it did not
+stop two of the three readings from failing their own tests. Two limits apply.
+The estimator rule had to be amended (Section~\ref{sec:selection}); the
+amendment is recorded with its reason and the four-setting table shows it moves
+nothing, but an amended rule is weaker than an unamended one. And the
+decomposition study was originally written \emph{after} its own first
+measurement --- its window and metric were inherited rather than chosen, both
+are scanned rather than reported at one setting, and the two ensembles were
+analysed with identical code and agree, none of which is as good as
+pre-registration and should not be described as if it were. The two
+\emph{controls} in that section \emph{were} pre-registered, before they ran.
+
+\paragraph{The seven-level network is a reactive point.} It was trained
+\emph{after} the \arm{deep} arm was seen to win on the run5 ensemble. The
+classical arms themselves were named before the fair fight ran and that pedigree
+is real, but the network at the right-hand end of the main chain was a response
+to a number. The thesis must say so where it quotes the seven-level numbers.
+Everything else on the curve --- the thin retrain, the width control, the random
+trace, the estimator and the readings --- was fixed before its numbers existed.
+
+\paragraph{Two expectations came out sideways}, and both are in
+Section~\ref{sec:sideways} rather than smoothed over: the out-of-span fraction
+against the strengthened span did not shrink as literally predicted (it is the
+same number, for a reason that turns out to be about comparing two different
+networks), and $\dAzero(\text{GELT}-P)$ landed \emph{at} the bound rather than
+below it (for a reason that is an internal consistency check in disguise). A
+write-up that reported only the numbers would have lost both.
+
+\paragraph{Saturation, a compressed observable, and $\Azero > 1$.}
+$\Azero \le 1$ and every strong arm reads $0.90$--$1.07$. The 7lv point is
+excluded from the curve's tests on that basis, and --- less comfortably --- the
+whole of Section~\ref{sec:shapesverdict} is read off arms inside the saturation
+band, so ``loop shapes close about $60\%$ of the gap'' is a ratio of two small
+differences near a ceiling: the right qualitative reading, and not a number to
+quote with an error bar. Relatedly, the learned operator reads
+$\Azero = 1.013 \pm 0.062$ at four levels and $1.066 \pm 0.059$ at seven on ens1.
+That is a fit artifact of a nearly pure operator, not a probability violation
+(Section~\ref{sec:a0}); it is inherited from the published table, not made worse
+here, and reported unclipped so that $1 - \Azero$ keeps its sign in every
+difference. The thesis should say so once rather than leave a reader to notice
+it.
+
+\paragraph{The contact-term test does not survive a longer ladder.} The original
+study repeated the whole decomposition under the metrics $C_{ab}(\tau)$ for
+$\tau = 1, 2$, which weight the light states more heavily: a contact term --- UV
+content living in $C(0)$ and gone by $\Delta = 2$ --- must \emph{shrink} as
+$\tau$ grows. On the four-operator span it \emph{grew} ($0.129 \to 0.156 \to
+0.197$ on run5), which is the opposite of a contact term and is corroborated by
+$\rho(\Delta)$ for $r$ being flat from $\Delta \approx 3$
+(Figure~\ref{fig:decomp}, top right). That test does not transfer. On
+$\spn\{\arm{deep}\}$ the $C(2)$ Gram has $\lambda_{\min} = -2.9\times10^{-5}$
+and on $\spn\{\arm{full}\}$ it is $-0.73$: $C(\tau)$ is then not an inner
+product on those spans, the ``projection'' is undefined, and the jackknife error
+duly explodes (to $\pm 383$ on run5). The script now checks the spectrum and
+prints \texttt{NOT USABLE} beside the row rather than a number. \textbf{The
+contact-term conclusion stands only where it was measured} --- the four-operator
+span, where $C(1)$ and $C(2)$ are positive definite --- and is not restated for
+the longer ladders.
+
+\paragraph{The shape-span fraction depends on the projection cut.} $80\%$ at
+\texttt{-{}-proj-eps} $=10^{-12}$ and $58\%$ at $10^{-4}$
+(Section~\ref{sec:shapespan}). The $21$-operator span's $C(0)$ Gram has
+condition number $6.9\times10^{8}$, so a cut is unavoidable; which value is
+``right'' is a judgement about how much of a near-degenerate span is real. Both
+ends are quoted everywhere the number appears. Nothing in the \arm{deep}
+decomposition moves with this cut ($0.1273 \to 0.1276$ and $+0.0712 \to +0.0717$
+from $10^{-12}$ to $10^{-4}$); only the shape fraction does.
+
+\paragraph{One untrained seed is excluded.} Seed $0$'s cosh fit does not
+converge on either ensemble ($m = 1.23 \pm 0.43$ and $0.75 \pm 0.30$ against the
+trained $0.34$ and $0.37$; $\Azero = 1.02 \pm 0.89$ and $0.37 \pm 0.25$). It is
+excluded on a criterion --- ``the fit did not converge'' --- visible without
+looking at $\dAzero$, which is the only kind of exclusion that is safe here, and
+\emph{both} combinations appear in Table~\ref{tab:untrained}. Including it does
+not change the sign of $\dAzero(\text{net}-P)$; it inflates the error threefold,
+which is what an unconverged fit should do.
+
+\paragraph{The right-hand end of the curve is not matched, and one point is off
+width.} The shape-input network was never trained, so the 7lv+3sh point compares
+a GELT \emph{without} loop shapes to a GEVP \emph{with} them; the figure draws
+it as an off-chain classical marker with no trained counterpart, and the fair
+fight's $\dAzero(\arm{full}) = +0.038 \pm 0.027$ is the number that reading
+rests on (closing it is Section~\ref{sec:next}, item~5). Separately, the
+untrained trace at 4lv is at $d_{\text{model}} = 16$ rather than the curve's
+$24$; six eval-only runs would fix it, and no reading depends on it, since that
+trace is far below the classical arm at every $x$ and the width control
+(Section~\ref{sec:width}) finds the two widths indistinguishable.
+
+\paragraph{One theory, one lattice family, one architecture.} $SU(2)$,
+$12^3\times24$, $\beta = 2.4$, $\xi = 3$, receptive radius $R = 2$, the Run-5
+hyperparameters, the $0^{++}$ channel. There is no continuum limit here and none
+is claimed. Every statement in this report is about \emph{this} learned operator
+against \emph{these} classical bases on \emph{these} two ensembles.
+
+% ==============================================================================
+\section{What to do next, and why}
+\label{sec:next}
+% ==============================================================================
+
+The items below are ranked by value per unit of cost, and each is stated as what
+it measures, why the results above make it the right next thing, what it costs,
+and what it would license.
+
+\paragraph{1. The excited-state gate (laptop, minutes, offline).} Every
+statement in this report is compressed against the $\Azero \le 1$ ceiling
+(Section~\ref{sec:honesty}), and the only way past it is a harder observable ---
+the obvious candidate being the first excited state, with the network emitting a
+\emph{vector} of operators and a GEVP run on the learned pair. Before any
+training code is written, one question must be answered: does a classical
+comparator for such a basis exist on these ensembles at all? That is a pass/fail
+test costing minutes, offline, from the tracked
+\texttt{dumps/su2\_fair\_fight\_obars\_run5.pt}: solve the GEVP over
+$\spn\{\arm{deep}\}$, read the \emph{second} eigenvalue's effective mass at
+$\Delta = 1$ and $2$ under a delete-block jackknife, and pass only if the two
+agree within $1\sigma$ with the $\Delta=2$ error below $25\%$ on at least one
+ensemble. If it fails the option closes for free; if it passes, the design is
+already fixed ($\texttt{mlp\_out} = 2$, loss $-\Tr[(C(0)+\varepsilon)^{-1}C(1)]$
+over the learned $2\times2$ block, which by Ky Fan is maximised at
+$e^{-m_1}+e^{-m_2}$ and penalises collapse onto two copies because $C(0)$ goes
+singular). The cheapest item in the plan, and the only one gating a training
+run.
+
+\paragraph{2. Write the thesis text (no compute).} Every number the
+spectroscopy chapter was waiting on now exists. Concretely: the single
+``$+0.078 \pm 0.022$'' sentence becomes the curve statement of
+Section~\ref{sec:readings}, with the four-level number kept as the first result
+and the input-matched $+0.095 \pm 0.021$ as the headline; the overlap table
+becomes the per-$x$ table; and the fair fight and the decomposition, which the
+thesis does not currently mention at all, get a paragraph each. The
+decomposition paragraph can now say \emph{learned} --- but on $Z_r/Z_G$ and the
+sign flip of Section~\ref{sec:untrained}, never on the norm fraction, which the
+untrained control shows to be architectural. This is the highest-value item that
+costs nothing but writing, and doing it before the next measurement is what
+keeps the measurements honest.
+
+\paragraph{3. Fix the $\mathbb{Z}_2$ smearing ($\approx12$\,h GPU).} The one
+live defect in the repository. At the production $\alpha = \tfrac12$ the APE
+update for two spatial staples is $V = (1-\alpha)U + (\alpha/2)(s_1+s_2)$, which
+is exactly $0$ whenever the two staples disagree with the link --- and
+$\mathbb{Z}_2$'s projection sends $0 \to +1$, a value that does not transform
+under a gauge transformation. Measured on production configurations the ladder
+freezes after one step, $99.9\%$ of the changed links are gauge-dependent
+tie-breaks, and the timeslice operator moves by $1.82\sigma$ under a gauge
+transformation. The consequence for the tables in the attention report is that
+the $\mathbb{Z}_2$ classical basis is \emph{one} operator and not four (the
+dumps already record \texttt{gevp\_fell\_back=True, n\_ops=1}), and the
+$\mathbb{Z}_2$ networks were trained on four channels of which three are
+byte-identical. The fix is unprojected fat links --- linear in the links, hence
+exactly covariant --- with the cheap first step being to evaluate the existing
+checkpoints on covariant inputs before retraining anything. $SU(2)$ is verified
+clean at $1.4\times10^{-15}$, so nothing in \emph{this} report is affected; the
+next item, however, depends on it.
+
+\paragraph{4. Dump per-configuration $\Obar$ from the $\mathbb{Z}_2$ attention
+script (small code change).} The tooling built for Section~\ref{sec:decomp} ---
+selectable spans, the shape-span projection, the fixed reference mass, the
+untrained control --- is generic: it takes per-config $\Obar$ arrays and a
+classical basis, and the attention field is exactly such an operator. Dumping
+those arrays transports the whole analysis to the attention field with no GPU
+re-run, turning ``the attention field has a mass and a good overlap'' into
+``here is the part of it the classical basis cannot express''. The catch is item
+3: until the $\mathbb{Z}_2$ smearing is fixed that classical span is
+\emph{one-dimensional}, and a decomposition against a one-dimensional span is
+not worth running. Sequence the two together, in this order.
+
+\paragraph{5. Train a shape-input network (2 trainings).} Optional before
+Section~\ref{sec:shapespan}, this is now the direct test of its main finding. If
+$80\%$ of what the network found outside the smearing ladder is rectangular
+loops it rediscovered, handing it loop shapes as input channels should let it
+spend its capacity elsewhere --- and the prediction is sharp: the out-of-span
+fraction against $\spn\{\arm{full}\}$ need not simply drop, since the network is
+now \emph{given} the directions it previously had to build. It also closes the
+unmatched right-hand end of the curve (Section~\ref{sec:honesty}). Cost:
+cubic-symmetrised matrix-valued $R\times T$ loops as extra adjoint channels,
+about a day of code, then two trainings of roughly eight hours each.
+
+\paragraph{6. The $SU(2)$ $\beta$-scan of the attention field ($\approx6$\,h
+GPU, zero code).} The attention report's $SU(2)$ row is a single coupling,
+because $\beta = 2.4$ is the only one with a trained network, and the script
+refuses to print aggregates below three couplings rather than emit a meaningless
+correlation. Sampling four more ensembles and evaluating the existing network
+off-diagonal turns that row into a scan, making the $\xi_A$ claim in $SU(2)$ the
+same kind of statement it already is in $\mathbb{Z}_2$. Pure GPU filler with no
+code to write --- and it must not share the GPU with a training, which is the
+only reason it is not higher.
+
+\paragraph{7. The matched-parameter L-CNN ($2$ trainings, plus a model switch).}
+The one baseline the thesis names and has never run. The argument for attention
+currently rests on beating a \emph{non}-equivariant CNN, which is a weak
+opponent for the same reason \arm{published} was: it is not the thing a
+practitioner would build. \texttt{gelt/lcnn.py} already mirrors GELT's I/O, so
+the change is a model switch and axis-aligned transports in place of the L1-ball
+average. The right presentation is not a standalone number but a \emph{fourth
+trace} on Figure~\ref{fig:curve}: the same $\Azero(x)$ for a matched-parameter
+L-CNN. The pre-registered expectation is parity with GELT --- the smeared inputs
+hand both networks the staple content, and at matched depth the loop degree is
+the same --- and parity is the honest form of ``attention costs nothing, and the
+attention field is a measurement a convolution cannot produce''.
+
+% ==============================================================================
+\section{Conclusions}
+\label{sec:conclusions}
+% ==============================================================================
+
+One number, $\dAzero = +0.078 \pm 0.022$, has been replaced by three answers to
+three different questions, all measured offline on the same held-out
+configurations under conventions fixed in advance.
+
+\begin{itemize}
+  \item \textbf{The comparator was under-powered, and strengthening it does not
+        overturn the claim.} Against the input-matched seven-level ladder the
+        learned operator leads by $+0.095 \pm 0.021$; against the strongest
+        $21$-operator basis the repository builds, by $+0.038 \pm 0.027$. Loop
+        shapes --- not more smearing --- close most of the gap, as the
+        decomposition predicted before that arm was readable. Reading it at all
+        required truncating the whitening rather than flooring it, and the
+        pre-registered selection rule had to be amended, because two arms fail a
+        gate the GEVP at $t_0 = 1$ does not guarantee: the projection maximises
+        $C(2)/C(1)$ while the gate tests $C(2)/C(0)$.
+  \item \textbf{The advantage is training, not architecture, and not merely
+        richer inputs.} At every input depth the observable can resolve, one
+        learned operator carries more ground-state weight than the optimal
+        linear combination of the \emph{same} inputs: $+0.252 \pm 0.056$ on thin
+        links, $+0.075 \pm 0.019$ at four smearing levels. An untrained network
+        of identical architecture sits \emph{below} the classical GEVP at every
+        point, and a width control shows $16 \to 24$ channels changes nothing.
+        None of the three pre-registered readings survives its own test
+        unmodified; the honest fourth statement is that the gap is largest where
+        the classical basis is weakest and decays toward the saturation
+        ceiling.
+  \item \textbf{What the network found is a mediocre direction that is valuable
+        in superposition, and it is mostly loop shapes.} The same operator lies
+        $21.1\%$, $12.8\%$ and $2.5\%$ outside the $4$-, $7$- and
+        $21$-dimensional classical spans; deleting the out-of-span part costs
+        the entire advantage ($+0.097 \pm 0.021$ against the strong span, at
+        unchanged mass); $80\%$ of it is rectangular Wilson loops the network
+        rediscovered, leaving $\approx2.5\%$ of the operator's norm that no
+        member of a $21$-operator basis expresses and that still carries
+        $+0.021 \pm 0.009$. Alone the residual is a poor operator
+        ($\Azero \approx 0.42$--$0.46$): it wins by constructive interference,
+        carrying about twice the amplitude share its norm share would
+        suggest.
+  \item \textbf{The control decides which of those statistics means
+        ``learned''.} An untrained network is $16$--$74\%$ outside the same span
+        --- further out than the trained one --- so the norm fraction is
+        architectural and carries no evidence of learning. Training moves the
+        operator \emph{closer} to the classical span while making it better.
+        What separates learned from architectural is the amplitude share
+        ($Z_r/Z_G = 0.146$ against $0.047$, or $0.41$ against $0.10$ per unit of
+        norm), the fact that the residual becomes loop-shaped at all ($80\%$
+        against $0.3\%$ inside the richer span), and above all the sign of
+        $\dAzero(\text{net}-P)$, which is $+0.097 \pm 0.021$ trained and
+        $-0.091 \pm 0.042$ untrained: for a trained network, deleting the
+        out-of-span content costs the advantage; for an untrained one, deleting
+        it helps.
+\end{itemize}
+
+What remains is a ceiling rather than a missing measurement. Every strong arm on
+these ensembles reads $\Azero \ge 0.90$ against a bound of $1$, so the
+differences that separate the methods are being measured in the last tenth of
+the available range, and no number of configurations changes that. The next real
+step is a harder observable --- the first excited state, gated by a test that
+costs minutes --- rather than a better estimator for this one.
+
+\vfill
+\footnotesize
+\noindent\textbf{Reproducing the numbers.} All three studies are offline, CPU,
+and read only files tracked in \texttt{dumps/}. The figures live under
+\texttt{results/}, which is gitignored but regenerable in minutes:
+Figure~\ref{fig:fairfight} from
+\texttt{SFF\_TRUNCATE=1 SFF\_BASES=1 python scripts/su2\_fair\_fight.py <dump>},
+Figure~\ref{fig:curve} from \texttt{python scripts/input\_architecture\_curve.py}
+(which also writes Table~\ref{tab:curve} as a paste-ready \texttt{.tex}
+fragment), and both panels of Figure~\ref{fig:decomp} from
+\texttt{python scripts/operator\_decomposition.py} with
+\texttt{-{}-basis=<obars>:deep}, \texttt{-{}-shape-span=<obars>:full} and, for
+the untrained arm, \texttt{-{}-m-ref=<trained mass>}. The source of truth for
+every number quoted here is \texttt{notes/fable5.1\_10-09\_audit.md}
+(\S1--\S2 pre-registration, \S8.1 estimator and shape verdict, \S8.2 curve,
+\S8.3 decomposition and controls) and
+\texttt{notes/operator\_decomposition.md} (\S2 theory, \S4 published results,
+\S5 controls, \S6.1 the withdrawn extrapolation, \S7 limitations).
+
+\end{document}
