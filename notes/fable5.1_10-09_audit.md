@@ -746,14 +746,23 @@ C(2)/C(0) 0.430 vs 0.490 under truncation). So the fallback is the right call
 for an A₀ comparison, but the gate is a theorem only at t0 = 0 (the `_project`
 docstring now says so), and no whitening change can make these two arms pass.
 
-**Deviation — proposed 2026-09-10, pending the user's confirmation.** Apply
-the rule to the arms on the curve's main chain (`thin`, `published`, `deep`,
-`full`); `shapes` is not on the curve, and `shapes_sm` is the off-chain point,
-reported with its ens1 fallback flagged. Among the settings that pass for those
-arms, take the least invasive one that removes `full`'s null directions (cond
-C(t0) = ∞ under the floor): **(b), truncate at eps 1e-4, no pruning.** The
-choice moves no conclusion: every combined number above is stable across
-(a)–(d) to ≤ 0.01, well inside its error.
+**Deviation — adopted 2026-09-12** (proposed 2026-09-10; the user delegated
+the choice after seeing that it moves nothing). The rule is amended to run over
+the arms on the curve's main chain (`thin`, `published`, `deep`, `full`);
+`shapes` is not on the curve, and `shapes_sm` is the off-chain point, reported
+with its ens1 fallback flagged. Among the settings that pass for those arms,
+take the least invasive one that removes `full`'s null directions (cond
+C(t0) = ∞ under the floor): **(b), truncate at eps 1e-4, no pruning
+(`SFF_TRUNCATE=1`), used for every point of the curve.** The choice moves no
+conclusion: every combined number above is stable across (a)–(d) to ≤ 0.01,
+well inside its error, and `published` — the arm every published number rests
+on — is identical to three decimals under all four.
+
+Why the amendment and not a different estimator: the two arms that fail do so
+because of what the GEVP optimises at t0 = 1, not because of the whitening, so
+no setting in the (a)–(d) family can rescue them, and a rule that no setting
+satisfies cannot select one. What is *not* amended: the gate stays, both failing
+arms keep their fallback, and both are reported rather than dropped.
 
 **Verdict on loop shapes — the question audit §6.5 left open.** `full` is
 readable. Truncation leaves a 9-dimensional GEVP that passes both gates on both
@@ -838,8 +847,8 @@ while at thin links it is not (−0.201 ± 0.048). Above four levels the observa
 saturates and cannot separate the methods further.
 
 **Deviations from §1–§2, with reasons.**
-1. The estimator is §8.1's (b); the pre-registered selection rule had no answer
-   (§8.1). **Still pending the user's confirmation.**
+1. The estimator is §8.1's (b), truncation at eps 1e-4 — adopted 2026-09-12
+   after the pre-registered selection rule turned out to have no answer (§8.1).
 2. `curve_batch.sh` runs the random evals *before* the trainings — they
    exercise the new artifact naming in minutes rather than after a day.
 3. The width control was run on **both** ensembles, not only run5, so it
