@@ -89,10 +89,13 @@ supportable.
 
 **The two audits.** (i) *Is the classical comparator a straw man?* Against the
 input-matched strengthened arm (`deep`), the spectroscopy claim survives:
-ΔA₀ = +0.097 ± 0.021 (4.6σ) combined. Two other arms (`full`, `shapes_sm`) are
-numerically unusable — singular `C(t0)` on both ensembles — so "does real
-loop-shape variety close the gap?" is **open**, not closed
-(`notes/audit_2026-09-06.md` §6.5). (ii) *What did the network find?* 12.9%/11.7%
+ΔA₀ = +0.097 ± 0.021 (4.6σ) combined. "Does real loop-shape variety close the
+gap?" is **answered** (`notes/fable5.1_10-09_audit.md` §8.1, superseding
+`notes/audit_2026-09-06.md` §6.5): dropping C(t0)'s near-null directions
+instead of flooring them makes `full` readable, and loop shapes close about 60%
+of the gap and leave a 1–2σ edge, ΔA₀ = +0.038 ± 0.027. `shapes` and
+`shapes_sm` still fall back on ens1, for a reason no whitening can fix — the
+GEVP at t0 = 1 maximises C(2)/C(1) while the gate tests C(2)/C(0). (ii) *What did the network find?* 12.9%/11.7%
 of `O_GELT`'s norm² lies outside the span of the whole classical basis on two
 ensembles, and removing it costs the entire advantage — ΔA₀ = +0.076 ± 0.019
 (4.0σ) at unchanged mass. Not a contact term. `r` alone is a poor operator
@@ -416,9 +419,9 @@ Ranked in `notes/audit_2026-09-06.md` §4, and unchanged by the cleanup:
    `tests/test_glueball.py`. Changing the Z₂ inputs needs a retrain for a clean
    end-to-end statement; evaluating existing checkpoints on covariant inputs is
    the cheap robustness check first.
-3. **Prune near-degenerate operators before the GEVP** so the `full`/`shapes_sm`
-   arms become readable and "does loop-shape variety close the gap?" gets an
-   answer. Not a bigger `GEVP_EPS` floor.
+3. ~~Prune near-degenerate operators before the GEVP~~ — **done differently**
+   2026-09-10: truncated whitening (`SFF_TRUNCATE=1`), not pruning, made `full`
+   readable; pruning moves nothing (`notes/fable5.1_10-09_audit.md` §8.1).
 4. **Dump per-config Ō from `z2_attention_correlator.py`** so the decomposition
    transports to the attention field without a GPU re-run.
 5. **The matched-parameter L-CNN shootout** on the per-timeslice glueball task —
