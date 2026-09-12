@@ -776,6 +776,80 @@ Two statements of audit §6.5 do not survive this:
 Saturation (§1.3): `deep` and `full` are at A₀ ≥ 0.90 on both ensembles, so this
 verdict is read off a compressed observable, and says so.
 
+### 8.2 WP2–WP5b — the curve (2026-09-12)
+
+Inputs: the 26 dumps in `dumps/` (the 22 from the V100 batch of 2026-09-11,
+plus the four that already existed), one fair-fight run each under §8.1's
+setting (b), then `scripts/input_architecture_curve.py`. All offline: the 26
+runs take 73 s on the laptop, the curve script seconds.
+
+**The trainings** (`curve_batch.sh`, best val Rayleigh loss): thin run5
+−0.4291, thin ens1 −0.4062 — near Run 4's −0.43, as expected for thin links;
+width control (4lv at d_model 24) run5 −0.6173, ens1 −0.5606, against the
+d_model 16 nets' −0.62 / −0.5638. **Widening the 4-level net does nothing.**
+
+**A₀ per point** (classical = the GEVP over the same input content; random =
+mean over init seeds 0,1,2 with §1.4's error rule):
+
+    x      ens     classical        trained          random           ΔA₀ (correlated)
+    thin   run5    0.390(60)        0.651(77)        0.249(62)        +0.261 ± 0.063
+    thin   ens1    0.484(128)       0.706(73)        0.280(109)       +0.221 ± 0.117
+    4lv    run5    0.837(56)        0.903(47)        0.497(175)       +0.066 ± 0.031
+    4lv    ens1    0.925(71)        1.013(62)        0.532(198)       +0.089 ± 0.030
+    7lv    run5    0.905(62)        0.955(57)        0.730(343)       +0.050 ± 0.033
+    7lv    ens1    0.939(65)        1.066(59)        0.512(148)       +0.127 ± 0.027
+
+    combined:  thin +0.252 ± 0.056 (4.5σ) | 4lv +0.077 ± 0.022 (3.6σ)
+               7lv  +0.095 ± 0.021 (4.5σ, saturated)
+
+**The three readings, by their own tests.** Resolvable: thin (classical A₀ =
+0.407) and 4lv (0.870). Saturated and therefore excluded: 7lv (0.921).
+
+- **R1 — does not hold as stated.** Its first clause does: ΔA₀ > 2σ at every
+  resolvable x. Its rung clause splits — 4lv→7lv **holds** (+0.039 ± 0.025,
+  i.e. a 4-level GELT matches the 7-level classical basis), thin→4lv **fails**
+  (−0.201 ± 0.048, a thin-input GELT does not reach the 4-level basis).
+- **R2 — does not hold.** The traces never meet before saturation.
+- **R3 — does not hold.** A constant fit gives c = +0.100 ± 0.020 with
+  χ²/dof = 8.6: the advantage is not additive, it *shrinks* as the inputs get
+  richer (+0.25 at thin → +0.08 at 4lv).
+- **The random trace** is below the classical GEVP at every x (0.257 vs 0.407;
+  0.512 vs 0.870; 0.547 vs 0.921), the expected case of §1.2, so the advantage
+  is attributable to training and not to the architecture alone. This is the
+  control `notes/operator_decomposition.md` §5 asked for, at three input depths.
+
+**What the curve licenses, stated as it will go into the thesis.** At every
+input depth this observable can resolve, one learned operator carries more
+ground-state weight than the optimal linear combination of the *same* inputs:
++0.252 ± 0.056 on thin links, +0.077 ± 0.022 at four smearing levels. The
+advantage shrinks as the classical side is fed more, and at four levels it is
+worth a whole extra smearing rung (GELT(4lv) − GEVP(7lv) = +0.039 ± 0.025),
+while at thin links it is not (−0.201 ± 0.048). Above four levels the observable
+saturates and cannot separate the methods further.
+
+**The width confound is closed** (§6.4 of `audit_2026-09-06.md` raised it): at
+4lv, width 24 reads 0.911(51) against width 16's 0.903(47) on run5 and
+1.002(61) against 1.013(62) on ens1. The 4lv → 7lv gain is input content, not
+capacity.
+
+**Deviations from §1–§2, with reasons.**
+1. The estimator is §8.1's (b); the pre-registered selection rule had no answer
+   (§8.1). **Still pending the user's confirmation.**
+2. `curve_batch.sh` runs the random evals *before* the trainings — they
+   exercise the new artifact naming in minutes rather than after a day.
+3. The width control was run on **both** ensembles, not only run5, so it
+   combines like every other point. Cost: one extra training.
+4. The V100 lost its GPU mid-batch on 2026-09-11 and `thin_ens1` silently fell
+   back to the CPU; it was killed and retrained on the GPU. No measurement is
+   affected. The batch now refuses to run without CUDA and skips finished
+   phases.
+5. WP6 (a shape-input GELT) was not run, so the right end of the curve compares
+   a GELT without loop shapes to a GEVP with them — §8.1's `full` row, and the
+   figure says so.
+
+**Artifacts.** `results/fair_fight/input_architecture_curve.{png,pt,tex}`, from
+tracked inputs only.
+
 ---
 
 ## 9. Superseded: the first-pass ranking (2026-09-10, earlier the same day)

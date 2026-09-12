@@ -10,6 +10,13 @@ artifacts, so they travel with the repo instead:
 - `best_glueball_gelt_sm0-2-4-6-8-12-16_test_obars.pt`      — the 7-level net, run5
 - `best_glueball_gelt_sm0-2-4-6-8-12-16_ens1_test_obars.pt` — the 7-level net, ens1
 
+- `best_glueball_gelt_d24{,_ens1}_p5_test_obars.pt`,
+  `best_glueball_gelt_sm0-2-4-6_d24{,_ens1}_p5_test_obars.pt` — the thin points
+  and the width control of the curve (2026-09-11 batch).
+- `best_glueball_gelt*_rnd{0,1,2}_test_obars.pt` — 18 **untrained** nets, three
+  init seeds at each of the three input depths on both ensembles: the curve's
+  architecture-only trace. `meta["random_init"]` is True and there is no
+  training loss (`best_val_loss` is inf).
 - `su2_fair_fight_obars_run5.pt`, `su2_fair_fight_obars_ens1.pt` — every
   classical arm's Ō series on each ensemble's 400 test configurations
   (`published`, `deep`, `shapes`, `shapes_sm`, `full`), copied from the V100's

@@ -233,6 +233,13 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   `SFF_TRUNCATE=1` / `SFF_PRUNE=<ρ>` are the estimator knobs of
   `notes/fable5.1_10-09_audit.md` WP1; `thin` is the curve's one-operator arm.
   A single-dump run writes `su2_fair_fight_<dump stem>[_trunc][_prune<ρ>].pt`.
+- **`input_architecture_curve.py`** — A₀ against *input content* for three
+  traces (classical GEVP, trained GELT, untrained GELT), assembled offline from
+  one `su2_fair_fight.py` output per dump; prints the pre-registered readings of
+  `notes/fable5.1_10-09_audit.md` §1.2 and writes
+  `results/fair_fight/input_architecture_curve.{png,pt,tex}`. Its V100 half is
+  `curve_batch.sh` (untrained evals, the thin points, the width control), which
+  refuses to run without CUDA and skips phases whose dump exists.
 - **`operator_decomposition.py`** — `O_GELT = P + r` in the exact Hilbert-space
   metric `C_ab(0)`, offline from the `dumps/` Ō arrays. Prints the published
   comparison first as a gate.
@@ -370,6 +377,7 @@ python scripts/fit_glueball_overlap.py [dump]      # cosh fits + A₀ (offline)
 bash   scripts/overnight_replication.sh      # fresh ensemble + retraining (~24 h)
 bash   scripts/curve_batch.sh                # the curve's random trace + 3 trainings
 python scripts/operator_decomposition.py     # O = P + r (offline, seconds)
+python scripts/input_architecture_curve.py   # A₀ vs input content (offline, seconds)
 SFF_NOCACHE=1 python scripts/su2_fair_fight.py     # reproduce ΔA₀ offline
 python scripts/z2_beta_scan.py               # Z₂ classical mass vs β
 Z2G_R=6 Z2G_N_USE=800 python scripts/train_z2_glueball.py 0.756

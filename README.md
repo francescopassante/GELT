@@ -48,6 +48,7 @@ Two audits of the above, neither of which main.tex quotes:
 |---|---|
 | Is the classical comparator a straw man? | *offline:* `SFF_NOCACHE=1 python scripts/su2_fair_fight.py` reproduces the published ΔA₀; drop the flag (and give it the SU(2) ensemble) for the strengthened `deep` / `shapes` / `full` arms. Verdict in `notes/audit_2026-09-06.md` §6.4/§6.5 |
 | Did the network find operator content the classical basis cannot express? | *offline:* `python scripts/operator_decomposition.py` — 12.9% of the norm² outside the span, ΔA₀ = +0.076 ± 0.019 (4.0σ). `notes/operator_decomposition.md` |
+| Is the advantage the architecture, or just richer inputs? | *GPU, ~1.5 days:* `bash scripts/curve_batch.sh` (3 trained points + the untrained trace), then *offline:* one `SFF_TRUNCATE=1 SFF_BASES=1 python scripts/su2_fair_fight.py <dump>` per dump and `python scripts/input_architecture_curve.py`. A₀ against input content for classical / trained / untrained. Verdict in `notes/fable5.1_10-09_audit.md` §8.2 |
 
 **Known caveat that touches the Z₂ table.** Projected Z₂ APE smearing has no
 tunable radius at any α, and at the production `SMEAR_ALPHA = 0.5` it is not
@@ -96,6 +97,8 @@ CLAUDE.md              module-by-module detail, conventions, status, caveats
 | `check_gelt_invariance.py` | sixty-second gauge-invariance check on the full model |
 | `train_cnn.py`, `train_gelt.py`, `train_lcnn.py` | per-site Wilson-loop regression: CNN, GELT, L-CNN |
 | `check_glueball_autocorrelation.py` | τ_int of the smeared operator — sets the production `n_skip` |
+| `curve_batch.sh` | the V100 batch behind the curve: the untrained trace, the thin points, the width control |
+| `input_architecture_curve.py` | assembles the per-dump fair fights into A₀(x), the figure, the LaTeX table and the pre-registered tests |
 | `measure_glueball.py` | classical 0⁺⁺ baseline: correlator, GEVP m_eff, ensemble cache |
 | `train_glueball.py` | GELT as a variational operator on the Rayleigh loss |
 | `fit_glueball_overlap.py` | cosh fits, overlap A₀, correlated (Δm, ΔA₀) — offline |
