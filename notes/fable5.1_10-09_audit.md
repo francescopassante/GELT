@@ -876,6 +876,138 @@ saturates and cannot separate the methods further.
 **Artifacts.** `results/fair_fight/input_architecture_curve.{png,pt,tex}`, from
 tracked inputs only.
 
+### 8.3 WP5a — the decomposition against the strong arm, with the untrained control (2026-09-12)
+
+Inputs: the two 7-level trained dumps and the six untrained 7-level dumps in
+`dumps/`, plus `dumps/su2_fair_fight_obars_{run5,ens1}.pt`. All offline, minutes
+on the laptop. `scripts/operator_decomposition.py` gained `--basis=<obars>:<arm>`,
+`--shape-span=<obars>:<arm>`, `--m-ref=<float>` (each repeatable, one value per
+dump, so both ensembles combine inside one run), `--proj-eps` and `--out-tag`.
+
+**The gate passes.** Without `--basis` the script reproduces the published
+numbers to the last digit: 12.89(41)% / 11.69(30)% out of span, ΔA₀(GELT − P)
+= +0.0761 ± 0.0192 (4.0σ). A second gate came for free: with `--basis=…:deep`
+the GEVP arm reads A₀ = 0.9053 / 0.9390 and ΔA₀(GELT − GEVP) = +0.0496 / +0.1266,
+i.e. §8.1's truncated `deep` row (0.905 / 0.939, +0.050 / +0.127) reproduced from
+an independent code path.
+
+**The same operator against three spans.** The published 12.9% / 11.7% belongs
+to the *4-level* nets against the 4-level span; the apples-to-apples reading of
+"does a stronger span absorb the learned content?" is one net against nested
+spans. For the 7-level trained net (combined over both ensembles):
+
+    span              n_ops  norm² outside      Z_r/Z_G          ΔA₀(GELT − P)
+    published (4lv)     4    0.2114 ± 0.0040   0.2293 ± 0.0094   +0.157 ± 0.027 (5.8σ)
+    deep (7lv)          7    0.1277 ± 0.0025   0.1459 ± 0.0071   +0.097 ± 0.021 (4.5σ)
+    full (7lv+3sh)     21    0.0251 ± 0.0005   0.0128 ± 0.0038   +0.021 ± 0.009 (2.3σ)
+    full, eps 1e-4     21→10 0.0452 ± 0.0010   0.0374 ± 0.0053   +0.039 ± 0.013 (2.9σ)
+
+Per ensemble against `deep`: out-of-span 0.1273(37) / 0.1279(33), Z_r/Z_G
+0.1287(121) / 0.1550(88), A₀(P) 0.884(58) / 0.944(66), A₀(r) 0.461(70) /
+0.417(58), ΔA₀(GELT − P) +0.0712(304) / +0.1212(301), Δm −0.009(13) / −0.010(14).
+
+**Against the pre-registered expectations** (§3 WP5a, fixed before the numbers):
+
+- *"a smaller out-of-span fraction than 12.9% / 11.7%"* — **not** as literally
+  written: against `deep` the 7-level net reads 12.7% / 12.8%, the same number.
+  As a statement about spans it holds and holds strongly: the *same* net goes
+  21.1% → 12.8% → 2.5% as the span grows from 4 to 7 to 21 operators. The
+  literal comparison mixed two different networks, and the 7-level net is
+  further outside the 4-level span (21%) than the 4-level net is (12.9%) —
+  richer inputs, a more distant operator.
+- *"ΔA₀(GELT − P) positive but below +0.097"* — positive, and **at** the bound
+  rather than below it: +0.0965 ± 0.0214 against +0.097 ± 0.021. The two are the
+  same number to the third decimal, which is not a coincidence: A₀(P) lands on
+  A₀(GEVP) on both ensembles (0.884 vs 0.905; 0.944 vs 0.939), i.e. the span's
+  ceiling is a property of the span and not of how the GEVP picks its vector —
+  the same internal check `notes/operator_decomposition.md` §4 makes for the
+  4-level basis, now at 7 levels.
+
+**The out-of-span content is loop shapes.** `--shape-span=…:full` projects the
+residual `r` (⟂ span{deep}) onto span{full} ⊇ span{deep}; what lands inside is
+exactly the loop-shape directions. **75.8(4)% / 81.9(3)%** of `r`'s norm² does,
+combined 79.6 ± 0.3%. Truncating `full` to the 10 directions §8.1's estimator
+keeps, 55.5(7)% / 60.7(8)%. So the answer to "is this rectangular loops the
+network rediscovered, or something no planar loop expresses?" is: **mostly
+rediscovered loops** — between a half and four fifths, depending on how much of
+`full`'s near-degenerate span one is willing to call real — and the rest,
+~2.5% of the operator's norm², is what no operator in the 21-member classical
+basis expresses. That last piece still carries ΔA₀ = +0.021 ± 0.009 (2.3σ),
+consistent with §8.1's ΔA₀(GELT − `full` GEVP) = +0.038 ± 0.027.
+
+**The untrained control.** Six eval-only 7-level nets (init seeds 0, 1, 2 on
+both ensembles), same span, `--m-ref` fixed to the trained net's mass on that
+ensemble (0.3375 run5, 0.3689 ens1). Seed 0's cosh fit does not converge on
+either ensemble — m = 1.23 ± 0.43 and 0.75 ± 0.30 against the trained 0.34 /
+0.37, A₀ = 1.02 ± 0.89 and 0.37 ± 0.25 — so it is quoted but excluded from the
+combination on a criterion visible without looking at ΔA₀. The four converged
+seeds, combined under §1.4's rule (seed spread or mean error, whichever is
+larger, then inverse-variance over ensembles):
+
+                        trained (7lv)      untrained (4 seeds)   untrained (all 6)
+    norm² outside span  0.1277 ± 0.0025    0.2371 ± 0.0551       0.4036 ± 0.1220
+    Z_r/Z_G             0.1459 ± 0.0071    0.0474 ± 0.0220       0.1894 ± 0.1037
+    r inside span{full} 0.7959 ± 0.0027    0.0028 ± 0.0010       0.0042 ± 0.0010
+    ΔA₀(net − P)       +0.0965 ± 0.0214   −0.0911 ± 0.0420      −0.0745 ± 0.1271
+
+Per seed, ΔA₀(net − P) = −0.107(61), −0.064(35) on run5 and −0.197(60),
+−0.024(45) on ens1; seed 0 gives +0.70 ± 0.91 and −0.13 ± 0.31, i.e. no
+information either way. **The sign flips**, which is what the control was for:
+for the trained net, deleting the out-of-span part costs the whole advantage;
+for an untrained net, deleting it *helps* — its own projection onto the
+classical span is the better operator, by 0.09 ± 0.04.
+
+Three readings follow, and the first two were pre-registered in
+`notes/operator_decomposition.md` §5:
+
+1. **Being outside the span is architectural.** The untrained nets are 16%,
+   31%, 74% outside (per seed 2, 1, 0; the two ensembles agree to better than
+   1% relative on each seed, as they must — the init seed *is* the network)
+   against the trained 12.8%.
+   Training moves the operator **closer** to the classical span while making it
+   better. The norm fraction alone therefore proves nothing about learning, as
+   §5 said it would not.
+2. **The discriminating statistic is Z_r/Z_G**, again as §5 predicted. Per unit
+   of norm the trained residual is an order of magnitude more productive:
+   Z_r / √(norm² fraction) = 0.41 trained against 0.10 untrained.
+3. **New, and stronger than either:** `r` is loop shapes only when the network
+   is trained. 80% of the trained residual is reachable inside span{full};
+   0.3% of the untrained residual is. An untrained equivariant net is outside
+   the classical span in a direction that is outside *everything* classical;
+   training rotates the out-of-span content onto the part of operator space
+   that rectangular Wilson loops span, and then keeps a small piece that is not.
+
+**Deviations from §1–§3, with reasons.**
+1. The `C(τ>0)` contact-term test does not survive the move to a longer ladder:
+   `deep`'s C(2) Gram has λ_min = −2.9e-5 and `full`'s −0.73, so C(τ) is not an
+   inner product on those spans and the "projection" is undefined (the jackknife
+   error explodes to ±383 on run5). The script now checks the spectrum and
+   prints `NOT USABLE` beside the row instead of the number alone. The
+   contact-term conclusion stands where it was measured — the 4-operator span,
+   where C(1) and C(2) are positive definite — and is not restated here.
+2. `--proj-eps` (relative eigenvalue cut on the C(0) Gram of the span, default
+   1e-12) was added because `full`'s Gram has cond 7e8. Nothing in the `deep`
+   decomposition moves with it (0.1273 → 0.1276 and +0.0712 → +0.0717 from 1e-12
+   to 1e-4); the shape-span fraction does, and both ends are quoted above.
+3. `--m-ref`, `--basis` and `--shape-span` are repeatable rather than scalar, so
+   one invocation covers both ensembles (each with its own obars cache and its
+   own reference mass) and the combination is done by the script rather than by
+   hand.
+4. The seed-average uses §1.4's random-trace rule, and seed 0 is excluded from
+   the combination for a failed cosh fit, with both combinations reported.
+
+**Artifacts** (all under `results/glueball/`, gitignored, regenerable in
+minutes): `operator_decomposition{,_deep_7lv,_published_7lv,_full_7lv_eps1e-12,
+_full_7lv_eps1e-4,_deep_7lv_rnd,_deep_7lv_rnd_fitok}.{png,pt}`.
+
+    python scripts/operator_decomposition.py \
+      dumps/best_glueball_gelt_sm0-2-4-6-8-12-16{,_ens1}_test_obars.pt \
+      --basis=dumps/su2_fair_fight_obars_run5.pt:deep \
+      --basis=dumps/su2_fair_fight_obars_ens1.pt:deep \
+      --shape-span=dumps/su2_fair_fight_obars_run5.pt:full \
+      --shape-span=dumps/su2_fair_fight_obars_ens1.pt:full \
+      --out-tag=_deep_7lv
+
 ---
 
 ## 9. Superseded: the first-pass ranking (2026-09-10, earlier the same day)

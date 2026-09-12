@@ -42,7 +42,8 @@ or "removed in the 2026-09-09 cleanup", that is where it went.
   does not, the three arms, the Z₂ result (§6.1) and its transport to SU(2) (§9).
   §8 records why the scan has four β and not five.
 - `notes/operator_decomposition.md` — `O_GELT = P + r` against the classical
-  span: what the network found, and the two controls the study does not have.
+  span: what the network found, and (§5, 2026-09-12) the two controls it was
+  missing — the strengthened spans and the untrained network.
 - `notes/audit_2026-09-06.md` — the repo audit: the **Z₂ APE smearing defect**
   (§2, live caveat), the fair-fight results and the corrections they forced
   (§6.4/§6.5), the ranked plan (§4, re-ranked after the cleanup).
@@ -95,7 +96,14 @@ loop-shape variety close the gap?" is **open**, not closed
 of `O_GELT`'s norm² lies outside the span of the whole classical basis on two
 ensembles, and removing it costs the entire advantage — ΔA₀ = +0.076 ± 0.019
 (4.0σ) at unchanged mass. Not a contact term. `r` alone is a poor operator
-(A₀ = 0.43) that wins by constructive interference.
+(A₀ = 0.43) that wins by constructive interference. Both controls have since
+run (`notes/fable5.1_10-09_audit.md` §8.3): against the strong `deep` arm the
+7-level net is 12.8% outside with ΔA₀(GELT − P) = +0.097 ± 0.021, against the
+21-operator `full` arm 2.5% and +0.021 ± 0.009; 80% of the residual is
+rectangular loops the network rediscovered. **Untrained nets are further
+outside the span (16–74%) than the trained one**, so the norm fraction is
+architectural — what is learned is `Z_r/Z_G` (0.146 vs 0.047) and the sign of
+ΔA₀(net − P), which flips to −0.091 ± 0.042 without training.
 
 ## Layout
 
@@ -242,7 +250,14 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   refuses to run without CUDA and skips phases whose dump exists.
 - **`operator_decomposition.py`** — `O_GELT = P + r` in the exact Hilbert-space
   metric `C_ab(0)`, offline from the `dumps/` Ō arrays. Prints the published
-  comparison first as a gate.
+  comparison first as a gate. `--basis=<obars.pt>:<arm>` swaps the span for a
+  fair-fight arm (`deep`, `full`, …; the GEVP arm then uses §8.1's truncated
+  whitening, and the ladder increments are skipped for a non-nested arm),
+  `--shape-span=<obars.pt>:<arm>` projects the residual `r` onto a richer span,
+  `--m-ref=<float>` fixes the reference mass for the amplitude split (needed for
+  an untrained net, whose own cosh fit does not converge). All three are
+  repeatable — one value, or one per dump — so both ensembles combine in one
+  run; `--proj-eps` cuts the span's Gram, `--out-tag` names the artifacts.
 - **`profile_glueball_step.py`** — where one optimizer step goes, per stage,
   forward **and backward** separately. It goes through
   `train_glueball.config_inputs`, i.e. the pipeline the training loop actually
@@ -394,8 +409,9 @@ pytest tests
 
 Ranked in `notes/audit_2026-09-06.md` §4, and unchanged by the cleanup:
 
-1. **The random-init control for the operator decomposition** — one GPU eval
-   pass, no training; it is what separates *learned* from *architectural*.
+1. ~~The random-init control for the operator decomposition~~ — **done**
+   2026-09-12 from the curve's untrained dumps, no new GPU time
+   (`notes/fable5.1_10-09_audit.md` §8.3).
 2. **Fix the Z₂ smearing** (caveat 1) and add the α = 0.5 covariance case to
    `tests/test_glueball.py`. Changing the Z₂ inputs needs a retrain for a clean
    end-to-end statement; evaluating existing checkpoints on covariant inputs is

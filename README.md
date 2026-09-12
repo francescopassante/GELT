@@ -47,7 +47,7 @@ Two audits of the above, neither of which main.tex quotes:
 | question | how |
 |---|---|
 | Is the classical comparator a straw man? | *offline:* `SFF_NOCACHE=1 python scripts/su2_fair_fight.py` reproduces the published ΔA₀; drop the flag (and give it the SU(2) ensemble) for the strengthened `deep` / `shapes` / `full` arms. Verdict in `notes/audit_2026-09-06.md` §6.4/§6.5 |
-| Did the network find operator content the classical basis cannot express? | *offline:* `python scripts/operator_decomposition.py` — 12.9% of the norm² outside the span, ΔA₀ = +0.076 ± 0.019 (4.0σ). `notes/operator_decomposition.md` |
+| Did the network find operator content the classical basis cannot express? | *offline:* `python scripts/operator_decomposition.py` — 12.9% of the norm² outside the published span, ΔA₀ = +0.076 ± 0.019 (4.0σ). Add `--basis=dumps/su2_fair_fight_obars_run5.pt:deep` for the strong arm (+0.097 ± 0.021) and `--shape-span=…:full` for what `r` is made of (80% rectangular loops); `--m-ref` runs the untrained control, where ΔA₀ flips sign. `notes/operator_decomposition.md` |
 | Is the advantage the architecture, or just richer inputs? | *GPU, ~1.5 days:* `bash scripts/curve_batch.sh` (3 trained points + the untrained trace), then *offline:* one `SFF_TRUNCATE=1 SFF_BASES=1 python scripts/su2_fair_fight.py <dump>` per dump and `python scripts/input_architecture_curve.py`. A₀ against input content for classical / trained / untrained. Verdict in `notes/fable5.1_10-09_audit.md` §8.2 |
 
 **Known caveat that touches the Z₂ table.** Projected Z₂ APE smearing has no
@@ -103,7 +103,7 @@ CLAUDE.md              module-by-module detail, conventions, status, caveats
 | `train_glueball.py` | GELT as a variational operator on the Rayleigh loss |
 | `fit_glueball_overlap.py` | cosh fits, overlap A₀, correlated (Δm, ΔA₀) — offline |
 | `overnight_replication.sh` | fresh ensemble + from-scratch training, unattended |
-| `operator_decomposition.py` | O_GELT = P + r against the classical span — offline |
+| `operator_decomposition.py` | O_GELT = P + r against the classical span, any fair-fight arm — offline |
 | `su2_fair_fight.py` | the strengthened classical arms — is the comparator fair? |
 | `z2_beta_scan.py` | 3D Z₂ classical mass vs β: the ensembles and the reference ξ |
 | `train_z2_glueball.py` | one variational operator per β, 3D Z₂ |

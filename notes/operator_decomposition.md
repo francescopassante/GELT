@@ -11,6 +11,12 @@ answer, and that has to be said out loud rather than hidden behind a clean table
 Script: `scripts/operator_decomposition.py` (offline, CPU, seconds).
 Figure/dump: `results/glueball/operator_decomposition.{png,pt}`.
 
+§4 is the original study against the published four-level basis. §5 is the two
+controls it was missing — the strengthened classical spans and the untrained
+network — run on 2026-09-12 as WP5a of `notes/fable5.1_10-09_audit.md` (§8.3
+there has the tables and the commands), with `--basis`, `--shape-span` and
+`--m-ref`.
+
 ---
 
 ## 1. The question §6.2 leaves open
@@ -195,6 +201,11 @@ This is the sentence the study exists to license:
 its own operator's norm, so summing them is dimensionally loose. It is quoted as
 an order of magnitude and nothing turns on the second digit.)
 
+**Withdrawn 2026-09-12, §6.1.** Rungs 8, 12 and 16 have since been measured
+directly — 1.20%, 2.07%, 0.98% — so the tail is worth ≈ 4%, not ≈ 2%, and it is
+not monotone in the rung index (the ladder's steps are Δ2, Δ4, Δ4). The
+qualitative reading survives, the extrapolation does not.
+
 ### It is not a contact term
 
 The out-of-span fraction under the `C(τ)` metric:
@@ -228,29 +239,99 @@ inherited one, not the best one — [1, 6] would give a larger significance and 
 *not* quoted, because Δ = 1 is where the classical arm's residual contamination
 sits and `fit_glueball_overlap.py` excludes it for that reason.
 
-## 5. Two controls this does NOT have
+## 5. The two controls — run 2026-09-12
 
-Both are stated up front because the numbers above must be read with them
-attached, and neither can be run from a dump.
+Both were stated here as missing, with a pre-registered expectation for each,
+before either had been measured. They were run as WP5a of
+`notes/fable5.1_10-09_audit.md`; that note's §8.3 has the full tables and the
+commands. The original text of this section is kept below the results, because
+what it predicted is half the value of having run them.
 
-1. **A random-init GELT.** If an untrained network is *also* ≈ 13% outside the
-   span, then being outside is **architectural** — the L1-ball transport reaches
-   offsets and path-averages that no smeared plaquette contains — rather than
-   learned. The norm fraction would then be a fact about the architecture and the
-   *learned* claim would rest entirely on `Z_r/Z_G` and `ΔA₀`, which is a weaker
-   but still real statement. This is one GPU eval pass with no training
-   (`GLUEBALL_EVAL_ONLY` against an untrained checkpoint) and it is the single
-   highest-value follow-up in the repo. **Pre-registered here, before running
-   it:** the honest expectation is that a random net *is* substantially outside
-   the span (the transport guarantees it) but carries far less of `Z`, so the
-   discriminating statistic is `Z_r/Z_G`, not the norm fraction. If the random
-   net matches on both, the study reduces to a statement about the architecture
-   and must be reported that way.
+**Control 2 — a stronger classical span.** The same 7-level trained net against
+three nested spans, combined over both ensembles:
 
-2. **A stronger classical span.** This decomposes against the *published*
-   four-level basis. `scripts/su2_fair_fight.py` already builds the strengthened
-   ones (`deep` = more smearing levels, `shapes` = cubic-symmetrised R×T loops,
-   `full` = both). The decomposition belongs there too, against `full`.
+| span | n_ops | norm² outside | Z_r/Z_G | ΔA₀(GELT − P) |
+|---|---|---|---|---|
+| `published` (4 smearing levels) | 4 | 0.2114 ± 0.0040 | 0.2293 ± 0.0094 | +0.157 ± 0.027 |
+| `deep` (7 levels) | 7 | 0.1277 ± 0.0025 | 0.1459 ± 0.0071 | +0.097 ± 0.021 |
+| `full` (7 levels × 3 loop shapes) | 21 | 0.0251 ± 0.0005 | 0.0128 ± 0.0038 | +0.021 ± 0.009 |
+
+The advantage survives against the strongest classical span the repo builds,
+and shrinks as that span grows — 4.5σ against `deep`, 2.3σ against `full`.
+A₀(P) again lands on A₀(GEVP) (0.884 vs 0.905 on run5; 0.944 vs 0.939 on ens1),
+so §4's internal check holds at 7 levels too.
+
+**Where the out-of-span content lives.** Projecting `r` (⟂ span{`deep`}) onto
+span{`full`} — which contains span{`deep`} — isolates the loop-shape
+directions: **79.6 ± 0.3%** of `r`'s norm² lands inside (75.8% / 81.9% per
+ensemble; 55.5% / 60.7% if `full` is truncated to the 10 directions the audit's
+estimator keeps). Most of what the network found outside the smearing ladder is
+rectangular Wilson loops it rediscovered; ~2.5% of the operator's norm² is
+outside the whole 21-member basis, and that piece still carries
+ΔA₀ = +0.021 ± 0.009.
+
+**Control 1 — a random-init GELT.** Six untrained 7-level nets (init seeds 0,
+1, 2 on both ensembles), same `deep` span, the amplitude split read against the
+trained net's mass on that ensemble. Seed 0's cosh fit does not converge on
+either ensemble (m = 1.23 ± 0.43 and 0.75 ± 0.30 against the trained 0.34 /
+0.37) and is excluded from the combination; both combinations are quoted.
+
+| | trained | untrained (4 converged seeds) | untrained (all 6) |
+|---|---|---|---|
+| norm² outside span | 0.1277 ± 0.0025 | 0.2371 ± 0.0551 | 0.4036 ± 0.1220 |
+| `Z_r/Z_G` | 0.1459 ± 0.0071 | 0.0474 ± 0.0220 | 0.1894 ± 0.1037 |
+| `r` inside span{`full`} | 0.7959 ± 0.0027 | 0.0028 ± 0.0010 | 0.0042 ± 0.0010 |
+| ΔA₀(net − P) | **+0.0965 ± 0.0214** | **−0.0911 ± 0.0420** | −0.0745 ± 0.1271 |
+
+**The expectation below was right, and the control is decisive.** Being outside
+the span *is* architectural: the untrained nets are 16%, 31% and 74% outside
+(seeds 2, 1, 0), against the trained net's 12.8% — training moves the operator
+*closer* to the classical span while making it better. So the norm fraction
+carries no evidence of learning, exactly as predicted, and the learned claim
+rests on the other two statistics, both of which separate cleanly:
+
+- `Z_r/Z_G` is 0.146 trained against 0.047 untrained, i.e. per unit of norm the
+  trained residual is an order of magnitude more productive
+  (`Z_r/√(norm² fraction)` = 0.41 against 0.10).
+- **ΔA₀(net − P) changes sign.** For the trained net, deleting the out-of-span
+  part costs the whole advantage; for an untrained net, deleting it *helps* —
+  its own projection onto the classical span is the better operator, by
+  0.09 ± 0.04. That flip is what separates *learned* from *architectural*.
+- A third statistic, not anticipated here: the untrained residual is not loop
+  shapes. 80% of the trained `r` is reachable inside span{`full`}; 0.3% of the
+  untrained `r` is. An untrained equivariant net sits outside the classical span
+  in a direction outside *everything* classical; training rotates that content
+  onto the part of operator space rectangular loops span, and keeps a small
+  piece that is not.
+
+### 5.1 The original text, kept — what was pre-registered
+
+> Both are stated up front because the numbers above must be read with them
+> attached, and neither can be run from a dump.
+>
+> 1. **A random-init GELT.** If an untrained network is *also* ≈ 13% outside the
+>    span, then being outside is **architectural** — the L1-ball transport reaches
+>    offsets and path-averages that no smeared plaquette contains — rather than
+>    learned. The norm fraction would then be a fact about the architecture and the
+>    *learned* claim would rest entirely on `Z_r/Z_G` and `ΔA₀`, which is a weaker
+>    but still real statement. This is one GPU eval pass with no training
+>    (`GLUEBALL_EVAL_ONLY` against an untrained checkpoint) and it is the single
+>    highest-value follow-up in the repo. **Pre-registered here, before running
+>    it:** the honest expectation is that a random net *is* substantially outside
+>    the span (the transport guarantees it) but carries far less of `Z`, so the
+>    discriminating statistic is `Z_r/Z_G`, not the norm fraction. If the random
+>    net matches on both, the study reduces to a statement about the architecture
+>    and must be reported that way.
+>
+> 2. **A stronger classical span.** This decomposes against the *published*
+>    four-level basis. `scripts/su2_fair_fight.py` already builds the strengthened
+>    ones (`deep` = more smearing levels, `shapes` = cubic-symmetrised R×T loops,
+>    `full` = both). The decomposition belongs there too, against `full`.
+
+The prediction in the first control was met in every clause: the random net is
+substantially outside the span (more so than the trained one), it carries far
+less `Z`, and `Z_r/Z_G` is the statistic that discriminates. It did not match on
+both, so the study is not reduced to a statement about the architecture.
 
 ## 6. A prediction the fair fight will test
 
@@ -269,6 +350,29 @@ If `deep` closes the gap anyway, this note's reading is wrong and the norm-based
 scale argument must be withdrawn: new *norm* content and new *useful* content
 would have come apart, and only the latter matters.
 
+### 6.1 Verdict (2026-09-12) — the prediction holds, its arithmetic does not
+
+Both halves were measured, the fair fight in `notes/fable5.1_10-09_audit.md`
+§8.1 and the decomposition against the strong arms in its §8.3.
+
+- **`deep` does not close the gap.** ΔA₀(GELT − `deep` GEVP) = +0.095 ± 0.021
+  (4.5σ), and the 7-level net is still 12.8% outside span{`deep`}. The
+  prediction's conclusion stands.
+- **`shapes` is where the movement is**, also as predicted: `full` (levels ×
+  shapes) takes the out-of-span fraction to 2.5% and ΔA₀(GELT − GEVP) to
+  +0.038 ± 0.027, and 80% of the residual against `deep` lies inside
+  span{`full`} — the out-of-span content is largely rectangular loops.
+- **The geometric extrapolation was too optimistic and is withdrawn.** It put
+  rungs 8, 12, 16 at ≈ 1.3%, 0.35%, 0.1% of new content; measured, they are
+  1.20(4)%, 2.07(6)%, 0.98(3)% on run5 and 1.24(3)%, 2.08(6)%, 0.98(3)% on
+  ens1 — a tail worth ≈ 4%, not ≈ 2%, and not monotone (the ladder's own steps
+  are Δ2, Δ4, Δ4, so the rungs are not equally spaced and the series was never
+  going to be geometric in the rung index). Concretely, enlarging the span from
+  4 to 7 levels absorbs 40% of the learned operator's out-of-span norm
+  (21.1% → 12.8%). "The ladder has converged" is therefore too strong: it has
+  slowed, and the tail still matters at the percent level that this study
+  works in.
+
 ## 7. Known limitations, stated up front
 
 - **Not pre-registered.** The measurement was run before this note was written.
@@ -280,8 +384,9 @@ would have come apart, and only the latter matters.
 - **One theory, one lattice family, one architecture.** SU(2), 12³×24, β = 2.4,
   ξ = 3, R = 2, the Run-5 hyperparameters. The statement is about *this* learned
   operator against *this* classical basis.
-- **The classical basis is the published one**, with the two controls of §5
-  outstanding.
+- **The classical basis is the published one** for §4's numbers. Both controls
+  of §5 have since been run (2026-09-12): §5 carries the decomposition against
+  `deep` and `full` and the untrained-network arm.
 - **`A₀ > 1` on ens1** (1.013 ± 0.062). That is a fit artifact, not a
   probability violation — A₀ is a ratio of a fitted amplitude to a measured
   C(0) and can exceed 1 within errors when the operator is nearly pure. It is
@@ -298,12 +403,21 @@ would have come apart, and only the latter matters.
   ensembles; it carries 13–14% of the ground-state amplitude; removing it costs
   the whole A₀ advantage (ΔA₀ = +0.076 ± 0.019, 4.0σ combined) at unchanged mass;
   and the classical ladder's own increments (0.69 → 0.20 → 0.05) show the basis
-  is saturating while the network's contribution is not on that curve.
+  is saturating while the network's contribution is not on that curve — with
+  §6.1's correction to how fast the tail actually falls.
 - **Do** report the mechanism honestly: `r` is a *poor* operator alone
   (A₀ = 0.43) that wins by constructive interference, not a better operator
   hiding outside the basis.
-- **Do not** yet claim the out-of-span content is *learned* — §5 control 1 is
-  what separates learned from architectural, and it has not been run.
+- **Do** claim the out-of-span content is *learned* (since 2026-09-12) — but
+  on the right statistic. Being outside the span is architectural: untrained
+  nets are 16–74% outside against the trained net's 12.8%, so the norm fraction
+  is no evidence of learning. What is learned is `Z_r/Z_G` (0.146 against
+  0.047), the sign of ΔA₀(net − P) (+0.097 ± 0.021 trained, −0.091 ± 0.042
+  untrained), and the fact that the trained residual is 80% expressible by
+  rectangular loops while the untrained residual is 0.3%. See §5.
+- **Do** report that the advantage survives the strongest classical span in the
+  repo: ΔA₀(GELT − P) = +0.097 ± 0.021 against `deep` (7 smearing levels) and
+  +0.021 ± 0.009 against `full` (21 operators, levels × loop shapes).
 - **Do not** quote `ΔA₀(GELT − P)` as replacing the published
   `ΔA₀(GELT − GEVP)`. They answer different questions and the paper should carry
   both: the GEVP difference is the comparison against the standard method, the
