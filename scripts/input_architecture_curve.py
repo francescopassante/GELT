@@ -48,6 +48,11 @@ import numpy as np  # noqa: E402
 import torch  # noqa: E402
 
 EST = os.environ.get("CURVE_EST", "_trunc")  # estimator suffix of the inputs
+# The curve is drawn at ONE architecture width, so that moving along x changes
+# the input content and nothing else; d_model 24 is the only width trained at
+# every x (thin, the 4lv width control, 7lv). A net at another width is kept as
+# the width control and drawn apart, never averaged into the trace.
+WIDTH = int(os.environ.get("CURVE_WIDTH", 24))
 OUT = "results/fair_fight/input_architecture_curve"
 SATURATED = 0.90  # combined classical A₀ at or above which a point is excluded
 
@@ -81,6 +86,10 @@ def manifest():
         if not os.path.exists(res):
             print(f"  missing fair-fight output, skipped: {res}")
             continue
+        # The two 7-level nets predate the d_model field in the meta (and the
+        # _d tag in their names): they are width 24, as they must be — the
+        # residual stream cannot be narrower than 3·n_levels = 21 input channels.
+        width = meta.get("d_model") or (24 if 3 * len(lv) > 16 else 16)
         rnd = bool(meta.get("random_init", False))
         m = re.search(r"_rnd(\d+)", stem)
         out.append({
@@ -88,7 +97,7 @@ def manifest():
             "ens": "ens1" if meta.get("ensemble_seed", 0) == 1 else "run5",
             "trace": "random" if rnd else "trained",
             "seed": int(m.group(1)) if m else int(meta.get("init_seed", 0)),
-            "width": meta.get("d_model", 16),
+            "width": width,
             "row": torch.load(res, weights_only=False)["rows"][0],
         })
     return out
@@ -132,13 +141,16 @@ def collect(man):
                 if off in row0["arms"]:
                     pts.setdefault((name, ens), {})["classical"] = (
                         row0["arms"][off]["A0"], row0["arms"][off]["A0_err"])
-            # The trained point of the curve is the net at this x whose width
-            # follows §1.4's policy; a second width at the same x is the width
-            # control (WP3) and is carried separately, never averaged in.
+            # The trained point of the curve is the net at WIDTH; any other
+            # width at the same x is the width control (WP3), carried separately
+            # and never averaged in.
             trained = sorted([e for e in here if e["trace"] == "trained"],
-                             key=lambda e: e["width"])
+                             key=lambda e: (e["width"] != WIDTH, e["width"]))
             if trained:
                 main = trained[0]
+                if main["width"] != WIDTH:
+                    print(f"  no width-{WIDTH} trained net at {x}/{ens} — using "
+                          f"d_model {main['width']}")
                 a = main["row"]["arms"]["gelt"]
                 d["trained"] = (a["A0"], a["A0_err"])
                 d["width"] = main["width"]
@@ -149,10 +161,15 @@ def collect(man):
                 for extra in trained[1:]:
                     e2 = extra["row"]["arms"]["gelt"]
                     d["width_control"] = (extra["width"], e2["A0"], e2["A0_err"])
+                    d["width_control_A0"] = (e2["A0"], e2["A0_err"])
             rnd = [e for e in here if e["trace"] == "random"]
+            at_width = [e for e in rnd if e["width"] == WIDTH]
+            if at_width and len(at_width) != len(rnd):
+                rnd = at_width  # same rule as the trained trace
             if rnd:
                 d["random"] = random_point(rnd)
                 d["n_seeds"] = len(rnd)
+                d["random_width"] = rnd[0]["width"]
     return pts
 
 
@@ -222,64 +239,73 @@ def readings(pts):
 
 
 def figure(pts, comb, delta, resolvable):
+    """Two panels, each a single combined point per x — the ensembles are
+    inverse-variance combined here and kept separately in the table. Two
+    overlapping ensembles per trace made the earlier version unreadable, and
+    every test in :func:`readings` is run on the combined value anyway."""
     chain = list(CHAIN)
-    fig, ax = plt.subplots(1, 2, figsize=(13, 5.2))
+    fig, ax = plt.subplots(1, 2, figsize=(12.5, 5.0))
     for a in ax:
         a.grid(alpha=0.25, lw=0.6)
         a.set_axisbelow(True)
         a.set_xticks(range(len(chain)), chain)
         a.set_xlabel("input content handed to both methods")
 
+    def comb_of(x, key):
+        v = [pts[(x, e)][key] for e in ENSEMBLES
+             if (x, e) in pts and key in pts[(x, e)]]
+        return combine(v) if v else None
+
     a = ax[0]
     a.axhspan(SATURATED, 1.15, color="#bbb", alpha=0.25, zorder=0)
-    a.text(0.02, SATURATED + 0.005, "saturated — excluded from the tests",
+    a.text(0.02, SATURATED + 0.006, "saturated — excluded from the tests",
            fontsize=8, color="#555", transform=a.get_yaxis_transform())
-    for trace in ("classical", "trained", "random"):
-        for j, ens in enumerate(ENSEMBLES):
-            xs = [i for i, x in enumerate(chain) if (x, ens) in pts and trace in pts[(x, ens)]]
-            v = [pts[(chain[i], ens)][trace] for i in xs]
-            a.errorbar([i + 0.03 * j for i in xs], [q[0] for q in v], yerr=[q[1] for q in v],
-                       fmt="o-" if j == 0 else "s--", ms=7, capsize=3, lw=1.4,
-                       color=COLOR[trace], alpha=0.95 if j == 0 else 0.6,
-                       label=f"{trace} ({ens})")
-    for i, x in enumerate(chain):  # the width control, where it exists
-        for ens in ENSEMBLES:
-            wc = pts.get((x, ens), {}).get("width_control")
-            if wc:
-                a.errorbar([i + 0.12], [wc[1]], yerr=[wc[2]], fmt="*", ms=13,
-                           color=COLOR["trained"], mfc="none",
-                           label=f"trained, width {wc[0]} (control)")
-    for name, off in OFFCHAIN.items():  # classical-only points, off the chain
-        for j, ens in enumerate(ENSEMBLES):
-            p = pts.get((name, ens), {}).get("classical")
-            if p:
-                i = chain.index("4lv" if name.startswith("4lv") else "7lv")
-                a.errorbar([i + 0.22 + 0.06 * j], [p[0]], yerr=[p[1]], fmt="^", ms=8,
-                           color=COLOR["classical"], mfc="none", alpha=0.95 if j == 0 else 0.6,
-                           label=f"classical {name}")
-    h, l = a.get_legend_handles_labels()
-    seen = dict(zip(l, h))
-    a.legend(seen.values(), seen.keys(), fontsize=7, ncol=2, loc="lower right")
+    rw = sorted({pts[k]["random_width"] for k in pts if "random_width" in pts[k]})
+    for trace, label in (("classical", "classical GEVP"),
+                         ("trained", f"GELT, trained (d_model {WIDTH})"),
+                         ("random", "GELT, untrained (3 seeds, d_model "
+                                    + "/".join(str(w) for w in rw) + ")")):
+        xs = [i for i, x in enumerate(chain) if comb_of(x, trace)]
+        v = [comb_of(chain[i], trace) for i in xs]
+        a.errorbar(xs, [q[0] for q in v], yerr=[q[1] for q in v], fmt="o-",
+                   ms=8, capsize=4, lw=1.6, color=COLOR[trace], label=label)
+    wc = [(i, comb_of(x, "width_control_A0")) for i, x in enumerate(chain)]
+    wc = [(i, v) for i, v in wc if v]
+    if wc:
+        a.errorbar([i + 0.13 for i, _ in wc], [v[0] for _, v in wc],
+                   yerr=[v[1] for _, v in wc], fmt="*", ms=14, mfc="none",
+                   color=COLOR["trained"], label="GELT, trained (width control)")
+    for name in OFFCHAIN:
+        v = comb_of(name, "classical")
+        if v:
+            i = chain.index("4lv" if name.startswith("4lv") else "7lv")
+            a.errorbar([i + 0.26], [v[0]], yerr=[v[1]], fmt="^", ms=9, mfc="none",
+                       color=COLOR["classical"], label=f"classical, {name}")
+    a.legend(fontsize=8, loc="lower right")
     a.set_ylabel(r"$A_0$ — ground-state overlap")
     a.set_title("Ground-state overlap against input content")
 
     a = ax[1]
-    for j, ens in enumerate(ENSEMBLES):
-        xs = [i for i, x in enumerate(chain) if (x, ens) in pts and "delta" in pts[(x, ens)]]
-        v = [pts[(chain[i], ens)]["delta"] for i in xs]
-        a.errorbar([i + 0.03 * j for i in xs], [q[0] for q in v], yerr=[q[1] for q in v],
-                   fmt="o" if j == 0 else "s", ms=7, capsize=3, label=f"ensemble {ens}")
-    xs = [i for i, x in enumerate(chain) if x in delta]
-    a.errorbar([i + 0.12 for i in xs], [delta[chain[i]][0] for i in xs],
-               yerr=[delta[chain[i]][1] for i in xs], fmt="D-", ms=8, capsize=4,
-               color="k", lw=1.2, label="combined")
+    xs = [i for i, x in enumerate(chain) if chain[i] in delta]
+    v = [delta[chain[i]] for i in xs]
+    a.errorbar(xs, [q[0] for q in v], yerr=[q[1] for q in v], fmt="D-", ms=9,
+               capsize=5, lw=1.6, color="k", label="trained GELT − classical GEVP")
+    rungs_x = [(i, pts[(chain[i], ENSEMBLES[0])].get("rung")) for i in xs]
+    rv = [(i, combine([pts[(chain[i], e)]["rung"] for e in ENSEMBLES
+                       if (chain[i], e) in pts and pts[(chain[i], e)].get("rung")]))
+          for i, r in rungs_x if r]
+    if rv:
+        a.errorbar([i + 0.13 for i, _ in rv], [q[0] for _, q in rv],
+                   yerr=[q[1] for _, q in rv], fmt="s--", ms=7, capsize=4,
+                   color="#009E73", alpha=0.9,
+                   label="…− the classical GEVP one rung further")
     for i in xs:
         if chain[i] not in resolvable:
-            a.annotate("saturated", (i + 0.12, delta[chain[i]][0]), fontsize=7,
-                       xytext=(3, 8), textcoords="offset points", color="#555")
+            a.annotate("saturated", (i, delta[chain[i]][0]), fontsize=8,
+                       xytext=(4, 10), textcoords="offset points", color="#555")
     a.axhline(0, color="k", lw=1)
-    a.set_ylabel(r"$\Delta A_0$ = trained GELT $-$ classical GEVP")
-    a.set_title("Correlated difference at matched input, same configurations")
+    a.set_ylabel(r"$\Delta A_0$")
+    a.set_title("Correlated difference, same configurations")
     a.legend(fontsize=8)
 
     fig.suptitle("One learned operator against the optimal classical combination "

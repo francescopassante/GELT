@@ -785,33 +785,43 @@ runs take 73 s on the laptop, the curve script seconds.
 
 **The trainings** (`curve_batch.sh`, best val Rayleigh loss): thin run5
 −0.4291, thin ens1 −0.4062 — near Run 4's −0.43, as expected for thin links;
-width control (4lv at d_model 24) run5 −0.6173, ens1 −0.5606, against the
-d_model 16 nets' −0.62 / −0.5638. **Widening the 4-level net does nothing.**
+4lv at d_model 24 run5 −0.6173, ens1 −0.5606, against the d_model 16 nets'
+−0.62 / −0.5638.
 
-**A₀ per point** (classical = the GEVP over the same input content; random =
-mean over init seeds 0,1,2 with §1.4's error rule):
+**One width along the whole curve.** d_model 24 is the only width trained at
+every x, so the trace is drawn there and moving along x changes the input
+content and nothing else. The 4-level d_model 16 net — Run 5, the one the
+thesis published — becomes the **width control** at that x: A₀ = 0.903(47)
+against the d24 net's 0.911(51) on run5, and 1.013(62) against 1.002(61) on
+ens1. **Width 16 → 24 changes nothing**, so §6.4 of `audit_2026-09-06.md`'s
+confound is closed, and the 4lv → 7lv gain is input content, not capacity.
+
+**A₀ per point** (classical = the GEVP over the same input content; trained =
+d_model 24; random = mean over init seeds 0,1,2 with §1.4's error rule):
 
     x      ens     classical        trained          random           ΔA₀ (correlated)
     thin   run5    0.390(60)        0.651(77)        0.249(62)        +0.261 ± 0.063
     thin   ens1    0.484(128)       0.706(73)        0.280(109)       +0.221 ± 0.117
-    4lv    run5    0.837(56)        0.903(47)        0.497(175)       +0.066 ± 0.031
-    4lv    ens1    0.925(71)        1.013(62)        0.532(198)       +0.089 ± 0.030
+    4lv    run5    0.837(56)        0.911(51)        0.497(175)       +0.073 ± 0.026
+    4lv    ens1    0.925(71)        1.002(61)        0.532(198)       +0.078 ± 0.029
     7lv    run5    0.905(62)        0.955(57)        0.730(343)       +0.050 ± 0.033
     7lv    ens1    0.939(65)        1.066(59)        0.512(148)       +0.127 ± 0.027
 
-    combined:  thin +0.252 ± 0.056 (4.5σ) | 4lv +0.077 ± 0.022 (3.6σ)
-               7lv  +0.095 ± 0.021 (4.5σ, saturated)
+    combined      classical        trained          random           ΔA₀
+    thin          0.407 ± 0.054    0.680 ± 0.053    0.257 ± 0.054    +0.252 ± 0.056 (4.5σ)
+    4lv           0.870 ± 0.044    0.949 ± 0.039    0.512 ± 0.131    +0.075 ± 0.019 (3.9σ)
+    7lv           0.921 ± 0.045    1.008 ± 0.041    0.547 ± 0.136    +0.095 ± 0.021 (4.5σ, saturated)
 
 **The three readings, by their own tests.** Resolvable: thin (classical A₀ =
 0.407) and 4lv (0.870). Saturated and therefore excluded: 7lv (0.921).
 
 - **R1 — does not hold as stated.** Its first clause does: ΔA₀ > 2σ at every
-  resolvable x. Its rung clause splits — 4lv→7lv **holds** (+0.039 ± 0.025,
+  resolvable x. Its rung clause splits — 4lv→7lv **holds** (+0.038 ± 0.024,
   i.e. a 4-level GELT matches the 7-level classical basis), thin→4lv **fails**
   (−0.201 ± 0.048, a thin-input GELT does not reach the 4-level basis).
 - **R2 — does not hold.** The traces never meet before saturation.
-- **R3 — does not hold.** A constant fit gives c = +0.100 ± 0.020 with
-  χ²/dof = 8.6: the advantage is not additive, it *shrinks* as the inputs get
+- **R3 — does not hold.** A constant fit gives c = +0.094 ± 0.018 with
+  χ²/dof = 9.1: the advantage is not additive, it *shrinks* as the inputs get
   richer (+0.25 at thin → +0.08 at 4lv).
 - **The random trace** is below the classical GEVP at every x (0.257 vs 0.407;
   0.512 vs 0.870; 0.547 vs 0.921), the expected case of §1.2, so the advantage
@@ -821,16 +831,11 @@ mean over init seeds 0,1,2 with §1.4's error rule):
 **What the curve licenses, stated as it will go into the thesis.** At every
 input depth this observable can resolve, one learned operator carries more
 ground-state weight than the optimal linear combination of the *same* inputs:
-+0.252 ± 0.056 on thin links, +0.077 ± 0.022 at four smearing levels. The
++0.252 ± 0.056 on thin links, +0.075 ± 0.019 at four smearing levels. The
 advantage shrinks as the classical side is fed more, and at four levels it is
-worth a whole extra smearing rung (GELT(4lv) − GEVP(7lv) = +0.039 ± 0.025),
+worth a whole extra smearing rung (GELT(4lv) − GEVP(7lv) = +0.038 ± 0.024),
 while at thin links it is not (−0.201 ± 0.048). Above four levels the observable
 saturates and cannot separate the methods further.
-
-**The width confound is closed** (§6.4 of `audit_2026-09-06.md` raised it): at
-4lv, width 24 reads 0.911(51) against width 16's 0.903(47) on run5 and
-1.002(61) against 1.013(62) on ens1. The 4lv → 7lv gain is input content, not
-capacity.
 
 **Deviations from §1–§2, with reasons.**
 1. The estimator is §8.1's (b); the pre-registered selection rule had no answer
@@ -838,7 +843,10 @@ capacity.
 2. `curve_batch.sh` runs the random evals *before* the trainings — they
    exercise the new artifact naming in minutes rather than after a day.
 3. The width control was run on **both** ensembles, not only run5, so it
-   combines like every other point. Cost: one extra training.
+   combines like every other point. Cost: one extra training. §1.4's width
+   policy ("the 4lv points stay at 16 as trained") is therefore superseded:
+   with the control in hand the curve is drawn at 24 throughout and 16 is the
+   control, which is the stronger presentation and uses the same runs.
 4. The V100 lost its GPU mid-batch on 2026-09-11 and `thin_ens1` silently fell
    back to the CPU; it was killed and retrained on the GPU. No measurement is
    affected. The batch now refuses to run without CUDA and skips finished
@@ -846,6 +854,15 @@ capacity.
 5. WP6 (a shape-input GELT) was not run, so the right end of the curve compares
    a GELT without loop shapes to a GEVP with them — §8.1's `full` row, and the
    figure says so.
+6. The figure shows the two ensembles **inverse-variance combined**, one point
+   per trace; the per-ensemble values stay in the table and in the `.pt`. Two
+   overlapping ensembles per trace made the first version unreadable, and every
+   test is run on the combined value in any case.
+7. **Open, cosmetic:** the untrained trace at 4lv is d_model 16 (it was run to
+   match the then-current trained net), so that one point is not at the curve's
+   width. Six eval-only runs (2 ensembles × 3 seeds, ~5 min each) would fix it.
+   The untrained trace is far below the classical arm everywhere, so no reading
+   depends on it.
 
 **Artifacts.** `results/fair_fight/input_architecture_curve.{png,pt,tex}`, from
 tracked inputs only.
