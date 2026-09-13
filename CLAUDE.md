@@ -392,10 +392,16 @@ each covered by a test:
   76 → 44, `.item()` syncs ~10 → 0. **2.16×** on forward + backward, outputs
   identical to 1.2e-7.
 
-**No total speedup is claimed** — every timing behind these numbers is CPU. Run
-`profile_glueball_step.py` on the V100 before spending effort on the next tier;
-the ranked candidates (adjoint SO(3) transport, Q/K/V layout, unmaterialised
-contractions, offset chunking, the schedule, `torch.compile`) are §5 of the note.
+**Measured end to end on the V100 (2026-09-13): 7.77 → 5.04 s/step**, i.e. the
+landed work is worth **1.54×** in situ (the same profiler says 1.29 s for the
+matched-parameter L-CNN arm, so GELT costs 3.9× what it does — the architecture,
+not a defect). The profile re-ranked the backlog: **backward is 64% of the step
+and `rope_score` is the largest single stage** (238 ms per layer, ~the whole
+forward over four), so §5.3's unmaterialised contractions are now first — start
+with the single-pass-over-K̃ rewrite in §5.0, then `torch.compile` on that method
+alone. §5.1 (adjoint SO(3) transport) is still unmeasured: its micro-bench row
+OOM'd on a fragmented arena, fixed since. The ranked candidates and the numbers
+behind them are §5 of the note.
 
 ## Known caveats
 

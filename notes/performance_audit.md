@@ -304,6 +304,53 @@ the V100 that only this script can answer.
 
 ## 5. Future work, ranked
 
+### 5.0 The 2026-09-13 profile, and what it re-ranks — **do this next**
+
+§5 was ranked from the byte counts of §2, before anyone had timed the stages on
+the V100. `profile_glueball_step.py` has now been run on the real pipeline, and
+it moves the order. GELT, batch 6, `grad_checkpoint=True`:
+
+| stage | ms | share |
+|---|---|---|
+| `config_inputs` | 645 | 12.8% |
+| forward | 1154 | 22.9% |
+| **backward** | **3241** | **64.3%** |
+| total | **5043** | (peak 19.99 GiB) |
+
+Two things to take from it.
+
+**(i) The step is 7.77 → 5.04 s.** That is the landed §3 work measured in situ,
+**1.54×**, and it is the total speedup §7 declined to claim. It is also the
+number that makes the L-CNN comparison honest: the same profiler says 1.29 s for
+the matched-parameter L-CNN arm (`notes/lcnn_shootout.md` §5), so GELT costs
+**3.9×** what it does — 25 L1-ball offsets with DP-averaged transport and
+data-dependent attention against 13 axis shifts and plain link products. That is
+the architecture, not a defect, and the shootout's claim is A₀ at matched
+parameters, not wall-clock.
+
+**(ii) `rope_score` is the largest single stage, and §5.3 is now #1.** Per layer
+at production shape: `rope_score` fwd **237.9 ms** — times four layers, that is
+essentially the whole 1154 ms forward — with bwd/fwd 0.35. The gather's backward
+is next (143 ms/layer for the advanced-index candidate, ~570 ms over four).
+
+§5.3 is right that a naive `einsum` would trade this for millions of 4-element
+GEMMs. Two moves that avoid that trap, in order:
+
+* **One pass over K̃ instead of two.** `rope_score` reduces against `Q` and
+  against `Q_swap` separately, i.e. it streams the 2.39 GB K̃ twice. Stacking the
+  two queries along the channel axis makes it one multiply-reduce over one pass.
+  Pure traffic, no new GEMM shapes, and the identity is the one already written
+  out in the docstring.
+* **`torch.compile` on `rope_score` alone** (§5.6). Multiply-then-reduce fusion
+  is exactly what inductor does; scoping it to one method sidesteps the
+  whole-model compile risk. Measure, do not assume.
+
+**Still unmeasured: §5.1.** The micro-bench's `transport` row OOM'd asking for a
+4.45 GiB block while the step's ~20 GiB reservation sat fragmented and free — so
+the number that decides transport-vs-gather is the one we do not have. Fixed in
+`fef7e83` (`empty_cache()` at entry and between stages); re-run the profiler
+before spending effort on the adjoint representation.
+
 ### 5.1 Adjoint (real SO(3)) representation of the transport — the biggest one left
 
 The two `bmm` calls in `GEMHSA.transport` are 383 MiB per layer per forward with
@@ -359,6 +406,9 @@ Same matmuls, same order, exactly equivalent. Medium effort. Interacts with 5.1 
 if 5.1 lands, redo this on top of the coefficient layout rather than before.
 
 ### 5.3 Unmaterialised score and value contractions
+
+**Promoted to first by the §5.0 measurement.** Read §5.0's two ordered moves
+before the paragraphs below, which predate the timing.
 
 `(Q.unsqueeze(3).conj() * K_tilde).sum(…)` and `(alpha_b * V_tilde).sum(dim=3)`
 materialise the elementwise product before reducing it: ~190 MiB per layer per
