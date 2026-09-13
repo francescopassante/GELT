@@ -380,14 +380,22 @@ Four readings.
   whichever layout K̃ arrives in. The 12× it was trying to explain never existed
   — it was the artifact in (ii).
 * **The layout penalty is real, just smaller than advertised.** On a pure
-  reduction it is 3.9 → 1.3 × K̃ (a genuine **2.9×**), and on the value path
-  5.6 → 3.1 × (**1.8×**, 8.5 ms per layer per forward). But a standalone
-  `.contiguous()` costs 15.2 ms — more than it saves — so §5.2 is only worth
-  doing as part of a rewrite that makes `transport` *emit* the right layout, and
-  the payoff is the value path, not the score.
-* **The single pass landed: 1.30× on the stage** (126.3 → 96.9 ms fwd+bwd).
-  Worth ~138 ms of the 5056 ms step under checkpointing, i.e. **2.7%**. It costs
-  a 2× product tensor, +2.39 GB transient per layer against a 19.99 GiB peak.
+  reduction it is 3.9 → 1.3 × K̃ (a genuine **2.9×**). On the value path the
+  forward is 5.6 → 3.1 × (1.8×, 8.5 ms per layer), but the *backward* goes the
+  other way — 12.4 ms strided against 15.3 contiguous — so fwd+bwd is
+  31.5 → 25.8 ms, **1.22×**, not the 1.8 the forward alone advertises. And a
+  standalone `.contiguous()` costs 15.2 ms, more than it saves. So §5.2 is only
+  worth doing as part of a rewrite that makes `transport` *emit* the right
+  layout, and even then the payoff is the value path, not the score.
+* **The single pass landed: 1.30× on the stage** (126.3 → 96.9 ms fwd+bwd),
+  and the step confirms it — **5056 → 4935 ms, −121 ms, 2.4%** against a
+  predicted 2.7%. It costs a 2× product tensor: peak went 19.99 → 20.21 GiB,
+  well under the +2.39 GB worst case, because the tensor is transient in both
+  the checkpointed forward and the recompute. The re-run also validates the
+  fix to (ii): the isolated `micro_bench` row (23.6 / 71.6 ms) and the dedicated
+  bench (23.5 / 73.4) now agree to 0.4%, and the retired two-bracket route
+  reproduces its old 28.5 / 97.9 exactly — so the 1.30× is a like-for-like A/B,
+  not a shift in what was being timed.
 * **Real arithmetic is a dead end in eager, and §5.6's obstacles are now two.**
   `Re Σ conj(Q)K = Qr·Kr + Qi·Ki` should halve the product's bytes, but eager
   does not fuse `a*b + c*d` — it is three kernels and three full
@@ -400,14 +408,19 @@ Four readings.
   stage (86.7 vs 126.3 ms fwd+bwd), so inductor is fusing *something*. Both are
   small money while (iii) is open.
 
-**§5.1 has a number now, by subtraction.** The `transport` row OOM'd again on
-the 2026-09-13 run — 4.45 GiB while the step's ~20 GiB reservation sat
-fragmented and free — because `empty_cache()` (`fef7e83`) frees the arena but
-not the three full-size intermediates the stage itself needs: at the production
-KV shape that is ~19 GiB, which does not fit next to the step on a 32 GiB card.
-The row now falls back to the K half and says so. The direct number would still
-be worth having, but ≈200 ms per layer per forward is not in doubt, and it is
-the whole ranking.
+**§5.1 has a number by subtraction, and the row that would confirm it kept
+OOMing for a reason worth writing down.** `empty_cache()` (`fef7e83`) frees the
+arena but not the three full-size intermediates the stage itself needs — ~19 GiB
+at the production KV shape, which does not fit next to the step on a 32 GiB
+card. The K-half fallback added for that then OOM'd *as well*, at 2.23 GiB, on a
+card with ~30 GiB free: the retry was running inside the `except` block, where
+the exception still holds its traceback, the traceback holds every frame it
+unwound, and those frames hold their locals — `transport`'s `Xp`, `X_flat`, `L`,
+`R`, all full-size. `empty_cache()` cannot free what is still referenced, so the
+fallback was allocating on the corpse of the first attempt. Moving the retry
+out of the handler runs Python's implicit `del exc` and drops the chain. General
+lesson for this file: **an OOM handler that retries must leave the handler
+first.**
 
 ### 5.1 Adjoint (real SO(3)) representation of the transport — **#1, and by a lot**
 

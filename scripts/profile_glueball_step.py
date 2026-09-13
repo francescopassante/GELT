@@ -377,25 +377,38 @@ def micro_bench(device, b):
             torch.cuda.empty_cache()
         note = ""
         fn = None
+        err = None
         try:
             fn = setup()
             t_f, t_b = run(fn)
         except RuntimeError as exc:  # OOM at this shape is itself information
+            err = str(exc)[:70]
+        # The retry has to happen *outside* the except block. An exception holds
+        # its traceback, the traceback holds every frame it unwound, and those
+        # frames hold their locals — here `transport`'s Xp / X_flat / L / R, all
+        # full-size, ~9.6 GiB at this shape. empty_cache() cannot free what is
+        # still referenced, so a retry inside the handler OOMs on the corpse of
+        # the first attempt (it did: 4.45 GiB, then 2.23 GiB). Leaving the block
+        # runs Python's implicit `del exc` and drops the whole chain.
+        if err is not None:
+            del fn
             fn = None
             if device.type == "cuda":
                 torch.cuda.empty_cache()
             if fallback is None:
-                print(f"  {name:<26} FAILED: {str(exc)[:70]}")
+                print(f"  {name:<26} FAILED: {err}")
                 continue
             try:
                 fn = fallback()
                 t_f, t_b = run(fn)
                 note = "   [half the channels — double for the production KV call]"
             except RuntimeError as exc2:
-                print(f"  {name:<26} FAILED: {str(exc2)[:70]}")
+                err = str(exc2)[:70]
+            if note == "":
+                del fn
+                print(f"  {name:<26} FAILED: {err}")
                 continue
-        finally:
-            del fn
+        del fn
         print(
             f"  {name:<26} fwd {t_f * 1e3:8.1f} ms   bwd {t_b * 1e3:8.1f} ms"
             f"   (bwd/fwd {t_b / max(t_f, 1e-9):5.2f}){note}"
