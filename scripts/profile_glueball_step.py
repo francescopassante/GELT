@@ -277,6 +277,8 @@ def micro_bench(device, b):
     """
     from gelt.blocks import GEMHSA
 
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
     Lt, L, NC = tg.LT, tg.L, tg.NC
     B = b * Lt
     blk = GEMHSA(
@@ -332,6 +334,12 @@ def micro_bench(device, b):
     print("\n── per-stage forward / backward at the production per-layer shape ──")
     print(f"   B={B} slices, n_off={n_off}, channels={2 * tg.NHEAD * tg.D_QKV}, nc={NC}")
     for name, fn in stages.items():
+        # Release the caching allocator's free blocks between stages. The step
+        # above reserved ~20 GiB; its activations are gone but the reserved
+        # arena is fragmented, and `transport` wants a single 4.45 GiB block —
+        # which is how it OOM'd here while running fine inside the step.
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
         try:
             t_f, t_b = run(fn)
             print(
