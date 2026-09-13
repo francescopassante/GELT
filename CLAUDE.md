@@ -404,9 +404,18 @@ Isolated, rope_score is **28.5 ms**. By subtraction **the transport is ≈200 ms
 per layer per forward, ~70% of the forward**, so **§5.1 (the adjoint SO(3)
 representation) is #1 by a wide margin** and everything else is a few percent.
 The one thing that landed from the rope_score work is the **single pass over
-K̃** (1.30× on the stage, 2.7% of the step); `PROFILE_ROPE=1 python
+K̃** (1.30× on the stage, measured 2.4% of the step); `PROFILE_ROPE=1 python
 scripts/profile_glueball_step.py` is the bench behind it and behind the two
 §5.6 `torch.compile` obstacles (§5.0(iv)).
+
+**The step is now fully accounted for** (§5.0(v)): per layer, transport
+223.4 ms fwd / 326.6 bwd, gather 9.3 / 142.9, rope_score 23.5 / 71.6, value sum
+19.1 / 12.4 — which reconstructs 97% of the forward and 107% of the backward.
+**Transport is 62.8% of the step**, and §5.1's predicted ~3.5× would take it
+4930 → 2720 ms, **1.8× end to end**. Second is the gather's *backward* at 13.1%
+and 15.4× its own forward, ~5× off its own traffic budget — a kernel problem
+(a 4-index advanced read into a 9-d tensor, in 13 chunks), not the
+loop-vs-index question, and worth a look after §5.1.
 
 ## Known caveats
 

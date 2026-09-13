@@ -408,7 +408,47 @@ Four readings.
   stage (86.7 vs 126.3 ms fwd+bwd), so inductor is fusing *something*. Both are
   small money while (iii) is open.
 
-**§5.1 has a number by subtraction, and the row that would confirm it kept
+**(v) The step is fully accounted for, for the first time.** With the retry fix
+the `transport` row reports: **111.7 ms fwd / 163.3 ms bwd at half the
+channels**, i.e. **223.4 / 326.6 per layer** at the production KV shape —
+confirming the ≈200 ms subtraction of (iii). Per layer, production shape, from
+the same run:
+
+| stage | fwd ms | bwd ms | whole step | share |
+|---|---|---|---|---|
+| gather (advanced index) | 9.3 | 142.9 | 646 ms | 13.1% |
+| **transport (2 bmm)** | **223.4** | **326.6** | **3094 ms** | **62.8%** |
+| rope_score | 23.5 | 71.6 | 474 ms | 9.6% |
+| value `(α·Ṽ).sum(n)` | 19.1 | 12.4 | 202 ms | 4.1% |
+| per layer | 275.3 | 553.5 | | |
+
+The "whole step" column is `4·(2·fwd + bwd)` — forward, the gradient
+checkpoint's recompute, and the backward — against the 4929.5 ms step. The
+model closes from both ends: 4 × 275.3 = 1101 ms against a measured 1135 ms
+forward (**97%**), and 1135 + 4 × 553.5 = 3349 against a measured 3136 backward
+(107%, the overshoot being the micro-bench's `.abs().pow(2).sum()` head). Add
+`config_inputs` (654 ms, 13.3%, of which 76% is the APE ladder) and essentially
+nothing is unexplained.
+
+**The transport is 63% of the step.** At §5.1's predicted ~3.5× the whole step
+goes 4930 → 2720 ms, i.e. **1.8× end to end** — more than everything landed in
+§3 put together (1.54×). Nothing else on this list is in the same currency.
+
+**Second, and unexpected: the gather's backward is 13.1% of the step and 15.4×
+its own forward.** `_OffsetGather` already replaced autograd's atomic
+scatter-add with a gather, which is why it is 143 ms and not 600. But the
+gradient is a translation, so forward and backward move the same bytes in
+opposite directions and should cost roughly the same; 9.3 vs 142.9 is not that.
+Its traffic is ~21 GB = 30 ms at 706 GB/s, so it is ~5× off, and the two
+suspects are visible in the code: the backward is a fully general N-d
+advanced-index read with **four** broadcast index tensors into a 9-d tensor, and
+`_GRAD_GATHER_BUDGET = 512 MiB` against 191 MB per offset means `chunk = 2`,
+i.e. **13 separate index+sum+add passes** over the gradient. The roll+stack
+alternative is worse (48.9 / 222.7), so this is not the loop-vs-index question
+the micro-bench was built to answer — it is the kernel. Worth a look *after*
+§5.1.
+
+**§5.1's number is now direct, and the row that would confirm it kept
 OOMing for a reason worth writing down.** `empty_cache()` (`fef7e83`) frees the
 arena but not the three full-size intermediates the stage itself needs — ~19 GiB
 at the production KV shape, which does not fit next to the step on a 32 GiB
@@ -424,11 +464,13 @@ first.**
 
 ### 5.1 Adjoint (real SO(3)) representation of the transport — **#1, and by a lot**
 
-**Measured 2026-09-13 (§5.0(iii)): ≈200 ms per layer per forward, ~70% of the
-forward, and with `bwd/fwd ≈ 2.2` the great majority of the backward too.** Its
-traffic budget is ~33.5 GB = 47 ms at the measured 708 GB/s, so it is running
-~4.2× off — which is the tiny-GEMM penalty this section was written to remove.
-Nothing else in §5 is within an order of magnitude of it.
+**Measured 2026-09-13 (§5.0(v)): 223.4 ms fwd / 326.6 ms bwd per layer at the
+production shape — 79% of the forward and 62.8% of the whole step.** Its traffic
+budget is ~33.5 GB = 47 ms at the measured 706 GB/s, so it runs ~4.8× off:
+exactly the tiny-GEMM penalty this section was written to remove. At the ~3.5×
+this section predicts, the step goes **4930 → 2720 ms, 1.8× end to end**, which
+is more than all of §3 put together. Nothing else in §5 is in the same
+currency.
 
 The two `bmm` calls in `GEMHSA.transport` are 383 MiB per layer per forward with
 `bwd/fwd ≈ 2.2`, and they are `(nc, nc) @ (nc, H·d·nc)` products over millions of
