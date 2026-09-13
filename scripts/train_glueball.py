@@ -258,7 +258,12 @@ BATCH_CONFIGS = 6  # configs per minibatch; each expands to BATCH_CONFIGS·LT 3D
 #                    batch 6 ≈ 25 GiB (fits 32 GiB), batch 8 OOMs. Without
 #                    checkpointing even batch 4 OOMs (~7.4 GiB acts/config).
 #                    Check with profile_glueball_step.py.
-GRAD_CHECKPOINT = True  # recompute each GEMHSA layer in backward (~×layers cut
+#                    The L-CNN arm is far cheaper in memory (2.6 GiB per block
+#                    at c_hidden=5, measured on the V100), so for it the
+#                    recompute may not be worth its ~one extra forward — A/B it
+#                    with --grad-checkpoint=0 before committing to a long run.
+GRAD_CHECKPOINT = _env_flag("GLUEBALL_GRAD_CHECKPOINT", True)
+#                         recompute each GEMHSA layer in backward (~×layers cut
 #                         in stored activations for ~one extra forward) — the
 #                         stored K/V neighbourhoods, not the transport build,
 #                         are the memory wall (V100 profile: transport 1.9%).

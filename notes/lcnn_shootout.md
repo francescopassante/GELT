@@ -99,7 +99,10 @@ and starts at C(0) ~ 0.3.
 
 Measured on the V100 at the production batch: **9.4 GiB peak**, against GELT's
 ~25 GiB — batch 6 is safe with room to spare, and `BATCH_CONFIGS` never has to
-move. (It may not anyway: it is also the VEV-estimate knob of the ratio
+move. That was before §8.2–8.4; one block now peaks at 2.6 GiB, so **gradient
+checkpointing may no longer pay for itself here** — it buys memory nobody needs
+at the price of one extra forward per layer. `--grad-checkpoint=0` A/Bs it in
+the profiler; decide from that measurement, not from this sentence. (It may not anyway: it is also the VEV-estimate knob of the ratio
 estimator, so changing it stops the run being comparable to the GELT runs it is
 measured against. If a step ever does not fit, `c_hidden` is the knob.)
 
@@ -212,10 +215,25 @@ per site instead of `C` separate `(nc × nc)` ones.
 **Measured (CPU, B = 8 slices of 8³, C = 5, K = 2, fwd+bwd):** 36.4 ms before →
 18.8 ms for the same one-sided kernel (**1.9×**), and 27.3 ms for the corrected
 symmetric kernel — i.e. 1.3× faster than the old block while doing 1.9× more
-shift terms. GPU numbers should be better, since what was removed is mostly
-launch overhead. Every rewrite is pinned against the naive definition it
-implements (`test_lconv_matches_the_naive_definition`,
+shift terms. Every rewrite is pinned against the naive definition it implements
+(`test_lconv_matches_the_naive_definition`,
 `test_lbilin_matches_the_naive_definition`, 1e-12 in complex128).
+
+**Measured on the V100** (`scripts/bench_lcnn_reference.py`, B = 144 slices of
+12³, C = 5, K = 2 — the production shape), one block:
+
+| block | forward | fwd + bwd | peak |
+|---|---|---|---|
+| ours, `gelt.lcnn.LCB` | 85.3 ms | **180.5 ms** | 2.60 GiB |
+| reference, `LConvBilin` (v2) | 85.9 ms | 377.0 ms | 4.34 GiB |
+
+Ours is **2.1× faster end to end and 1.7× lighter**, with the forward a dead
+heat — the whole gap is the backward. Two caveats before that is read as a
+verdict on their code: their merged layer carries a full 3-index kernel,
+7205 real weights against our factored pair's 2640 (2.7×), so it computes a
+richer function per block; and their production path is the numba-CUDA kernels
+(§8.4), not this one. What the number does establish is that our block is not
+the slow one by construction, which is what the shootout needed.
 
 ### 8.5 What stays different, on purpose
 
