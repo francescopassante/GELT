@@ -458,7 +458,42 @@ restricts the hypothesis class from complex quaternions to real ones: it is a
 **model change**, not an optimisation, and no trained checkpoint would transfer.
 Out of scope here; noted as an architecture question.
 
-### 6.5 `_project_su2` on the smearing path
+### 6.5 The authors' own L-CNN implementation (2026-09-13) — nothing new for GELT
+
+`lge-cnn-master/` (Favoni et al.'s code) was read against the hot path after its
+L-CNN block measured 13.3 s/step where GELT measures 7.77 s (pre-optimisation) —
+see `notes/lcnn_shootout.md` §8. The two structural tricks their pure-PyTorch
+layer uses are **already in GELT**, which is why the untouched `gelt/lcnn.py` was
+the slow one and not the transformer:
+
+* *Fold the channel axis into the matrix dimension.* `GEMHSA.transport` has done
+  this since §3.4 — `(nc, nc) @ (nc, H·d_qkv·nc)`, T un-broadcast. Their layers
+  do the equivalent through einsum.
+* *Contract the weighted sum before the matrix product.* Their
+  `bilin_implementation = 2` ("the good one") mixes the transported channel axis
+  into the weights first; GELT's value path is the same identity,
+  `Σ_n α_n (Q_v† Ṽ_n) = Q_v† (Σ_n α_n Ṽ_n)`, documented at `blocks.py:450`.
+
+Three further readings, all negative for us:
+
+* `use_fast_mm = True` is their default: complex tensors, *not* the re/im-split
+  einsum they also implement. They tried the alternative and kept complex — so
+  §6.2's neighbourhood has one more data point against it.
+* The only `@torch.compile` in their layer file decorates `unpack_x`, a two-line
+  slicing helper. No autocast, no float16, no channels_last anywhere in the NN
+  code.
+* `lge_cnn/ym/su2.py` does carry the compact real representation (`GROUP_ELEMENTS
+  = 4`, `to_matrix` / `to_repr`) that §5.1 wants — but only in the HMC/lattice
+  layer. Their network code works with full matrices (`layers_cuda.py` represents
+  SU(3) as 9 complex entries). So §5.1 remains ours to write, with precedent for
+  the representation but no implementation to lift.
+
+What their repo has that we are not going to copy: ~2000 lines of hand-written
+numba-CUDA kernels (`layers_cuda.py`, forward *and* backward) for the L-ConvBilin
+op. That is the endgame for a production framework, not for a thesis baseline —
+and it is why `scripts/bench_lcnn_reference.py` times their *PyTorch* layer.
+
+### 6.6 `_project_su2` on the smearing path
 
 See §3.1: 2.7× beyond the closed-form polar, measurably identical on the smearing
 path, but a genuinely different map on far-from-group input. Not worth giving up

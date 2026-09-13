@@ -230,3 +230,15 @@ implements (`test_lconv_matches_the_naive_definition`,
 * **`scripts/bench_lcnn_reference.py`** times our block against theirs at the
   production shape, so "is ours slow?" has an answer that is not a guess. Their
   CUDA path is deliberately out of scope.
+
+### 8.6 Nothing in their code speeds up GELT
+
+Worth stating, because it is the natural next question. Both of the tricks §8.2
+and §8.4 lift from the reference are **already in GELT's hot path** — the
+channel fold in `GEMHSA.transport` (`notes/performance_audit.md` §3.4) and the
+"weight the sum before the matrix product" identity in the value path
+(`blocks.py:450`, `Σ_n α_n (Q_v† Ṽ_n) = Q_v† (Σ_n α_n Ṽ_n)`). That is the
+explanation for the 13.3 s vs 7.77 s gap: not attention being expensive, but one
+block having had two rounds of optimisation and the other none. The details, and
+the three negative readings that came with them, are in
+`notes/performance_audit.md` §6.5.
