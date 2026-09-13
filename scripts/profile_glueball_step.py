@@ -39,8 +39,15 @@ Env switches (each prints its own comparison line, so one run can A/B them):
     PROFILE_COMPILE=1      also time the step with torch.compile on the model.
                            Unproven on complex64 — this is here to get a number,
                            not because it is expected to work.
+    PROFILE_ROPE=1         also run the rope_score bench: every candidate on K̃
+                           as transport returns it (a permuted view) and on a
+                           contiguous copy, against a measured bandwidth. Decides
+                           between notes/performance_audit.md §5.2 (layout),
+                           §5.3 (the contraction) and §5.6 (torch.compile).
+                           PROFILE_ROPE_COMPILE=0 drops the compiled candidates.
 """
 
+import math
 import os
 import sys
 import time
@@ -350,6 +357,265 @@ def micro_bench(device, b):
             print(f"  {name:<26} FAILED: {str(exc)[:70]}")
 
 
+def _rope_score_single(blk, Q, K_tilde):
+    """One pass over K̃: the two Frobenius brackets on a trailing variant axis.
+
+    Algebraically identical to ``GEMHSA.rope_score`` (asserted in
+    ``_check_rope_candidates``); this is notes/performance_audit.md §5.0's first
+    move written out. ``rope_score`` reduces against Q and against Q's
+    pair-swapped copy in two separate multiply-reduce pairs, i.e. it streams K̃
+    — 2.39 GB at the production shape — twice. Stacking the two queries on a
+    *trailing* variant axis makes it one multiply-reduce with K̃ entering
+    stride-0 on that axis, and folds the within-pair sum s into the same
+    reduction instead of a second kernel. 7.2·|K̃| of traffic becomes 5.25·|K̃|,
+    at the cost of a 2× product tensor (the contraction genuinely reads every K̃
+    element twice — no rearrangement of Q avoids that, only fusion does).
+    """
+    B, H, dq = Q.shape[0], Q.shape[1], Q.shape[2]
+    spatial = Q.shape[3:-2]
+    nc = Q.shape[-1]
+    n = K_tilde.shape[3]
+    P = blk.n_pairs
+
+    Qp = Q.reshape(B, H, P, 2, *spatial, nc, nc)
+    Q_swap = torch.stack((Qp[:, :, :, 1], -Qp[:, :, :, 0]), dim=3)
+    # (B, H, P, 2, 1, *Λ, nc, nc, v) — the conjugation rides on the small tensor.
+    Q2 = torch.stack((Qp, Q_swap), dim=-1).conj().unsqueeze(4)
+    # Splitting d_qkv into (P, 2) is a view even on transport's permuted output.
+    Kp = K_tilde.reshape(B, H, P, 2, n, *spatial, nc, nc).unsqueeze(-1)
+    t = (Q2 * Kp).sum(dim=(3, -3, -2)).real  # (B, H, P, n, *Λ, v)
+
+    freq = blk.rope_freq.real if blk.rope_freq.is_complex() else blk.rope_freq
+    disp = blk._rope_disp.real if blk._rope_disp.is_complex() else blk._rope_disp
+    angle = disp * freq
+    view = (1, 1, P, n) + (1,) * len(spatial)
+    cos = torch.cos(angle).t().reshape(view)
+    sin = torch.sin(angle).t().reshape(view)
+    return (cos * t[..., 0] + sin * t[..., 1]).sum(dim=2) / math.sqrt(dq * nc)
+
+
+def _rope_score_real(blk, Q, K_tilde):
+    """The single pass again, in real arithmetic — the fusable candidate.
+
+    ``Re Σ conj(Q)·K = Q.real·K.real + Q.imag·K.imag``, so the score never needs
+    a complex multiply: the current route does four real multiplies per element
+    and throws half the result away in ``.real``. Two consequences.
+
+    *Eager*: the product tensor is float32 where it was complex64, so the
+    trailing variant axis doubles a tensor that halved — the intermediate is
+    |K̃| bytes, the same transient the two-bracket route already pays, for
+    ~3.1·|K̃| of traffic against its ~7.2.
+
+    *Compiled*: Inductor warns that it "does not support code generation for
+    complex operators" (§5.6's first obstacle, reproduced by this bench), so a
+    compiled complex candidate cannot fuse the multiply into the reduction. This
+    one is real float32 end to end — a plain multiply-reduce, which is exactly
+    what Inductor does fuse. If any candidate reaches the ~1× floor it is this
+    one compiled.
+    """
+    B, H, dq = Q.shape[0], Q.shape[1], Q.shape[2]
+    spatial = Q.shape[3:-2]
+    nc = Q.shape[-1]
+    n = K_tilde.shape[3]
+    P = blk.n_pairs
+
+    Qp = Q.reshape(B, H, P, 2, *spatial, nc, nc)
+    Q_swap = torch.stack((Qp[:, :, :, 1], -Qp[:, :, :, 0]), dim=3)
+    Q2 = torch.stack((Qp, Q_swap), dim=-1).unsqueeze(4)
+    Kp = K_tilde.reshape(B, H, P, 2, n, *spatial, nc, nc).unsqueeze(-1)
+    # No .conj(): Re(conj(Q)·K) = Qr·Kr + Qi·Ki identically.
+    t = (Q2.real * Kp.real + Q2.imag * Kp.imag).sum(dim=(3, -3, -2))
+
+    freq = blk.rope_freq.real if blk.rope_freq.is_complex() else blk.rope_freq
+    disp = blk._rope_disp.real if blk._rope_disp.is_complex() else blk._rope_disp
+    angle = disp * freq
+    view = (1, 1, P, n) + (1,) * len(spatial)
+    cos = torch.cos(angle).t().reshape(view)
+    sin = torch.sin(angle).t().reshape(view)
+    return (cos * t[..., 0] + sin * t[..., 1]).sum(dim=2) / math.sqrt(dq * nc)
+
+
+def _check_rope_candidates(device):
+    """Pin every candidate against ``GEMHSA.rope_score`` at a toy shape.
+
+    Cheap (L=4, B=2) and run before the timings: a bench of a wrong kernel is
+    worse than no bench. ``rope_score`` itself is pinned against the naive
+    ``apply_rope``-then-Frobenius oracle in tests/test_blocks.py.
+    """
+    from gelt.blocks import GEMHSA
+
+    L, nc, H, dq, B = 4, tg.NC, 2, 6, 2
+    blk = GEMHSA(
+        tg.gaugegroup, L, 3, 1, d_input=4, nhead=H, d_qkv=dq, dtype=tg.MODEL_DTYPE
+    ).to(device)
+    n = blk.n_offsets
+    Q = torch.randn(B, H, dq, L, L, L, nc, nc, dtype=tg.MODEL_DTYPE, device=device)
+    X = torch.randn(B, 2 * H, dq, n, L, L, L, nc, nc, dtype=tg.MODEL_DTYPE, device=device)
+    T = torch.randn(B, n, L, L, L, nc, nc, dtype=tg.MODEL_DTYPE, device=device)
+    # K̃ exactly as attend() sees it: a permuted, non-contiguous view.
+    K = blk.transport(X, T, tg.gaugegroup.dagger(T))[:, :H]
+    assert not K.is_contiguous(), "transport stopped returning a view — re-read this bench"
+    ref = blk.rope_score(Q, K)
+    for name, got in (
+        ("single pass", _rope_score_single(blk, Q, K)),
+        ("single pass, real", _rope_score_real(blk, Q, K)),
+        ("single pass, real, contiguous K̃", _rope_score_real(blk, Q, K.contiguous())),
+        ("current, contiguous K̃", blk.rope_score(Q, K.contiguous())),
+        ("single pass, contiguous K̃", _rope_score_single(blk, Q, K.contiguous())),
+    ):
+        err = (got - ref).abs().max().item() / max(ref.abs().max().item(), 1e-12)
+        assert err < 1e-5, f"{name} disagrees with rope_score: rel {err:.2e}"
+    return True
+
+
+def rope_bench(device, b):
+    """Why is ``rope_score`` 238 ms? Three hypotheses, one run.
+
+    The 2026-09-13 profile put ``rope_score`` at 237.9 ms per layer forward —
+    over four layers, essentially the whole 1154 ms forward.
+    notes/performance_audit.md §5.0 reads that as a *traffic* problem (K̃ is
+    streamed once per Frobenius bracket) and §5.3 proposes the single-pass
+    rewrite. The roofline says traffic cannot be the whole story: K̃ is 2.389 GB
+    at the production per-layer shape, the two-bracket route moves ~7.2× that =
+    17.2 GB, which is 19 ms at the V100's 900 GB/s. Measured 238 ms is **12×
+    off**.
+
+    The third hypothesis, which §5 does not have: ``GEMHSA.transport`` returns
+    ``out.permute(inv_perm)``, a **non-contiguous view**. Its logical innermost
+    lattice axis carries stride nc·H·d_qkv·nc = 48 elements while the colour row
+    index carries 24 and the colour column 1, so every downstream elementwise
+    kernel reads K̃ (and Ṽ) uncoalesced — a warp walking the contiguous output
+    touches ~8 cache lines where it should touch 2. If that is the 12×, the next
+    item is §5.2 (the Q/K/V memory layout), not §5.3, and the single-pass
+    rewrite buys far less than its byte count promises.
+
+    So: every candidate is timed on K̃ **as transport returns it** and on a
+    contiguous copy, against a measured device bandwidth and a pure-reduction
+    floor. The same A/B runs on the value path ``(α·Ṽ).sum(n)``, which reads the
+    other half of the same permuted tensor.
+
+    Forward and backward separately — the step is 64% backward.
+    """
+    from gelt.blocks import GEMHSA
+
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+    _check_rope_candidates(device)
+
+    Lt, L, NC = tg.LT, tg.L, tg.NC
+    B = b * Lt
+    blk = GEMHSA(
+        tg.gaugegroup, L, 3, tg.R, d_input=tg.D_MODEL, nhead=tg.NHEAD,
+        d_qkv=tg.D_QKV, dtype=tg.MODEL_DTYPE,
+    ).to(device)
+    n_off, H, dq = blk.n_offsets, tg.NHEAD, tg.D_QKV
+
+    def fresh(requires_grad=True):
+        """A K̃ with transport's layout, without paying for transport."""
+        base = torch.randn(
+            B, n_off, L, L, L, NC, H, dq, NC,
+            dtype=tg.MODEL_DTYPE, device=device, requires_grad=requires_grad,
+        )
+        D = 3
+        inv_perm = (0, 3 + D, 4 + D, 1) + tuple(range(2, 2 + D)) + (2 + D, 5 + D)
+        return base, base.permute(*inv_perm)
+
+    base, K_strided = fresh()
+    Q = torch.randn(
+        B, H, dq, L, L, L, NC, NC,
+        dtype=tg.MODEL_DTYPE, device=device, requires_grad=True,
+    )
+    alpha = torch.randn(B, H, n_off, L, L, L, device=device)
+    nbytes = K_strided.numel() * K_strided.element_size()
+
+    # Measured, not assumed: a large contiguous copy is read+write, so the
+    # achieved bandwidth is 2·nbytes/t. Everything below is quoted against it.
+    probe = torch.empty_like(base)
+    for _ in range(2):
+        probe.copy_(base.detach())
+    _sync(device)
+    t0 = time.perf_counter()
+    for _ in range(3):
+        probe.copy_(base.detach())
+    _sync(device)
+    bw = 3 * 2 * nbytes / (time.perf_counter() - t0)
+    del probe
+
+    print("\n── rope_score: traffic, layout, or fusion? ──")
+    print(
+        f"   K̃ = {nbytes / 1e9:.3f} GB per layer "
+        f"(B={B}, H={H}, d_qkv={dq}, n_off={n_off}, {L}³, nc={NC})"
+    )
+    print(f"   measured copy bandwidth {bw / 1e9:.0f} GB/s → K̃ read once = "
+          f"{nbytes / bw * 1e3:.1f} ms, the 7.2× two-bracket route = "
+          f"{7.2 * nbytes / bw * 1e3:.1f} ms")
+
+    def run(fn, n=3):
+        for _ in range(2):
+            fn().abs().pow(2).sum().backward()
+        _sync(device)
+        t0 = time.perf_counter()
+        for _ in range(n):
+            fn()
+        _sync(device)
+        t_f = (time.perf_counter() - t0) / n
+        _sync(device)
+        t0 = time.perf_counter()
+        for _ in range(n):
+            fn().abs().pow(2).sum().backward()
+        _sync(device)
+        return t_f, (time.perf_counter() - t0) / n - t_f
+
+    K_contig = K_strided.detach().contiguous().requires_grad_()
+    alpha_b = alpha.unsqueeze(2).unsqueeze(-1).unsqueeze(-1)
+
+    compiled = None
+    if os.environ.get("PROFILE_ROPE_COMPILE", "1") == "1":
+        try:
+            compiled = torch.compile(_rope_score_single, dynamic=False)
+            compiled_real = torch.compile(_rope_score_real, dynamic=False)
+        except Exception as exc:  # noqa: BLE001 — a probe, not a dependency
+            print(f"   torch.compile unavailable: {str(exc)[:60]}")
+
+    stages = [
+        ("floor: K̃.sum(colour)  strided", lambda: K_strided.sum(dim=(-2, -1))),
+        ("floor: K̃.sum(colour)  contig ", lambda: K_contig.sum(dim=(-2, -1))),
+        ("K̃.contiguous() (the copy)    ", lambda: K_strided.contiguous()),
+        ("rope_score   current  strided", lambda: blk.rope_score(Q, K_strided)),
+        ("rope_score   current  contig ", lambda: blk.rope_score(Q, K_contig)),
+        ("rope_score   1-pass   strided", lambda: _rope_score_single(blk, Q, K_strided)),
+        ("rope_score   1-pass   contig ", lambda: _rope_score_single(blk, Q, K_contig)),
+        ("rope_score   1-pass-re strided", lambda: _rope_score_real(blk, Q, K_strided)),
+        ("rope_score   1-pass-re contig ", lambda: _rope_score_real(blk, Q, K_contig)),
+        ("value  (α·Ṽ).sum(n)   strided", lambda: (alpha_b * K_strided).sum(dim=3)),
+        ("value  (α·Ṽ).sum(n)   contig ", lambda: (alpha_b * K_contig).sum(dim=3)),
+    ]
+    if compiled is not None:
+        stages += [
+            ("rope_score   cmp-cplx strided", lambda: compiled(blk, Q, K_strided)),
+            ("rope_score   cmp-cplx contig ", lambda: compiled(blk, Q, K_contig)),
+            ("rope_score   cmp-real strided", lambda: compiled_real(blk, Q, K_strided)),
+            ("rope_score   cmp-real contig ", lambda: compiled_real(blk, Q, K_contig)),
+        ]
+
+    for name, fn in stages:
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+        try:
+            t_f, t_b = run(fn)
+        except RuntimeError as exc:  # OOM at this shape is itself information
+            print(f"  {name:<30}  FAILED: {str(exc)[:60]}")
+            continue
+        # "×roof" = how many times K̃ this stage's forward would have to read to
+        # justify its time at the measured bandwidth. A pure reduction should
+        # land near 1; the two-bracket route's traffic budget is 7.2.
+        roof = t_f * bw / nbytes
+        print(
+            f"  {name:<30}  fwd {t_f * 1e3:7.1f} ms   bwd {t_b * 1e3:7.1f} ms"
+            f"   (bwd/fwd {t_b / max(t_f, 1e-9):4.2f}, {roof:5.1f}× K̃ read)"
+        )
+
+
 def main():
     torch.manual_seed(0)
     device = _device()
@@ -394,6 +660,9 @@ def main():
     # L-CNN step beyond the whole-step and input-stage numbers above.
     if os.environ.get("PROFILE_MICRO", "1") == "1" and tg.ARCH == "gelt":
         micro_bench(device, b)
+
+    if os.environ.get("PROFILE_ROPE") == "1" and tg.ARCH == "gelt":
+        rope_bench(device, b)
 
     if os.environ.get("PROFILE_COMPILE") == "1":
         try:

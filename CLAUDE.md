@@ -397,9 +397,13 @@ landed work is worth **1.54×** in situ (the same profiler says 1.29 s for the
 matched-parameter L-CNN arm, so GELT costs 3.9× what it does — the architecture,
 not a defect). The profile re-ranked the backlog: **backward is 64% of the step
 and `rope_score` is the largest single stage** (238 ms per layer, ~the whole
-forward over four), so §5.3's unmaterialised contractions are now first — start
-with the single-pass-over-K̃ rewrite in §5.0, then `torch.compile` on that method
-alone. §5.1 (adjoint SO(3) transport) is still unmeasured: its micro-bench row
+forward over four). The roofline then re-ranked it again: that stage's whole
+traffic budget is 19 ms, so it is running **12× off**, and the suspect is that
+`GEMHSA.transport` returns a *non-contiguous* permuted view — making §5.2 (the
+Q/K/V layout), not §5.3 (the contraction), the thing to fix. Measure before
+writing: `PROFILE_ROPE=1 python scripts/profile_glueball_step.py` times every
+candidate on the permuted K̃ and on a contiguous copy against a measured
+bandwidth (§5.0(iii)). §5.1 (adjoint SO(3) transport) is still unmeasured: its micro-bench row
 OOM'd on a fragmented arena, fixed since. The ranked candidates and the numbers
 behind them are §5 of the note.
 
@@ -458,6 +462,7 @@ Z2G_R=6 Z2G_N_USE=800 python scripts/train_z2_glueball.py 0.756
 python scripts/z2_attention_correlator.py    # the Z₂ attention table
 python scripts/su2_attention_correlator.py   # the SU(2) row (~40 min)
 PROFILE_DIAGNOSTICS=1 python scripts/profile_glueball_step.py
+PROFILE_ROPE=1 python scripts/profile_glueball_step.py   # the rope_score bench
 pytest tests
 ```
 

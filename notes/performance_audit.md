@@ -345,6 +345,58 @@ GEMMs. Two moves that avoid that trap, in order:
   is exactly what inductor does; scoping it to one method sidesteps the
   whole-model compile risk. Measure, do not assume.
 
+**(iii) Traffic cannot be the whole story — the roofline says 12×.** K̃ at the
+production per-layer shape (B = 144, H = 2, d_qkv = 6, n_off = 25, 12³, nc = 2,
+complex64) is **2.389 GB**. The two-bracket route moves ~7.2× that — mul reads
+K̃ and writes the product, the colour sum reads it back, the within-pair sum
+once more, twice over — i.e. 17.2 GB, which is **19 ms** at 900 GB/s. Measured:
+**238 ms**. Even a perfectly fused kernel only has 2.7 ms of traffic to save, so
+*no* rearrangement of the contraction explains a factor of 12.
+
+The hypothesis §5 did not have: **`GEMHSA.transport` returns
+`out.permute(inv_perm)`, a non-contiguous view.** At the production shape its
+strides are `(…, 48, 24, 1)` for (innermost lattice axis, colour row, colour
+column) — the lattice walks in steps of nc·H·d_qkv·nc elements while the colour
+column walks in 1. So every downstream elementwise kernel reads K̃ (and Ṽ)
+uncoalesced: a warp walking the *contiguous output* touches ~8 cache lines where
+it should touch 2, and TensorIterator cannot collapse the dims because Q is
+broadcast over an offset axis sitting in the middle of the tensor. A 4–8×
+effective-bandwidth loss on top of the 7.2× traffic is the right order for the
+12×.
+
+If that is the 12×, **§5.2 (the Q/K/V memory layout) is the next item, not
+§5.3**, and the single-pass rewrite buys far less than its byte count promises —
+it would be optimising the smaller factor.
+
+**The bench that decides it: `PROFILE_ROPE=1 python scripts/profile_glueball_step.py`.**
+It times every candidate on K̃ *as transport returns it* and on a contiguous
+copy, against a **measured** copy bandwidth and a pure-reduction floor
+(`K̃.sum(colour)`), and quotes each stage as "× K̃ read" — how many times the
+tensor a stage would have to stream to justify its time. A pure reduction should
+land near 1; the two-bracket route's traffic budget is 7.2; the current stage is
+somewhere near 90 if the roofline arithmetic above is right. The same A/B runs
+on the value path `(α·Ṽ).sum(n)`, which reads the other half of the same
+permuted tensor, and on the `.contiguous()` copy itself, so the cost of the
+cheap fix is priced in the same table. Every candidate is pinned against
+`GEMHSA.rope_score` at a toy shape before anything is timed.
+
+The candidates, and what each one isolates:
+
+| candidate | isolates |
+|---|---|
+| `floor: K̃.sum(colour)` strided vs contig | the layout penalty, with no arithmetic at all |
+| `K̃.contiguous()` | what the cheap fix costs |
+| `current` strided vs contig | the layout penalty on the real stage |
+| `1-pass` (complex) | §5.0's first move: 7.2 → 5.25 × K̃, at a 2× product |
+| `1-pass-re` (real) | the same, in real arithmetic: `Re Σ conj(Q)K = Qr·Kr + Qi·Ki`, so the product is float32 where it was complex64 — the variant axis doubles a tensor that halved, **3.1 × K̃ at the current transient** |
+| `cmp-cplx`, `cmp-real` | §5.6, on both |
+
+**§5.6's first obstacle is confirmed, not assumed.** Compiling the complex
+candidate emits `UserWarning: Torchinductor does not support code generation for
+complex operators` — so a compiled complex multiply-reduce cannot fuse. The
+real-arithmetic candidate is the only one with a path to the ~1× floor, which is
+why it exists.
+
 **Still unmeasured: §5.1.** The micro-bench's `transport` row OOM'd asking for a
 4.45 GiB block while the step's ~20 GiB reservation sat fragmented and free — so
 the number that decides transport-vs-gather is the one we do not have. Fixed in
@@ -391,6 +443,12 @@ in `tests/test_blocks.py`**, which is exactly what they were written for.
 
 ### 5.2 Q/K/V memory layout — kill the transport's `permute` + `clone`
 
+**Prime suspect for the 238 ms after §5.0(iii).** The paragraphs below cost this
+item at its *input* permute — 189 MiB of `clone` per layer per forward. That
+undersells it: the *output* permute is never materialised, so the non-contiguity
+is inherited by every consumer of K̃ and Ṽ, and the copy it avoids is paid back
+with interest in uncoalesced reads. The same rewrite fixes both ends.
+
 `GEMHSA.transport` permutes `(B, H, d, n, *Λ, nc, nc)` to put the colour row index
 before `(H, d)`, then `reshape`s — which copies 189 MiB per layer per forward (the
 bulk of the `clone` row in §2), with terrible stride locality.
@@ -407,8 +465,10 @@ if 5.1 lands, redo this on top of the coefficient layout rather than before.
 
 ### 5.3 Unmaterialised score and value contractions
 
-**Promoted to first by the §5.0 measurement.** Read §5.0's two ordered moves
-before the paragraphs below, which predate the timing.
+**Promoted to first by the §5.0 measurement, then put back behind §5.2 by
+§5.0(iii)'s roofline** — the stage is 12× off its traffic budget, so the
+contraction is the smaller factor and the layout is the suspect. Read §5.0's
+three readings before the paragraphs below, which predate the timing.
 
 `(Q.unsqueeze(3).conj() * K_tilde).sum(…)` and `(alpha_b * V_tilde).sum(dim=3)`
 materialise the elementwise product before reducing it: ~190 MiB per layer per
