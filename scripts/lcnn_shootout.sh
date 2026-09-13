@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The matched-parameter L-CNN shootout (V100, unattended; ~1 h + 4 × ~2 h + 2 × ~8 h).
+# The matched-parameter L-CNN shootout (V100, unattended; ~4 h sweep + 2 × ~5 h).
 #
 # reports/curve §"7. The matched-parameter L-CNN" — the one baseline the thesis
 # names and has never run. Modelled on curve_batch.sh: phases are independent, a
@@ -7,15 +7,17 @@
 # phase whose test dump already exists is skipped, so a restart resumes where
 # the batch stopped.
 #
-#   part 0  profile one L-CNN step and confirm batch 6 fits. L-Bilin's channel-
-#           pair outer product (25×13 channels in the first block) is the memory
-#           wall, and BATCH_CONFIGS may NOT be lowered to dodge it — it is also
-#           the VEV-estimate knob, so a different batch stops the run being
-#           comparable to the GELT runs it is measured against.
+#   part 0  profile one L-CNN step. Measured 2026-09-13 after the rewrite of
+#           notes/lcnn_shootout.md §8: 1.29 s/step, 302 s/epoch, 7.86 GiB peak
+#           with --grad-checkpoint=0 (1.21× faster than recomputing, and the
+#           memory is there). BATCH_CONFIGS may NOT be moved whatever the
+#           profile says — it is also the VEV-estimate knob, so a different
+#           batch stops the run being comparable to the GELT runs it is
+#           measured against; c_hidden is the knob if one is ever needed.
 #   part 1  the hyperparameter sweep. GELT's LR and INIT_SCALE were tuned for
 #           GELT; a losing L-CNN at GELT's settings is uninterpretable. Four
-#           short runs (--epochs=10, ~1/6 of a full run), tagged so none of them
-#           can collide with the real thing. Read the val curves, pick, then set
+#           short runs (--epochs=10, ~50 min each), tagged so none of them can
+#           collide with the real thing. Read the val curves, pick, then set
 #           LR/INIT below before running part 2.
 #   part 2  the two real trainings, ens0 (run5's ensemble) and ens1, at the
 #           chosen settings — the same two ensembles every other claim uses.
@@ -51,6 +53,11 @@ PARTS="${LCNN_PARTS:-0,1}"
 LR="${LCNN_LR:-3e-3}"
 INIT="${LCNN_INIT:-1.0}"
 LEVELS=0,2,4,6           # the 4-level ladder of the d_model=16 GELT net
+# Gradient checkpointing off for this arm: one L-CNN block peaks at 2.6 GiB, so
+# the whole step fits in 7.86 GiB of the card's 32 and the recompute is pure
+# cost (1.56 s/step with it, 1.29 s without). L-CNN-only — GELT OOMs at batch 4
+# without it.
+CKPT_FLAG=--grad-checkpoint=0
 STEM=results/glueball/best_glueball_lcnn_sm0-2-4-6
 
 stamp() { date "+%F %T"; }
@@ -104,7 +111,7 @@ if wants 1; then
     set -- ${CFG}; SLR="$1"; SINIT="$2"
     TAG="_sweep_lr${SLR}_is${SINIT}"
     run_phase "lcnn_sweep_lr${SLR}_is${SINIT}" "${STEM}${TAG}_test_obars.pt" \
-      python -u scripts/train_glueball.py --arch=lcnn --resume=0 \
+      python -u scripts/train_glueball.py --arch=lcnn --resume=0 ${CKPT_FLAG} \
       --ensemble-seed=0 --input-smear-levels=${LEVELS} --epochs=10 \
       --lr=${SLR} --lcnn-init-scale=${SINIT} --run-tag=${TAG}
   done
@@ -118,7 +125,7 @@ if wants 2; then
   for ENS in 0 1; do
     E=$([ "${ENS}" = 0 ] && echo "" || echo "_ens${ENS}")
     run_phase "lcnn_train_ens${ENS}" "${STEM}${E}_test_obars.pt" \
-      python -u scripts/train_glueball.py --arch=lcnn --resume=0 \
+      python -u scripts/train_glueball.py --arch=lcnn --resume=0 ${CKPT_FLAG} \
       --ensemble-seed=${ENS} --input-smear-levels=${LEVELS} \
       --lr=${LR} --lcnn-init-scale=${INIT}
   done
@@ -131,7 +138,7 @@ if wants 3; then
     E=$([ "${ENS}" = 0 ] && echo "" || echo "_ens${ENS}")
     for SEED in 0 1 2; do
       run_phase "lcnn_rnd_ens${ENS}_s${SEED}" "${STEM}${E}_rnd${SEED}_test_obars.pt" \
-        python -u scripts/train_glueball.py --arch=lcnn --random-init=1 \
+        python -u scripts/train_glueball.py --arch=lcnn --random-init=1 ${CKPT_FLAG} \
         --ensemble-seed=${ENS} --init-seed=${SEED} \
         --input-smear-levels=${LEVELS} --lcnn-init-scale=${INIT}
     done

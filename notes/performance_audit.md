@@ -433,6 +433,16 @@ so 2000 configurations is **~95 GB**. fp16 halves it and changes the network's
 inputs. And after §3.1–3.2 the input stage is not what dominates. Rejected on
 size, not on principle.
 
+**Re-opened for the L-CNN arm (2026-09-13), on the second reason only.** After
+`notes/lcnn_shootout.md` §8 took that block from 13.3 s to 1.29 s/step,
+`config_inputs` is **44.9% of the step** (579 ms, of which the APE ladder is
+489 ms) against 380 ms forward and 329 ms backward — it is now exactly what
+dominates. The size argument is untouched, and W alone for the *train split* is
+still 22 GB, so nothing is cheap here; but "the input stage is not what
+dominates" can no longer be quoted as a reason. The same 579 ms sits inside
+every GELT step too, where it is a smaller fraction only because the model half
+costs more.
+
 ### 6.2 Lower precision
 
 The V100 has no bf16. fp16's range is dangerous given this codebase's documented

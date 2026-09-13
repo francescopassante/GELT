@@ -97,12 +97,31 @@ and starts at C(0) ~ 0.3.
 
 ## 5. Memory
 
-Measured on the V100 at the production batch: **9.4 GiB peak**, against GELT's
-~25 GiB — batch 6 is safe with room to spare, and `BATCH_CONFIGS` never has to
-move. That was before §8.2–8.4; one block now peaks at 2.6 GiB, so **gradient
-checkpointing may no longer pay for itself here** — it buys memory nobody needs
-at the price of one extra forward per layer. `--grad-checkpoint=0` A/Bs it in
-the profiler; decide from that measurement, not from this sentence. (It may not anyway: it is also the VEV-estimate knob of the ratio
+The whole step, profiled on the V100 at `BATCH_CONFIGS = 6` (`--arch=lcnn`):
+
+| | s/step | s/epoch | peak |
+|---|---|---|---|
+| before §8 (`c_hidden = 6`, one-sided kernel) | 13.31 | 3115 | 9.42 GiB |
+| after §8, gradient checkpointing on | 1.56 | 366 | 4.70 GiB |
+| after §8, **checkpointing off** | **1.29** | **302** | 7.86 GiB |
+
+**10.3× on the step**, against a kernel now doing 1.9× more shift terms — part
+the rewrites, part the narrower matched width. Checkpointing is off for this arm
+in `lcnn_shootout.sh`: at 2.6 GiB a block it buys memory nobody needs and costs
+an extra forward per layer. That is an L-CNN-only setting — GELT OOMs at batch 4
+without it. `BATCH_CONFIGS` still may not move whatever the profile says: it is
+the VEV-estimate knob of the ratio estimator, so a different batch stops the run
+being comparable to the GELT runs it is measured against. If a step ever does not
+fit, `c_hidden` is the knob.
+
+At 1.29 s/step the batch is one night: ~50 min per sweep arm (10 epochs), ~5.0 h
+per full 60-epoch training, nearer 2 h if it early-stops where GELT did.
+
+**The input stage is now the largest single term** — `config_inputs` is 44.9% of
+the step (579 ms), of which the APE ladder is 489 ms, against 380 ms of forward
+and 329 ms of backward. See `notes/performance_audit.md` §6.1: caching it was
+rejected partly because "the input stage is not what dominates", which is no
+longer true for this arm. (It may not anyway: it is also the VEV-estimate knob of the ratio
 estimator, so changing it stops the run being comparable to the GELT runs it is
 measured against. If a step ever does not fit, `c_hidden` is the knob.)
 
