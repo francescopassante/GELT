@@ -28,3 +28,13 @@ logs/
 *.bcf
 *.blg
 *.run.xml
+
+# Third-party reference implementation (MIT, Favoni et al. 2012.12901). Only the
+# L-CNN layer code is tracked — scripts/bench_lcnn_reference.py loads
+# lge_cnn/nn/layers.py by path, so the V100 gets it with a pull instead of an
+# scp. The fixed-point-action checkpoints (4 × 3.1 MB), the HMC code and the
+# conda environments are not needed here and stay out of the repo.
+lge-cnn-master/*
+!lge-cnn-master/lge_cnn/
+!lge-cnn-master/LICENSE
+!lge-cnn-master/README.md

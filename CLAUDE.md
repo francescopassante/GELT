@@ -115,6 +115,10 @@ architectural — what is learned is `Z_r/Z_G` (0.146 vs 0.047) and the sign of
 
 Library in `gelt/`, entry points in `scripts/`, pytest in `tests/`. Installed
 editable via `pyproject.toml`. Device order: cuda → mps → cpu.
+`lge-cnn-master/` is vendored third-party code — the authors' own L-CNN
+implementation (MIT, Favoni et al. 2012.12901), layer sources only, tracked so
+`scripts/bench_lcnn_reference.py` runs anywhere the repo is cloned. Nothing in
+`gelt/` imports it.
 
 ### `gelt/`
 

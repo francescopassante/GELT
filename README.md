@@ -94,6 +94,9 @@ reports/               LaTeX write-ups and their PDFs (paper / glueball / attent
 dumps/                 the two test-split Ō dumps — tracked on purpose
 results/               generated figures, checkpoints, dumps (gitignored)
 datasets/              cached ensembles (gitignored)
+lge-cnn-master/        the authors' L-CNN implementation (MIT, Favoni et al.
+                       2012.12901) — layer code only, the opponent in
+                       bench_lcnn_reference.py
 PLANS.md               future directions — proposals, none implemented
 CLAUDE.md              module-by-module detail, conventions, status, caveats
 ```
