@@ -50,6 +50,15 @@ Two audits of the above, neither of which main.tex quotes:
 | Did the network find operator content the classical basis cannot express? | *offline:* `python scripts/operator_decomposition.py` — 12.9% of the norm² outside the published span, ΔA₀ = +0.076 ± 0.019 (4.0σ). Add `--basis=dumps/su2_fair_fight_obars_run5.pt:deep` for the strong arm (+0.097 ± 0.021) and `--shape-span=…:full` for what `r` is made of (80% rectangular loops); `--m-ref` runs the untrained control, where ΔA₀ flips sign. `notes/operator_decomposition.md` |
 | Is the advantage the architecture, or just richer inputs? | *GPU, ~1.5 days:* `bash scripts/curve_batch.sh` (3 trained points + the untrained trace), then *offline:* one `SFF_TRUNCATE=1 SFF_BASES=1 python scripts/su2_fair_fight.py <dump>` per dump and `python scripts/input_architecture_curve.py`. A₀ against input content for classical / trained / untrained. Verdict in `notes/fable5.1_10-09_audit.md` §8.2 |
 
+**Built but not yet run.** *Is the advantage attention, or any gauge-equivariant
+network on the same inputs?* `GLUEBALL_ARCH=lcnn python scripts/train_glueball.py`
+runs a matched-parameter L-CNN on the identical problem, and
+`bash scripts/lcnn_shootout.sh` is the V100 batch around it (step profile, LR ×
+init-scale sweep, two trainings, the untrained control). The dumps read like any
+other, so the whole offline layer applies unchanged. What "matched" means, and
+the readings fixed in advance, are in `notes/lcnn_shootout.md` — there is no
+result yet.
+
 **Known caveat that touches the Z₂ table.** Projected Z₂ APE smearing has no
 tunable radius at any α, and at the production `SMEAR_ALPHA = 0.5` it is not
 gauge covariant: the classical Z₂ comparator is one operator, not four, and the
@@ -72,7 +81,8 @@ gelt/                  library (installed editable via pyproject.toml)
   blocks.py            GEMHSA / ChannelLift / Trace / MLP / GELT — the one block
   glueball.py          0⁺⁺ spectroscopy: APE smearing, correlators, m_eff,
                        multi-level GEVP, cosh fits, overlap A₀, jackknife
-  lcnn.py              Favoni et al. L-CNN — equivariant baseline
+  lcnn.py              Favoni et al. L-CNN — the equivariant baseline, on the
+                       Wilson-loop task and (matched-parameter) the glueball one
   cnn_baseline.py      LatticeCNN — non-equivariant reference
   data.py              dataset construction and splits
 
@@ -100,7 +110,8 @@ CLAUDE.md              module-by-module detail, conventions, status, caveats
 | `curve_batch.sh` | the V100 batch behind the curve: the untrained trace, the thin points, the width control |
 | `input_architecture_curve.py` | assembles the per-dump fair fights into A₀(x), the figure, the LaTeX table and the pre-registered tests |
 | `measure_glueball.py` | classical 0⁺⁺ baseline: correlator, GEVP m_eff, ensemble cache |
-| `train_glueball.py` | GELT as a variational operator on the Rayleigh loss |
+| `train_glueball.py` | GELT as a variational operator on the Rayleigh loss — `--arch=lcnn` runs the matched-parameter L-CNN on the identical problem |
+| `lcnn_shootout.sh` | the V100 batch behind the L-CNN shootout: profile, LR/init sweep, two trainings, the untrained control |
 | `fit_glueball_overlap.py` | cosh fits, overlap A₀, correlated (Δm, ΔA₀) — offline |
 | `overnight_replication.sh` | fresh ensemble + from-scratch training, unattended |
 | `operator_decomposition.py` | O_GELT = P + r against the classical span, any fair-fight arm — offline |

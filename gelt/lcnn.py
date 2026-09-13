@@ -25,6 +25,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 
 
 def build_axis_transports(
@@ -280,7 +281,8 @@ class LCNN(nn.Module):
 
     Pipeline:
       1. Plaquette input ``(B, C_in, *Λ, nc, nc)`` with ``C_in = D(D-1)/2``
-         (already built by the dataset).
+         (already built by the dataset) — or ``C_in = in_channels`` when a
+         stacked multi-level input is passed instead.
       2. Stack of L-CB blocks (optionally followed by L-Act), each
          consuming the precomputed axis-aligned transports
          ``U^(k)_μ(x)`` from :func:`build_axis_transports`.
@@ -290,6 +292,10 @@ class LCNN(nn.Module):
          the spatial reduction is applied last.
       5. Optional spatial reduction (``"sum"`` / ``"mean"`` / ``"none"``)
          to match the GELT model's reduction modes.
+
+    ``in_channels``, ``init_scale`` and ``grad_checkpoint`` are the knobs the
+    matched-parameter glueball shootout needs; all three default to the
+    reference behaviour.
     """
 
     def __init__(
@@ -306,6 +312,9 @@ class LCNN(nn.Module):
         reduction: str = "sum",
         use_l_act: bool = True,
         gate: str = "softplus",
+        in_channels: int | None = None,
+        init_scale: float = 1.0,
+        grad_checkpoint: bool = False,
     ):
         super().__init__()
         if reduction not in ("sum", "mean", "none"):
@@ -317,9 +326,15 @@ class LCNN(nn.Module):
         self.D = D
         self.gaugegroup = gaugegroup
 
-        c_in_plaq = D * (D - 1) // 2
+        # Input width. The default D(D-1)/2 is the plain plaquette input the
+        # dataset builders produce; `in_channels` overrides it for a stacked
+        # multi-level input (the glueball task feeds 3 spatial-plaquette
+        # channels per APE smearing level, exactly as GELT does — matching the
+        # *inputs* is what keeps the shootout a comparison of architectures).
+        c_in_plaq = D * (D - 1) // 2 if in_channels is None else in_channels
         self.c_in_plaq = c_in_plaq
         self.c_hidden = c_hidden
+        self.grad_checkpoint = grad_checkpoint
 
         # Stack of L-CB (+ L-Act). The first block maps C_in_plaq → c_hidden;
         # subsequent blocks keep the width at c_hidden.
@@ -335,10 +350,26 @@ class LCNN(nn.Module):
         )
 
         # Real-valued per-site head (Trace produces 2·c_hidden reals per site).
-        real_dtype = torch.float64 if dtype == torch.complex128 else torch.float32
+        # float64 in, float64 out: a real model (Z₂, where nc = 1) is built at
+        # torch.float64 for the high-precision gauge tests, and mapping it to a
+        # float32 head would fail the matmul outright.
+        real_dtype = (
+            torch.float64
+            if dtype in (torch.complex128, torch.float64)
+            else torch.float32
+        )
         self.trace = Trace()
         self.head_fc1 = nn.Linear(2 * c_hidden, mlp_hidden).to(real_dtype)
         self.head_fc2 = nn.Linear(mlp_hidden, mlp_out).to(real_dtype)
+        # Output scale knob, mirroring GELT's `init_scale`. The reference init
+        # is scale-agnostic because the paper's losses are supervised; a
+        # Rayleigh objective is invariant under O → λO, so only the scale pin
+        # (train_glueball.SCALE_REG) sees λ — this exists so the pin does not
+        # have to travel decades before the ratio terms dominate the gradient.
+        if init_scale != 1.0:
+            with torch.no_grad():
+                self.head_fc2.weight.mul_(init_scale)
+                self.head_fc2.bias.mul_(init_scale)
 
     def forward(self, W: torch.Tensor, U_transports: torch.Tensor) -> torch.Tensor:
         """W : ``(B, C_in_plaq, *Λ, nc, nc)`` — plaquettes.
@@ -352,7 +383,16 @@ class LCNN(nn.Module):
             U_transports = U_transports.to(w_dtype)
 
         for lcb, act in zip(self.lcb_blocks, self.l_acts):
-            W = lcb(W, U_transports)
+            if self.grad_checkpoint and self.training and torch.is_grad_enabled():
+                # Same trade as GELT.attn: recompute the block in backward
+                # rather than store it. L-Bilin's (c_left, c_right) outer
+                # product is the memory wall here — 13×13 channel pairs per
+                # site at c_hidden = 6, 25×13 in the first block — so at the
+                # glueball task's B = configs·Lt this is what makes batch 6
+                # fit. use_reentrant=False: U_transports carries no grad.
+                W = checkpoint(lcb, W, U_transports, use_reentrant=False)
+            else:
+                W = lcb(W, U_transports)
             W = act(W)
 
         trace = self.trace(W).movedim(1, -1)  # (B, *Λ, 2·c_hidden)

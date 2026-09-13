@@ -37,6 +37,9 @@ or "removed in the 2026-09-09 cleanup", that is where it went.
 - `notes/glueball_spectroscopy.md` — the run-by-run record of the SU(2) 0⁺⁺
   program: the anisotropy pivot, the multi-level smeared inputs, Runs 4–5, the
   §6.2 audit, the presentation layer, the replication.
+- `notes/lcnn_shootout.md` — the design record for the matched-parameter L-CNN
+  baseline: what "matched" means on four axes, why it is a switch inside
+  `train_glueball.py`, and the readings fixed in advance. **Built, not run.**
 - `notes/attention_as_operator.md` — the design record for "the attention map is
   a lattice operator": why ℓ_att failed and the correlator of the attention field
   does not, the three arms, the Z₂ result (§6.1) and its transport to SU(2) (§9).
@@ -202,7 +205,13 @@ editable via `pyproject.toml`. Device order: cuda → mps → cpu.
 - **`lcnn.py`** — Favoni et al. L-CNN: `build_axis_transports` (axis-aligned link
   products — distinct from GELT's L1-ball `T`), `LConv`, `LBilin`, `LCB`,
   `LAct`, `Trace`, `LCNN`. Mirrors `GELT`'s I/O so the two are
-  matched-parameter comparable. The matched shootout has **not** been run.
+  matched-parameter comparable. `LCNN` also takes `in_channels` (the stacked
+  multi-level smeared input the glueball task feeds), `init_scale` (output
+  scale, GELT's knob under another name) and `grad_checkpoint` (L-Bilin's
+  channel-pair outer product is the memory wall at the production batch).
+  **The matched shootout is wired up but has not been run** — it is
+  `GLUEBALL_ARCH=lcnn` in `train_glueball.py`, driven by `lcnn_shootout.sh`;
+  design and pre-registered readings in `notes/lcnn_shootout.md`.
 - **`cnn_baseline.py`** — `LatticeCNN`: non-equivariant baseline; `Conv2d`/
   `Conv3d` for D=2/3 and a roll-based `_RollConvND` for D≥4.
 
@@ -221,11 +230,20 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   `Ō → λŌ` flat direction. Env overrides (each also `--name=value` in argv):
   `GLUEBALL_ENSEMBLE_SEED`, `GLUEBALL_INIT_SEED`, `GLUEBALL_RESUME`,
   `GLUEBALL_EVAL_ONLY`, `GLUEBALL_INPUT_SMEAR_LEVELS`, `GLUEBALL_D_MODEL`,
-  `GLUEBALL_RANDOM_INIT` (the untrained, eval-only baseline) and
-  `GLUEBALL_RUN_TAG`. Artifact names are `_sm<levels>` + `_d<width>` +
-  `_ens<k>` + `_rnd<k>|_init<k>` + tag, so no run overwrites another; the two
-  7-level nets are d_model 24 but predate the `_d` tag. Dumps
+  `GLUEBALL_RANDOM_INIT` (the untrained, eval-only baseline), `GLUEBALL_LR`,
+  `GLUEBALL_EPOCHS` and `GLUEBALL_RUN_TAG`. Artifact names are `_sm<levels>` +
+  `_d<width>` + `_ens<k>` + `_rnd<k>|_init<k>` + tag, so no run overwrites
+  another; the two 7-level nets are d_model 24 but predate the `_d` tag. Dumps
   the test-split Ō arrays to `datasets/…_test_obars.pt` (also kept in `dumps/`).
+  **`GLUEBALL_ARCH=lcnn`** swaps in the matched-parameter L-CNN
+  (`GLUEBALL_LCNN_K|_C_HIDDEN|_LAYERS|_INIT_SCALE`, defaults 2/6/4/1.0) and its
+  axis-aligned transports, leaving ensemble, splits, inputs, loss, selection and
+  jackknife identical by construction — `_build_model()` is the one constructor
+  (`profile_glueball_step.py` calls it too, so the profiler cannot drift). The
+  stem becomes `best_glueball_lcnn…`, the geometry slot carries
+  `_k<K>c<c_hidden>l<layers>` when non-default, and the dump keeps the
+  `gelt_obar` key (one learned operator against the classical span, whatever
+  produced it) plus `meta["arch"]`.
 - **`z2_attention_correlator.py`** — the Z₂ table. GEVP t0=1/td=2, window
   Δ∈[2,8], cosh + A₀, blocked jackknife block 20, config-scramble null,
   time-shuffle zero-mode check, correlated ΔA₀. `ZAC_REPLOT=<dump.pt>` regenerates
@@ -251,6 +269,12 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   `results/fair_fight/input_architecture_curve.{png,pt,tex}`. Its V100 half is
   `curve_batch.sh` (untrained evals, the thin points, the width control), which
   refuses to run without CUDA and skips phases whose dump exists.
+- **`lcnn_shootout.sh`** — the L-CNN batch: profile a step, a 4-point LR ×
+  init-scale sweep (10-epoch runs under disposable `_sweep_*` tags), the two
+  full trainings (ens0, ens1), the untrained control. `LCNN_DRY_RUN=1` lists the
+  phases without a GPU; `LCNN_PARTS=2,3 LCNN_LR=… LCNN_INIT=…` runs the second
+  half once the sweep has been read. Refuses to run on the CPU and skips any
+  phase whose dump exists.
 - **`operator_decomposition.py`** — `O_GELT = P + r` in the exact Hilbert-space
   metric `C_ab(0)`, offline from the `dumps/` Ō arrays. Prints the published
   comparison first as a gate. `--basis=<obars.pt>:<arm>` swaps the span for a
@@ -293,6 +317,11 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   exactly; the truncated whitening is the identity on a well-conditioned C(t0)
   and survives an exactly duplicated operator; `fit_cosh_correlator` recovers
   `(m, A)`.
+- **`test_lcnn.py`** — the L-CNN as the glueball baseline: gauge invariance of
+  the per-site readout on stacked multi-level inputs (SU(2) complex128, both
+  gates; Z₂ float64), `in_channels` defaulting to the plaquette count,
+  gradient checkpointing bit-exact, `init_scale` linear in the output, and the
+  parameter match against both trained GELT nets (real DOFs within 15%).
 - **`test_data_model.py`** — split validation and CNN-baseline shape guards.
 
 ## Conventions
@@ -394,6 +423,8 @@ python scripts/train_glueball.py             # GELT as a variational operator
 python scripts/fit_glueball_overlap.py [dump]      # cosh fits + A₀ (offline)
 bash   scripts/overnight_replication.sh      # fresh ensemble + retraining (~24 h)
 bash   scripts/curve_batch.sh                # the curve's random trace + 3 trainings
+GLUEBALL_ARCH=lcnn python scripts/train_glueball.py  # the matched-parameter L-CNN
+LCNN_DRY_RUN=1 bash scripts/lcnn_shootout.sh # the L-CNN batch: what would run
 python scripts/operator_decomposition.py     # O = P + r (offline, seconds)
 python scripts/input_architecture_curve.py   # A₀ vs input content (offline, seconds)
 SFF_NOCACHE=1 python scripts/su2_fair_fight.py     # reproduce ΔA₀ offline
@@ -425,7 +456,10 @@ Ranked in `notes/audit_2026-09-06.md` §4, and unchanged by the cleanup:
 4. **Dump per-config Ō from `z2_attention_correlator.py`** so the decomposition
    transports to the attention field without a GPU re-run.
 5. **The matched-parameter L-CNN shootout** on the per-timeslice glueball task —
-   the one baseline the thesis names and has never run.
+   the one baseline the thesis names and has never run. **Wired up 2026-09-13**
+   (`GLUEBALL_ARCH=lcnn`, `scripts/lcnn_shootout.sh`, `notes/lcnn_shootout.md`);
+   what remains is GPU time: a step profile, the LR/init sweep, two trainings.
+   The analysis layer needs no new code — the dumps read as any other.
 
 ## Things to keep in mind
 

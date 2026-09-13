@@ -33,8 +33,16 @@ noise, so the variational bound can be spuriously violated on the training
 sample; and residual autocorrelation on the anisotropic ensemble is not fully
 characterized, so we delete blocks (~10 configs) rather than single configs.
 
+``GLUEBALL_ARCH=lcnn`` swaps the model for a matched-parameter L-CNN (Favoni et
+al. 2012.12901) and its axis-aligned transports, leaving the ensemble, the
+splits, the input channels, the loss, the checkpoint selection and the jackknife
+untouched — the matched shootout of reports/curve §7. Everything downstream is
+unchanged: the dump keeps the ``gelt_obar`` key (it is still *one learned
+operator* against the classical span) and records ``meta["arch"]``.
+
 Run:
     python scripts/train_glueball.py
+    GLUEBALL_ARCH=lcnn python scripts/train_glueball.py
 """
 
 import functools
@@ -57,6 +65,7 @@ from gelt.glueball import (
     gevp_effective_mass,
 )
 from gelt.lattice import SU, build_transport_average, plaquette_tensor
+from gelt.lcnn import LCNN, build_axis_transports
 from gelt.sampler import heatbath_overrelaxation_sweep, mcmc_ensemble
 
 # Output artifacts are grouped by study under results/; create the dirs the
@@ -96,6 +105,14 @@ def _env_str(name, default):
         if a.startswith(flag):
             return a.split("=", 1)[1]
     return os.environ.get(name, default)
+
+
+def _env_float(name, default):
+    flag = f"--{name.lower().replace('glueball_', '').replace('_', '-')}="
+    for a in sys.argv[1:]:
+        if a.startswith(flag):
+            return float(a.split("=", 1)[1])
+    return float(os.environ.get(name, default))
 
 
 def _env_levels(name, default):
@@ -155,6 +172,18 @@ CACHE = (
     + ".pt"
 )
 
+# ── Architecture: GELT, or the matched-parameter L-CNN baseline ──────────────
+# The shootout the thesis names and had never run (reports/curve §"7. The
+# matched-parameter L-CNN"). It lives in *this* script rather than a sibling for
+# the same reason train_gelt.py and train_cnn.py are one problem: ensemble,
+# splits, input channels, loss, checkpoint selection and jackknife must be
+# identical by construction, or the comparison silently stops being one. Only
+# the model and its transport change.
+ARCH = _env_str("GLUEBALL_ARCH", "gelt").lower()
+if ARCH not in ("gelt", "lcnn"):
+    raise SystemExit(f"GLUEBALL_ARCH must be 'gelt' or 'lcnn' (got {ARCH!r})")
+NET = "GELT" if ARCH == "gelt" else "L-CNN"
+
 # GELT / training hyperparameters.
 R = 2  # L1-ball radius of the (3D) transport — the "smearing level" budget (§7)
 GEMHSA_LAYERS = 4  # the value path is bilinear, so loop degree doubles per
@@ -176,7 +205,36 @@ QK_INIT_SCALE = 1.0
 GATE = "softplus"
 MODEL_DTYPE = torch.complex64
 
-LR = 3e-3
+# L-CNN geometry (ARCH="lcnn"). Chosen to match GELT on the four axes that make
+# the shootout a statement about architecture, not budget — counts are real
+# DOFs, since a complex weight is two of them:
+#   * parameters:     K=2, c_hidden=6, 4 layers = 17.3k, against GELT's 15.7k at
+#                     d_model=16 with 4 smear levels (1.11×) and 23.7k at
+#                     d_model=24 with 7 levels (0.93×) — one L-CNN config
+#                     brackets both trained nets within ~10%.
+#   * receptive field: K=2 over 4 layers reaches Manhattan radius 8, as R=2 over
+#                     4 GEMHSA layers does. L-Conv's steps are axis-aligned, so
+#                     the off-axis reach GELT has *within* a layer is recovered
+#                     only by stacking — that asymmetry is the architecture
+#                     difference under test, not a handicap to correct for.
+#   * loop degree:    L-CB doubles the maximum loop degree per layer exactly as
+#                     the matrix-bilinear value path does: ≤ 16 at 4 layers.
+#   * inputs:         in_channels = 3·len(INPUT_SMEAR_LEVELS), the identical
+#                     multi-level smeared channels. Handing the L-CNN thin
+#                     plaquettes would repeat the `published` straw-man mistake
+#                     with the sign flipped.
+LCNN_K = _env_int("GLUEBALL_LCNN_K", 2)
+LCNN_C_HIDDEN = _env_int("GLUEBALL_LCNN_C_HIDDEN", 6)
+LCNN_LAYERS = _env_int("GLUEBALL_LCNN_LAYERS", 4)
+LCNN_INIT_SCALE = _env_float("GLUEBALL_LCNN_INIT_SCALE", 1.0)
+# The reference init is scale-agnostic (the paper's losses are supervised), and
+# the Rayleigh ratios are invariant under Ō → λŌ, so only the (log C(0))² pin
+# sees λ — but it sees it loudly: a probe batch starts at C(0) ~ 1e10, i.e. a pin
+# term of ~5 against ratio terms bounded by 1, so the first steps are spent
+# travelling in λ rather than in shape. This knob moves the start (either way;
+# GELT's own INIT_SCALE = 10 exists for the same reason). Sweep it with the LR.
+
+LR = _env_float("GLUEBALL_LR", 3e-3)
 WEIGHT_DECAY = 1e-3  # AdamW decoupled decay: the unregularized run's val curve
 #                      turned up at ~epoch 10 while train kept falling (overfit
 #                      on ~1400 configs) — this is the cheap counter before
@@ -186,7 +244,7 @@ WEIGHT_DECAY = 1e-3  # AdamW decoupled decay: the unregularized run's val curve
 # for the 160k-step regime the StepLR(150) assumed; both were an order of
 # magnitude oversized.) 40 → 60 with AdamW: weight decay shifts the val minimum
 # later than the unregularized run's ~epoch-10 turn-up.
-EPOCHS = 60
+EPOCHS = _env_int("GLUEBALL_EPOCHS", 60)
 PATIENCE = 10
 BATCH_CONFIGS = 6  # configs per minibatch; each expands to BATCH_CONFIGS·LT 3D
 #                    slices through the network. This is the memory knob (T and
@@ -254,17 +312,28 @@ INPUT_SMEAR_LEVELS = _env_levels("GLUEBALL_INPUT_SMEAR_LEVELS", (0, 2, 4, 6))
 # Artifact tag: a non-default width, a non-default seed, the random-init
 # baseline and GLUEBALL_RUN_TAG each get their own checkpoint / dump / plot
 # names, so no run clobbers another's artifacts (default names are unchanged).
-# Order: _d<width> _ens<k> (_rnd<k> | _init<k>) <user tag>. `_ens<k>` must stay
+# Order: <geometry> _ens<k> (_rnd<k> | _init<k>) <user tag>. `_ens<k>` must stay
 # in the name — su2_fair_fight.py pairs a dump with its ensemble through it.
 # The two 7-level nets of 2026-09-08/09 are d_model 24 but predate the _d tag,
-# so their names carry no width.
-RUN_TAG = (
+# so their names carry no width. The geometry slot is the width for GELT and the
+# (K, c_hidden, layers) triple for the L-CNN; the architecture itself is in the
+# stem, so a GELT and an L-CNN run can never collide.
+ARCH_TAG = (
     ("" if D_MODEL == 16 else f"_d{D_MODEL}")
+    if ARCH == "gelt"
+    else (
+        ""
+        if (LCNN_K, LCNN_C_HIDDEN, LCNN_LAYERS) == (2, 6, 4)
+        else f"_k{LCNN_K}c{LCNN_C_HIDDEN}l{LCNN_LAYERS}"
+    )
+)
+RUN_TAG = (
+    ARCH_TAG
     + ("" if ENSEMBLE_SEED == 0 else f"_ens{ENSEMBLE_SEED}")
     + (f"_rnd{INIT_SEED}" if RANDOM_INIT else "" if INIT_SEED == 0 else f"_init{INIT_SEED}")
     + USER_TAG
 )
-CHECKPOINT = "results/glueball/best_glueball_gelt" + (
+CHECKPOINT = f"results/glueball/best_glueball_{ARCH}" + (
     ""
     if tuple(INPUT_SMEAR_LEVELS) == (0,)
     else "_sm" + "-".join(str(lv) for lv in INPUT_SMEAR_LEVELS)
@@ -321,7 +390,15 @@ def config_inputs(U4_batch, device):
             U3_first = U3  # least-smeared level — supplies the transport below
         Ws.append(plaquette_tensor(U3, gaugegroup))  # (b·Lt, 3, L,L,L, nc,nc) spatial planes
     W = torch.cat(Ws, dim=1)  # (b·Lt, 3·n_levels, L,L,L, nc,nc)
-    T = build_transport_average(U3_first, R, gaugegroup)  # (b·Lt, n_off, L,L,L, nc,nc)
+    if ARCH == "lcnn":
+        # The L-CNN's transport is the axis-aligned link product U^(k)_μ
+        # (Favoni Eq. 5), not the L1-ball shortest-path average — that
+        # substitution *is* the architecture under test. Built from the same
+        # least-smeared 3D slice, so the per-timeslice property is identical
+        # and the variational bound holds for both networks alike.
+        T = build_axis_transports(U3_first, LCNN_K, gaugegroup)  # (b·Lt, 3, K, L,L,L, nc,nc)
+    else:
+        T = build_transport_average(U3_first, R, gaugegroup)  # (b·Lt, n_off, L,L,L, nc,nc)
     return W, T
 
 
@@ -336,6 +413,65 @@ def network_obar(model, U4_batch, device):
     O = model(W, T)  # (b·Lt, L, L, L) per-site invariant scalar
     Obar = O.sum(dim=(1, 2, 3))  # zero-momentum projection → (b·Lt,)
     return Obar.view(b, Lt)
+
+
+def _geometry_label():
+    """One-line model geometry for plot titles — whichever architecture ran."""
+    if ARCH == "lcnn":
+        return f"K={LCNN_K}, c_hidden={LCNN_C_HIDDEN}, layers={LCNN_LAYERS}"
+    return f"R={R}, layers={GEMHSA_LAYERS}"
+
+
+def _build_model():
+    """The per-timeslice 3D operator network selected by ``ARCH``.
+
+    Both branches are ``reduction="none"`` (a per-site gauge-invariant scalar
+    field O(x), which ``network_obar`` projects to zero momentum), both eat
+    ``in_channels = 3·len(INPUT_SMEAR_LEVELS)`` and both take their transport
+    from the same 3D slice — the only difference is the block. Neither may have
+    a zero-init readout: C(0) and C(Δ) are both quadratic in the output, so the
+    Rayleigh gradient at O ≡ 0 is *exactly* zero and training never starts
+    (audit item 3). GELT states that as ``mlp_zero_init=False``; the L-CNN's
+    reference head init is already nonzero.
+    """
+    if ARCH == "lcnn":
+        return LCNN(
+            gaugegroup=gaugegroup,
+            L=L,
+            D=3,  # per-timeslice 3D operator (audit item 1)
+            K=LCNN_K,
+            c_hidden=LCNN_C_HIDDEN,
+            n_layers=LCNN_LAYERS,
+            dtype=MODEL_DTYPE,
+            mlp_hidden=MLP_HIDDEN,
+            mlp_out=1,
+            reduction="none",
+            gate=GATE,
+            in_channels=3 * len(INPUT_SMEAR_LEVELS),
+            init_scale=LCNN_INIT_SCALE,
+            grad_checkpoint=GRAD_CHECKPOINT,
+        )
+    return GELT(
+        gaugegroup=gaugegroup,
+        L=L,
+        D=3,  # per-timeslice 3D operator (audit item 1)
+        R=R,
+        nhead=NHEAD,
+        gemhsa_layers=GEMHSA_LAYERS,
+        d_qkv=D_QKV,
+        gate=GATE,
+        dtype=MODEL_DTYPE,
+        mlp_hidden=MLP_HIDDEN,
+        mlp_out=1,
+        reduction="none",
+        init_scale=INIT_SCALE,
+        qk_init_scale=QK_INIT_SCALE,
+        mlp_zero_init=False,
+        d_model=D_MODEL,
+        grad_checkpoint=GRAD_CHECKPOINT,
+        # 3 spatial-plaquette channels per smearing level (see INPUT_SMEAR_LEVELS).
+        in_channels=3 * len(INPUT_SMEAR_LEVELS),
+    )
 
 
 def rayleigh_loss(Obar, deltas=LOSS_DELTAS):
@@ -539,32 +675,23 @@ def main():
     # the ensemble seed so init robustness and ensemble replication vary
     # independently.
     torch.manual_seed(INIT_SEED)
-    model = GELT(
-        gaugegroup=gaugegroup,
-        L=L,
-        D=3,  # per-timeslice 3D operator (audit item 1)
-        R=R,
-        nhead=NHEAD,
-        gemhsa_layers=GEMHSA_LAYERS,
-        d_qkv=D_QKV,
-        gate=GATE,
-        dtype=MODEL_DTYPE,
-        mlp_hidden=MLP_HIDDEN,
-        mlp_out=1,
-        reduction="none",
-        init_scale=INIT_SCALE,
-        qk_init_scale=QK_INIT_SCALE,
-        mlp_zero_init=False,
-        d_model=D_MODEL,
-        grad_checkpoint=GRAD_CHECKPOINT,
-        # 3 spatial-plaquette channels per smearing level (see INPUT_SMEAR_LEVELS).
-        in_channels=3 * len(INPUT_SMEAR_LEVELS),
-    ).to(device)
+    model = _build_model().to(device)
+    # Real degrees of freedom, not numel: a complex weight is two of them, and
+    # the GELT↔L-CNN match is quoted in real DOFs (see the LCNN_* block).
     n_params = sum(p.numel() for p in model.parameters())
-    print(
-        f"GELT(D=3, R={R}, layers={GEMHSA_LAYERS}, d_qkv={D_QKV}, d_model={D_MODEL}) | "
-        f"input smear levels {list(INPUT_SMEAR_LEVELS)} | params {n_params:,}"
-    )
+    n_real = sum(p.numel() * (2 if p.is_complex() else 1) for p in model.parameters())
+    if ARCH == "lcnn":
+        print(
+            f"L-CNN(D=3, K={LCNN_K}, c_hidden={LCNN_C_HIDDEN}, "
+            f"layers={LCNN_LAYERS}) | input smear levels "
+            f"{list(INPUT_SMEAR_LEVELS)} | params {n_params:,} ({n_real:,} real)"
+        )
+    else:
+        print(
+            f"GELT(D=3, R={R}, layers={GEMHSA_LAYERS}, d_qkv={D_QKV}, d_model={D_MODEL}) | "
+            f"input smear levels {list(INPUT_SMEAR_LEVELS)} | params {n_params:,} "
+            f"({n_real:,} real)"
+        )
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
     # Cosine anneal over the (now short) run — StepLR(150) never fired at 40
@@ -713,7 +840,7 @@ def main():
     gelt_obar = held_out_obar(model, test_configs, device).double()
     _, _, R_final = rayleigh_loss(gelt_obar)
     m_rayleigh = -np.log(R_final.item()) if 0 < R_final.item() < 1 else float("nan")
-    print(f"GELT test Rayleigh mass  m·a_t = −log C(1)/C(0) = {m_rayleigh:.3f}")
+    print(f"{NET} test Rayleigh mass  m·a_t = −log C(1)/C(0) = {m_rayleigh:.3f}")
     meff_gelt, err_gelt = blocked_jackknife_meff(gelt_obar, JACK_BLOCK)
 
     # Classical anchors on the SAME test configs: thin, single-smeared, and
@@ -748,6 +875,20 @@ def main():
                 "init_seed": INIT_SEED,
                 "d_model": D_MODEL,
                 "random_init": RANDOM_INIT,
+                # The architecture that produced gelt_obar. The key name stays
+                # `gelt_obar` whatever ARCH is: every offline consumer
+                # (fit_glueball_overlap, su2_fair_fight, operator_decomposition,
+                # input_architecture_curve) reads it, and they compare *a single
+                # learned operator* against the classical span — which is what
+                # an L-CNN dump is too. `arch` is how a reader tells them apart.
+                "arch": ARCH,
+                "lcnn_geometry": (
+                    None
+                    if ARCH != "lcnn"
+                    else {"K": LCNN_K, "c_hidden": LCNN_C_HIDDEN,
+                          "n_layers": LCNN_LAYERS, "init_scale": LCNN_INIT_SCALE}
+                ),
+                "lr": LR,
             },
         },
         obar_dump,
@@ -768,7 +909,7 @@ def main():
                 f"     m_eff(Δ={dlt}):  m·a_t = {meff_gevp[dlt].item():.3f} "
                 f"± {err_gevp[dlt].item():.3f}"
             )
-    print("GELT learned operator (blocked jackknife, test):")
+    print(f"{NET} learned operator (blocked jackknife, test):")
     for dlt in range(1, min(4, len(meff_gelt))):
         if bool(torch.isfinite(meff_gelt[dlt])):
             print(
@@ -781,7 +922,7 @@ def main():
     # correlation of the VEV-subtracted Ō fluctuations on test: tracking APE×k
     # means GELT carries ~k smearing steps' worth of staple content.
     d_g = gelt_obar - gelt_obar.mean()
-    print("corr(GELT, APE level) of Ō fluctuations on test:")
+    print(f"corr({NET}, APE level) of Ō fluctuations on test:")
     for k, lvl in enumerate(GEVP_LEVELS):
         d_c = Obar_basis[k] - Obar_basis[k].mean()
         r = (d_g * d_c).mean() / (d_g.pow(2).mean() * d_c.pow(2).mean()).sqrt()
@@ -797,7 +938,7 @@ def main():
     meff_gevp_plus, err_gevp_plus = blocked_jackknife_gevp_meff(
         basis_plus, JACK_BLOCK, GEVP_T0
     )
-    print("GEVP ground state, basis = classical + GELT (blocked jackknife, test):")
+    print(f"GEVP ground state, basis = classical + {NET} (blocked jackknife, test):")
     for dlt in range(GEVP_T0, min(GEVP_T0 + 4, len(meff_gevp_plus))):
         if bool(torch.isfinite(meff_gevp_plus[dlt])):
             print(
@@ -811,7 +952,7 @@ def main():
     dmean, derr = blocked_jackknife_meff_diff(
         gelt_obar, Obar_basis, JACK_BLOCK, GEVP_T0
     )
-    print("m_eff(GELT) − m_eff(GEVP), blocked jackknife of the difference (test):")
+    print(f"m_eff({NET}) − m_eff(GEVP), blocked jackknife of the difference (test):")
     for dlt in range(GEVP_T0, min(GEVP_T0 + 4, len(dmean))):
         if bool(torch.isfinite(dmean[dlt])):
             sig = abs(dmean[dlt].item()) / max(derr[dlt].item(), 1e-12)
@@ -853,33 +994,33 @@ def main():
         dd[ok], mg[ok], yerr=eg[ok], fmt="D-", capsize=3, color="C3", lw=2,
         label=f"classical GEVP ground (levels {GEVP_LEVELS})",
     )
-    _plot(meff_gelt, err_gelt, "GELT (learned)", "C2", "^-")
+    _plot(meff_gelt, err_gelt, f"{NET} (learned)", "C2", "^-")
     # Enlarged (classical + GELT) GEVP ground state — same Δ ≥ t0 rule.
     mgp, egp = meff_gevp_plus.numpy(), err_gevp_plus.numpy()
     okp = np.isfinite(mgp) & np.isfinite(egp) & (dd >= GEVP_T0)
     ax[1].errorbar(
         dd[okp], mgp[okp], yerr=egp[okp], fmt="v-", capsize=3, color="C4",
-        label="GEVP + GELT (enlarged basis)", alpha=0.85,
+        label=f"GEVP + {NET} (enlarged basis)", alpha=0.85,
     )
     ax[1].axhline(0.33, color="k", ls="--", alpha=0.6, label="anchor m·a_t ≈ 0.33")
     ax[1].set_xlabel("Δ (temporal slices)")
     ax[1].set_ylabel("m_eff(Δ) = m·a_t")
     ax[1].set_title(
         "Test m_eff: learned vs hand-built operators\n"
-        "(win = GELT plateaus ≤ and earlier in Δ than the GEVP)"
+        f"(win = {NET} plateaus ≤ and earlier in Δ than the GEVP)"
     )
     ax[1].set_xlim(0, LT // 2)
     ax[1].legend()
     ax[1].grid(True, alpha=0.3)
 
     fig.suptitle(
-        f"GELT variational 0⁺⁺ glueball — SU(2) L={L} Lt={LT} β={BETA} ξ={XI} "
-        f"N_test={test_configs.shape[0]}  (R={R}, layers={GEMHSA_LAYERS}, "
+        f"{NET} variational 0⁺⁺ glueball — SU(2) L={L} Lt={LT} β={BETA} ξ={XI} "
+        f"N_test={test_configs.shape[0]}  ({_geometry_label()}, "
         f"in-smear {list(INPUT_SMEAR_LEVELS)})",
         fontsize=13,
     )
     fig.tight_layout()
-    out = "results/glueball/glueball_gelt" + RUN_TAG + ".png"
+    out = f"results/glueball/glueball_{ARCH}" + RUN_TAG + ".png"
     fig.savefig(out, dpi=130, bbox_inches="tight")
     print(f"Saved {out}")
 

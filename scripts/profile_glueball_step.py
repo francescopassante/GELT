@@ -52,9 +52,9 @@ import torch
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import train_glueball as tg
 
-from gelt.blocks import GELT
 from gelt.glueball import ape_smear
 from gelt.lattice import build_transport_average, plaquette_tensor, random_links
+from gelt.lcnn import build_axis_transports
 from gelt.sampler import staple_sum
 
 N_WARMUP = 2  # untimed iterations (JIT/cudnn autotune, allocator warm-up)
@@ -89,15 +89,10 @@ def _batch(b, device):
 
 
 def _model(device):
-    return GELT(
-        gaugegroup=tg.gaugegroup, L=tg.L, D=3, R=tg.R, nhead=tg.NHEAD,
-        gemhsa_layers=tg.GEMHSA_LAYERS, d_qkv=tg.D_QKV, gate=tg.GATE,
-        dtype=tg.MODEL_DTYPE, mlp_hidden=tg.MLP_HIDDEN, mlp_out=1,
-        reduction="none", init_scale=tg.INIT_SCALE, qk_init_scale=tg.QK_INIT_SCALE,
-        mlp_zero_init=False, d_model=tg.D_MODEL,
-        grad_checkpoint=tg.GRAD_CHECKPOINT,
-        in_channels=3 * len(tg.INPUT_SMEAR_LEVELS),
-    ).to(device)
+    # tg._build_model() is the training loop's own constructor, so this cannot
+    # drift from what the run does — and it profiles whichever architecture
+    # GLUEBALL_ARCH selects (the L-CNN baseline included).
+    return tg._build_model().to(device)
 
 
 def time_step(model, batch, device, label, compile_model=False):
@@ -129,7 +124,7 @@ def time_step(model, batch, device, label, compile_model=False):
         # it cannot drift out of sync with what training runs.
         with tic("config_inputs (W, T)", record):
             W, T = tg.config_inputs(batch, device)
-        with tic("forward (GELT)", record):
+        with tic(f"forward ({tg.NET})", record):
             Obar = fwd(W, T).sum(dim=(1, 2, 3)).view(b, Lt)
         with tic("rayleigh_loss", record):
             loss, _, _ = tg.rayleigh_loss(Obar)
@@ -198,7 +193,12 @@ def breakdown_inputs(batch, device):
 
     _sync(device)
     t0 = time.perf_counter()
-    build_transport_average(U3, tg.R, tg.gaugegroup)
+    if tg.ARCH == "lcnn":
+        build_axis_transports(U3, tg.LCNN_K, tg.gaugegroup)
+        t_label = f"build_axis_transports K={tg.LCNN_K}"
+    else:
+        build_transport_average(U3, tg.R, tg.gaugegroup)
+        t_label = f"build_transport_average R={tg.R}"
     _sync(device)
     t_T = time.perf_counter() - t0
 
@@ -207,7 +207,7 @@ def breakdown_inputs(batch, device):
     for name, t in (
         (f"ape_smear ladder {levels}", t_smear),
         (f"plaquette_tensor ×{len(levels)}", t_plaq),
-        (f"build_transport_average R={tg.R}", t_T),
+        (t_label, t_T),
     ):
         print(f"  {name:<34} {t * 1e3:9.1f} ms   {100 * t / tot:5.1f}%")
     return t_smear
@@ -346,11 +346,15 @@ def main():
     torch.manual_seed(0)
     device = _device()
     print(f"device: {device}")
-    b = int(sys.argv[1]) if len(sys.argv) > 1 else tg.BATCH_CONFIGS
+    # Positional argv is the batch size; `--name=value` flags belong to
+    # train_glueball's own env/argv overrides (e.g. --arch=lcnn), which it
+    # parsed at import — skip them here rather than choking on them.
+    positional = [a for a in sys.argv[1:] if not a.startswith("--")]
+    b = int(positional[0]) if positional else tg.BATCH_CONFIGS
     batch = _batch(b, device)
     print(
-        f"batch {b} configs = {b * tg.LT} 3D slices of {tg.L}³, R={tg.R}, "
-        f"layers={tg.GEMHSA_LAYERS}, d_model={tg.D_MODEL}, "
+        f"batch {b} configs = {b * tg.LT} 3D slices of {tg.L}³, "
+        f"{tg.NET} ({tg._geometry_label()}), "
         f"smear levels {list(tg.INPUT_SMEAR_LEVELS)}, "
         f"grad_checkpoint={tg.GRAD_CHECKPOINT}"
     )
@@ -359,7 +363,7 @@ def main():
     t_base = time_step(model, batch, device, "current")
     t_smear = breakdown_inputs(batch, device)
 
-    if os.environ.get("PROFILE_DIAGNOSTICS") == "1":
+    if os.environ.get("PROFILE_DIAGNOSTICS") == "1" and tg.ARCH == "gelt":
         model.set_introspection(store_attention=True, diagnostics=True)
         t_diag = time_step(model, batch, device, "introspection stashes ON")
         model.set_introspection(store_attention=False, diagnostics=False)
@@ -378,7 +382,9 @@ def main():
             f"({100 * (t_old - t_smear) / t_base:.0f}% of the current step)"
         )
 
-    if os.environ.get("PROFILE_MICRO", "1") == "1":
+    # The micro-bench times GEMHSA's stages; there is nothing to A/B in an
+    # L-CNN step beyond the whole-step and input-stage numbers above.
+    if os.environ.get("PROFILE_MICRO", "1") == "1" and tg.ARCH == "gelt":
         micro_bench(device, b)
 
     if os.environ.get("PROFILE_COMPILE") == "1":
