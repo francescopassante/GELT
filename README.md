@@ -112,6 +112,7 @@ CLAUDE.md              module-by-module detail, conventions, status, caveats
 | `measure_glueball.py` | classical 0⁺⁺ baseline: correlator, GEVP m_eff, ensemble cache |
 | `train_glueball.py` | GELT as a variational operator on the Rayleigh loss — `--arch=lcnn` runs the matched-parameter L-CNN on the identical problem |
 | `lcnn_shootout.sh` | the V100 batch behind the L-CNN shootout: profile, LR/init sweep, two trainings, the untrained control |
+| `bench_lcnn_reference.py` | our L-CNN block against the authors' own implementation, same shape, same box |
 | `fit_glueball_overlap.py` | cosh fits, overlap A₀, correlated (Δm, ΔA₀) — offline |
 | `overnight_replication.sh` | fresh ensemble + from-scratch training, unattended |
 | `operator_decomposition.py` | O_GELT = P + r against the classical span, any fair-fight arm — offline |

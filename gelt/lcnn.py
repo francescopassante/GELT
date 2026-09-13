@@ -79,17 +79,64 @@ def _augment(W: torch.Tensor, gaugegroup) -> torch.Tensor:
     return torch.cat([identity, W, gaugegroup.dagger(W)], dim=1)
 
 
+def _fold_channels_to_columns(X):
+    """``(B, C, *Λ, nc, nc)`` → ``(B, *Λ, nc, C·nc)``: channels become columns."""
+    B, C = X.shape[0], X.shape[1]
+    spatial, nc = X.shape[2:-2], X.shape[-1]
+    return X.movedim(1, -2).reshape(B, *spatial, nc, C * nc)
+
+
+def _unfold_columns_to_rows(Y, C):
+    """``(B, *Λ, nc, C·nc)`` → ``(B, *Λ, C·nc, nc)``: columns become rows."""
+    B = Y.shape[0]
+    spatial, nc = Y.shape[1:-2], Y.shape[-2]
+    return Y.reshape(B, *spatial, nc, C, nc).movedim(-2, -3).reshape(
+        B, *spatial, C * nc, nc
+    )
+
+
+def transport_adjoint(T, X, gaugegroup):
+    """``T · X_c · T†`` for every channel ``c`` of ``X``.
+
+    ``T`` : ``(B, *Λ, nc, nc)``; ``X`` : ``(B, C, *Λ, nc, nc)``.
+
+    The channel axis is folded into the matrix dimension, so each side is one
+    batched ``(nc × nc)·(nc × C·nc)`` product per site instead of ``C`` separate
+    ``nc × nc`` ones. At ``nc = 2`` that is the difference between a few hundred
+    thousand BLAS rows and tens of millions of them — the same folding the
+    GEMHSA hot path uses (notes/performance_audit.md §3.4).
+    """
+    B, C = X.shape[0], X.shape[1]
+    spatial, nc = X.shape[2:-2], X.shape[-1]
+    Y = T @ _fold_channels_to_columns(X)
+    Y = _unfold_columns_to_rows(Y, C) @ gaugegroup.dagger(T)
+    return Y.reshape(B, *spatial, C, nc, nc).movedim(-3, 1)
+
+
 class LConv(nn.Module):
     """L-Conv (Eq. 5): trainable parallel-transport convolution.
 
-        W_{x,i}^{out} = Σ_{j, μ, k} ω[i, j, μ, k]
-                        · U^(k)_μ(x) · W_{aug,j}(x + k·μ̂) · U^(k)†_μ(x)
+        W_{x,i}^{out} = Σ_{j, s} ω[i, j, s]
+                        · T_s(x) · W_{aug,j}(x + Δ_s) · T_s†(x)
 
     Operates on the augmented input ``W_aug = [1, W, W†]`` (``C → 2C + 1``).
-    Shifts ``k = 0 … K``: ``k = 0`` is the identity-transport slot at the
-    same site (μ-independent — the redundancy is harmless and matches the
-    reference openpixi implementation). Negative shifts are subsumed by
-    the W† channels of the augmentation.
+    The shift index ``s`` runs over the local term ``Δ = 0`` (one slot, as in
+    the reference implementation — the earlier per-μ duplication of it was
+    harmless but bought nothing) and then, per axis μ and hop ``k = 1 … K``,
+    ``Δ = +k·μ̂`` and — when ``symmetric`` — ``Δ = −k·μ̂``.
+
+    **The backward hops are not optional.** ``lge-cnn``'s own ``LConv`` and
+    ``LConvBilin`` both loop over both orientations, and the W† channels of the
+    augmentation do *not* stand in for them: daggering commutes with the
+    adjoint transport, so a W† channel is the dagger of a *forward*-transported
+    matrix, never a backward-transported one. With ``symmetric=False`` a layer
+    sees only x … x + K·μ̂ and a stack sees a one-sided cone.
+
+    The transport is applied to the ``C`` raw channels and the augmentation is
+    formed afterwards, which is exact for the same reason: ``T·W†·T† =
+    (T·W·T†)†`` and ``T·1·T† = 1``. Transporting the augmented ``2C + 1``
+    channels instead would repeat every product twice and transport the
+    identity for nothing.
     """
 
     def __init__(
@@ -100,6 +147,7 @@ class LConv(nn.Module):
         D: int,
         K: int,
         dtype: torch.dtype = torch.complex64,
+        symmetric: bool = True,
     ):
         super().__init__()
         self.gaugegroup = gaugegroup
@@ -107,64 +155,72 @@ class LConv(nn.Module):
         self.K = K
         self.c_in = c_in
         self.c_out = c_out
+        self.symmetric = symmetric
         self.c_prime = 2 * c_in + 1  # augmented input width
+        # 1 local term + K hops per axis, in one or both orientations.
+        self.n_shifts = 1 + D * K * (2 if symmetric else 1)
 
-        # ω[i, j, μ, k]. Variance ~ 1 / (c_prime · D · (K+1)) so the L-Conv
-        # output starts at unit scale regardless of fan-in.
-        n_terms = self.c_prime * D * (K + 1)
+        # ω[i, j, s]. Variance ~ 1 / (c_prime · n_shifts) so the L-Conv output
+        # starts at unit scale regardless of fan-in.
+        n_terms = self.c_prime * self.n_shifts
         sigma = 1.0 / math.sqrt(n_terms)
         self.w = nn.Parameter(
-            torch.randn(c_out, self.c_prime, D, K + 1, dtype=dtype) * sigma
+            torch.randn(c_out, self.c_prime, self.n_shifts, dtype=dtype) * sigma
         )
+
+    def shifted_terms(self, W, U_transports):
+        """The ``n_shifts`` transported copies of ``W``: ``(B, C, S, *Λ, nc, nc)``."""
+        gg = self.gaugegroup
+        slabs = [W]  # s = 0: the local term, no transport
+        for mu in range(self.D):
+            w_axis = 2 + mu  # μ-th lattice axis of (B, C, *Λ, nc, nc)
+            t_axis = 1 + mu  # ... and of (B, *Λ, nc, nc)
+            for k in range(1, self.K + 1):
+                # U^(k)_μ(x): transports x + k·μ̂ back to x.
+                Uk = U_transports[:, mu, k - 1]
+                slabs.append(
+                    transport_adjoint(Uk, torch.roll(W, -k, dims=w_axis), gg)
+                )
+                if self.symmetric:
+                    # T_{−k,μ}(x) = U^(k)†_μ(x − k·μ̂) — the same link product
+                    # read at the far end of the backward hop.
+                    Vk = gg.dagger(torch.roll(Uk, k, dims=t_axis))
+                    slabs.append(
+                        transport_adjoint(Vk, torch.roll(W, k, dims=w_axis), gg)
+                    )
+        return torch.stack(slabs, dim=2)
 
     def forward(self, W: torch.Tensor, U_transports: torch.Tensor) -> torch.Tensor:
         """Run the L-Conv.
 
         ``W`` : ``(B, C_in, *Λ, nc, nc)``.
-        ``U_transports`` : ``(B, D, K, *Λ, nc, nc)`` — k=1..K (the k=0 slot
-        is synthesised here as the identity).
+        ``U_transports`` : ``(B, D, K, *Λ, nc, nc)`` — k=1..K (the local slot
+        needs no transport and is handled here).
         """
-        W_aug = _augment(W, self.gaugegroup)  # (B, C', *Λ, nc, nc)
-        B = W_aug.shape[0]
-        spatial = W_aug.shape[2:-2]
-        nc = W_aug.shape[-1]
-        D, K = self.D, self.K
+        B = W.shape[0]
+        spatial, nc = W.shape[2:-2], W.shape[-1]
+        U_transports = U_transports.to(W.dtype)
 
-        # Build W_shift[μ, k](x) = W_aug(x + k·μ̂) for k = 0 … K.
-        # k=0 slot is W_aug itself (no shift); for k>0 roll along the
-        # μ-th spatial axis (offset by 2 because of the (B, C') prefix).
-        shifted_per_mu = []
-        for mu in range(D):
-            axis = 2 + mu
-            per_k = [W_aug]
-            for k in range(1, K + 1):
-                per_k.append(torch.roll(W_aug, shifts=-k, dims=axis))
-            shifted_per_mu.append(torch.stack(per_k, dim=2))  # (B, C', K+1, *Λ, nc, nc)
-        W_shift = torch.stack(shifted_per_mu, dim=2)  # (B, C', D, K+1, *Λ, nc, nc)
+        S = self.shifted_terms(W, U_transports)  # (B, C, n_shifts, *Λ, nc, nc)
+        S_flat = S.reshape(B, self.c_in * self.n_shifts, -1)
 
-        # Adjoint transport: U^(k)_μ · W_aug(x + k·μ̂) · U^(k)†_μ.
-        # k=0 transport is the identity, handled by padding U_full with I.
-        U_transports = U_transports.to(W_aug.dtype)
-        identity_T = (
-            torch.eye(nc, dtype=W_aug.dtype, device=W_aug.device)
-            .view(1, 1, 1, *([1] * len(spatial)), nc, nc)
-            .expand(B, D, 1, *spatial, nc, nc)
-        )
-        U_full = torch.cat([identity_T, U_transports], dim=2)  # (B, D, K+1, *Λ, nc, nc)
-        U_dag = self.gaugegroup.dagger(U_full)
+        # The augmentation is never materialised: the W channels contract with
+        # ω directly, and the W† channels through
+        #   Σ_j ω_j · S_j†  =  (Σ_j conj(ω_j) · S_j)† ,
+        # so both halves are one GEMM and a single dagger of the *output* (c_out
+        # channels) instead of one of the input (c_in · n_shifts channels).
+        n = self.c_in * self.n_shifts
+        w_S = self.w[:, 1 : 1 + self.c_in].reshape(self.c_out, n)
+        w_Sd = self.w[:, 1 + self.c_in :].conj().reshape(self.c_out, n)
+        mixed = torch.matmul(torch.cat([w_S, w_Sd], dim=0), S_flat)
+        mixed = mixed.reshape(B, 2 * self.c_out, *spatial, nc, nc)
+        out = mixed[:, : self.c_out] + self.gaugegroup.dagger(mixed[:, self.c_out :])
 
-        # Broadcast U over the channel axis C' (the transport is the same
-        # for every input channel at fixed (B, μ, k, x)).
-        U_b = U_full.unsqueeze(1)  # (B, 1, D, K+1, *Λ, nc, nc)
-        U_dag_b = U_dag.unsqueeze(1)
-        W_transp = U_b @ W_shift @ U_dag_b  # (B, C', D, K+1, *Λ, nc, nc)
-
-        # Linear mix over (j, μ, k) → C_out. Single fused matmul.
-        n_terms = self.c_prime * D * (K + 1)
-        w_flat = self.w.view(self.c_out, n_terms)
-        W_flat = W_transp.reshape(B, n_terms, -1)
-        out = torch.matmul(w_flat, W_flat).reshape(B, self.c_out, *spatial, nc, nc)
-        return out
+        # The identity channel of the augmentation transports to itself, so it
+        # contributes Σ_s ω[i, 0, s] · 1 — a per-channel bias matrix.
+        bias = self.w[:, 0].sum(dim=-1)  # (c_out,)
+        identity = torch.eye(nc, dtype=W.dtype, device=W.device)
+        return out + bias.view(1, -1, *([1] * len(spatial)), 1, 1) * identity
 
 
 class LBilin(nn.Module):
@@ -175,6 +231,17 @@ class LBilin(nn.Module):
     Both inputs are augmented (``[1, ·, ·†]``) before the bilinear. The
     identity-channel of the augmentation gives every L-Bilin a free linear
     / residual / bias path; the dagger half gives orientation reversal.
+
+    The channel-pair product is never materialised. Following the reference
+    implementation's ``bilin_implementation = 2`` ("the good one"), α contracts
+    the *right* channel axis first,
+
+        tmp[i, j](x) = Σ_{j'} α[i, j, j'] · W'_{aug,j'}(x)   (one GEMM)
+        out[i](x)    = Σ_j  W_{aug,j}(x) · tmp[i, j](x)      (one batched matmul)
+
+    so the ``(c_left × c_right)`` matrices per site of the naive order — 169 of
+    them at the shootout's width, 1.3 GiB per block at the production batch —
+    never exist. The left channel axis is folded into the contraction instead.
     """
 
     def __init__(
@@ -197,22 +264,24 @@ class LBilin(nn.Module):
         )
 
     def forward(self, W_left: torch.Tensor, W_right: torch.Tensor) -> torch.Tensor:
+        B = W_left.shape[0]
+        spatial, nc = W_left.shape[2:-2], W_left.shape[-1]
         L_aug = _augment(W_left, self.gaugegroup)   # (B, c_left, *Λ, nc, nc)
         R_aug = _augment(W_right, self.gaugegroup)  # (B, c_right, *Λ, nc, nc)
-        # Outer matrix product over channels: (j, j') → c_left·c_right entries
-        # each of shape (nc, nc) at every site.
-        L_e = L_aug.unsqueeze(2)  # (B, c_left, 1, *Λ, nc, nc)
-        R_e = R_aug.unsqueeze(1)  # (B, 1, c_right, *Λ, nc, nc)
-        prod = L_e @ R_e          # (B, c_left, c_right, *Λ, nc, nc)
 
-        B = prod.shape[0]
-        spatial = prod.shape[3:-2]
-        nc = prod.shape[-1]
-        w_flat = self.w.view(self.c_out, self.c_left * self.c_right)
-        prod_flat = prod.reshape(B, self.c_left * self.c_right, -1)
-        return torch.matmul(w_flat, prod_flat).reshape(
-            B, self.c_out, *spatial, nc, nc
+        # tmp[i, j] = Σ_{j'} α[i, j, j'] · R_aug[j'] — one GEMM over the right
+        # channel axis, output (B, c_out·c_left, *Λ, nc, nc).
+        w_flat = self.w.reshape(self.c_out * self.c_left, self.c_right)
+        tmp = torch.matmul(w_flat, R_aug.reshape(B, self.c_right, -1))
+        tmp = tmp.reshape(B, self.c_out, self.c_left, *spatial, nc, nc)
+
+        # out[i] = Σ_j L_aug[j] · tmp[i, j]: fold (j, colour) into one
+        # contraction axis so this is a single batched matmul.
+        L_f = _fold_channels_to_columns(L_aug).unsqueeze(1)  # (B,1,*Λ,nc,c_left·nc)
+        tmp_f = tmp.movedim(2, -3).reshape(
+            B, self.c_out, *spatial, self.c_left * nc, nc
         )
+        return (L_f @ tmp_f).reshape(B, self.c_out, *spatial, nc, nc)
 
 
 class LCB(nn.Module):
@@ -233,9 +302,12 @@ class LCB(nn.Module):
         D: int,
         K: int,
         dtype: torch.dtype = torch.complex64,
+        symmetric: bool = True,
     ):
         super().__init__()
-        self.lconv = LConv(gaugegroup, c_in, c_out, D, K, dtype=dtype)
+        self.lconv = LConv(
+            gaugegroup, c_in, c_out, D, K, dtype=dtype, symmetric=symmetric
+        )
         self.lbilin = LBilin(gaugegroup, c_in, c_out, c_out, dtype=dtype)
 
     def forward(self, W: torch.Tensor, U_transports: torch.Tensor) -> torch.Tensor:
@@ -315,6 +387,7 @@ class LCNN(nn.Module):
         in_channels: int | None = None,
         init_scale: float = 1.0,
         grad_checkpoint: bool = False,
+        symmetric: bool = True,
     ):
         super().__init__()
         if reduction not in ("sum", "mean", "none"):
@@ -341,7 +414,10 @@ class LCNN(nn.Module):
         widths = [c_in_plaq] + [c_hidden] * n_layers
         self.lcb_blocks = nn.ModuleList(
             [
-                LCB(gaugegroup, widths[i], widths[i + 1], D, K, dtype=dtype)
+                LCB(
+                    gaugegroup, widths[i], widths[i + 1], D, K, dtype=dtype,
+                    symmetric=symmetric,
+                )
                 for i in range(n_layers)
             ]
         )

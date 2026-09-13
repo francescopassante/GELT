@@ -208,15 +208,18 @@ MODEL_DTYPE = torch.complex64
 # L-CNN geometry (ARCH="lcnn"). Chosen to match GELT on the four axes that make
 # the shootout a statement about architecture, not budget — counts are real
 # DOFs, since a complex weight is two of them:
-#   * parameters:     K=2, c_hidden=6, 4 layers = 17.3k, against GELT's 15.7k at
-#                     d_model=16 with 4 smear levels (1.11×) and 23.7k at
-#                     d_model=24 with 7 levels (0.93×) — one L-CNN config
-#                     brackets both trained nets within ~10%.
-#   * receptive field: K=2 over 4 layers reaches Manhattan radius 8, as R=2 over
-#                     4 GEMHSA layers does. L-Conv's steps are axis-aligned, so
-#                     the off-axis reach GELT has *within* a layer is recovered
-#                     only by stacking — that asymmetry is the architecture
-#                     difference under test, not a handicap to correct for.
+#   * parameters:     K=2, c_hidden=5, 4 layers = 14.3k, against GELT's 15.7k at
+#                     d_model=16 with 4 smear levels (0.91×) — the net this
+#                     batch trains. A 7-level shootout wants c_hidden=6
+#                     (26.0k vs 23.7k, 1.10×): the budget is matched to the net
+#                     it is compared against, not once and for all.
+#   * receptive field: the L-Conv kernel is SYMMETRIC (both orientations, as in
+#                     lge-cnn's own LConv/LConvBilin), so K=2 reaches ±2 per
+#                     axis per layer and four layers reach Manhattan radius 8 —
+#                     the same as R=2 over four GEMHSA layers. What GELT still
+#                     has and the L-CNN does not is the *within-layer* off-axis
+#                     reach of the L1-ball average; that asymmetry is the
+#                     architecture difference under test, not one to correct.
 #   * loop degree:    L-CB doubles the maximum loop degree per layer exactly as
 #                     the matrix-bilinear value path does: ≤ 16 at 4 layers.
 #   * inputs:         in_channels = 3·len(INPUT_SMEAR_LEVELS), the identical
@@ -224,7 +227,7 @@ MODEL_DTYPE = torch.complex64
 #                     plaquettes would repeat the `published` straw-man mistake
 #                     with the sign flipped.
 LCNN_K = _env_int("GLUEBALL_LCNN_K", 2)
-LCNN_C_HIDDEN = _env_int("GLUEBALL_LCNN_C_HIDDEN", 6)
+LCNN_C_HIDDEN = _env_int("GLUEBALL_LCNN_C_HIDDEN", 5)
 LCNN_LAYERS = _env_int("GLUEBALL_LCNN_LAYERS", 4)
 LCNN_INIT_SCALE = _env_float("GLUEBALL_LCNN_INIT_SCALE", 1.0)
 # The reference init is scale-agnostic (the paper's losses are supervised), and
@@ -323,7 +326,7 @@ ARCH_TAG = (
     if ARCH == "gelt"
     else (
         ""
-        if (LCNN_K, LCNN_C_HIDDEN, LCNN_LAYERS) == (2, 6, 4)
+        if (LCNN_K, LCNN_C_HIDDEN, LCNN_LAYERS) == (2, 5, 4)
         else f"_k{LCNN_K}c{LCNN_C_HIDDEN}l{LCNN_LAYERS}"
     )
 )

@@ -180,22 +180,24 @@ def test_init_scale_scales_the_output_linearly():
 
 
 @pytest.mark.parametrize(
-    "d_model, n_levels, tolerance",
-    [(16, 4, 0.15), (24, 7, 0.15)],
+    "d_model, n_levels, c_hidden, tolerance",
+    [(16, 4, 5, 0.15), (24, 7, 6, 0.15)],
 )
 def test_lcnn_default_geometry_matches_the_glueball_gelt_budget(
-    d_model, n_levels, tolerance
+    d_model, n_levels, c_hidden, tolerance
 ):
-    """The L-CNN defaults of ``train_glueball.py`` sit within 15% of both nets.
+    """The L-CNN geometry is matched to the GELT net it is compared against.
 
-    K = 2, c_hidden = 6, 4 layers is the one geometry that brackets the
-    d_model = 16 / 4-level and d_model = 24 / 7-level GELT operators. If a
-    change to either architecture moves the budgets apart, the shootout stops
-    being matched-parameter and this fails before a V100 hour is spent.
+    K = 2 (symmetric, so ±2 per layer — the same Manhattan-8 reach as R = 2 over
+    four GEMHSA layers) with 4 layers, at `c_hidden = 5` against the
+    d_model = 16 / 4-level operator the shootout actually trains, and
+    `c_hidden = 6` against the d_model = 24 / 7-level one. If a change to either
+    architecture moves the budgets apart, the shootout stops being
+    matched-parameter and this fails before a V100 hour is spent.
     """
     gg = SU(2)
     lcnn = LCNN(
-        gaugegroup=gg, L=12, D=3, K=2, c_hidden=6, n_layers=4,
+        gaugegroup=gg, L=12, D=3, K=2, c_hidden=c_hidden, n_layers=4,
         dtype=torch.complex64, mlp_hidden=32, mlp_out=1, reduction="none",
         in_channels=3 * n_levels,
     )
@@ -207,5 +209,98 @@ def test_lcnn_default_geometry_matches_the_glueball_gelt_budget(
     ratio = _real_dofs(lcnn) / _real_dofs(gelt)
     assert abs(ratio - 1.0) <= tolerance, (
         f"L-CNN/GELT real-DOF ratio {ratio:.3f} at d_model={d_model}, "
-        f"{n_levels} smear levels — no longer matched-parameter"
+        f"{n_levels} smear levels, c_hidden={c_hidden} — no longer "
+        f"matched-parameter"
     )
+
+
+# ---------------------------------------------------------------------------
+# The optimised L-Conv / L-Bilin paths vs the definitions they implement
+# ---------------------------------------------------------------------------
+
+
+def _naive_lconv(lc, W, T):
+    """Eq. 5 written out: augment first, transport every augmented channel with
+    broadcast per-channel products, then contract. The module instead transports
+    the raw channels, folds the colour axis, and reaches the W† half through
+    (Σ conj(ω) S)† — all exact identities, which is what this pins."""
+    from gelt.lcnn import _augment
+
+    gg = lc.gaugegroup
+    A = _augment(W, gg)  # (B, c_prime, *Λ, nc, nc)
+    terms = [A]
+    for mu in range(lc.D):
+        for k in range(1, lc.K + 1):
+            Uk = T[:, mu, k - 1].to(W.dtype)
+            X = torch.roll(A, -k, dims=2 + mu)
+            terms.append(Uk.unsqueeze(1) @ X @ gg.dagger(Uk).unsqueeze(1))
+            if lc.symmetric:
+                Vk = gg.dagger(torch.roll(Uk, k, dims=1 + mu))
+                Y = torch.roll(A, k, dims=2 + mu)
+                terms.append(Vk.unsqueeze(1) @ Y @ gg.dagger(Vk).unsqueeze(1))
+    S = torch.stack(terms, dim=2)  # (B, c_prime, n_shifts, *Λ, nc, nc)
+    return torch.einsum("ijs,bjs...->bi...", lc.w, S)
+
+
+def _naive_lbilin(lb, W_left, W_right):
+    """Eq. 6 written out: the full (c_left × c_right) channel-pair product."""
+    from gelt.lcnn import _augment
+
+    L_aug = _augment(W_left, lb.gaugegroup)
+    R_aug = _augment(W_right, lb.gaugegroup)
+    prod = L_aug.unsqueeze(2) @ R_aug.unsqueeze(1)
+    return torch.einsum("ijk,bjk...->bi...", lb.w, prod)
+
+
+@pytest.mark.parametrize("symmetric", [True, False])
+def test_lconv_matches_the_naive_definition(symmetric):
+    from gelt.lcnn import LConv
+
+    torch.manual_seed(4)
+    L, D, K, nc = 4, 3, 2, 2
+    gg, dtype = SU(nc), torch.complex128
+    U = torch.stack([random_links(L=L, D=D, gaugegroup=gg, dtype=dtype)])
+    T = build_axis_transports(U, K, gg)
+    W = torch.randn(1, 3, L, L, L, nc, nc, dtype=dtype)
+
+    lc = LConv(gg, c_in=3, c_out=4, D=D, K=K, dtype=dtype, symmetric=symmetric)
+    assert torch.allclose(lc(W, T), _naive_lconv(lc, W, T), atol=1e-12)
+
+
+def test_lbilin_matches_the_naive_definition():
+    from gelt.lcnn import LBilin
+
+    torch.manual_seed(6)
+    L, nc = 4, 2
+    gg, dtype = SU(nc), torch.complex128
+    W1 = torch.randn(1, 3, L, L, nc, nc, dtype=dtype)
+    W2 = torch.randn(1, 2, L, L, nc, nc, dtype=dtype)
+
+    lb = LBilin(gg, c_in_left=3, c_in_right=2, c_out=4, dtype=dtype)
+    assert torch.allclose(lb(W1, W2), _naive_lbilin(lb, W1, W2), atol=1e-12)
+
+
+def test_the_kernel_reaches_both_directions():
+    """A layer must see x − k·μ̂ as well as x + k·μ̂.
+
+    The W† channels do not stand in for the backward hops — daggering commutes
+    with the adjoint transport — so an asymmetric kernel gives the stack a
+    one-sided cone. Perturb one site and check which outputs move.
+    """
+    from gelt.lcnn import LConv
+
+    torch.manual_seed(0)
+    L, D, K, nc = 6, 2, 1, 2
+    gg, dtype = SU(nc), torch.complex128
+    U = torch.stack([random_links(L=L, D=D, gaugegroup=gg, dtype=dtype)])
+    T = build_axis_transports(U, K, gg)
+    W = torch.randn(1, 2, L, L, nc, nc, dtype=dtype)
+
+    for symmetric, expected in ((True, {(0, 0), (1, 0), (5, 0), (0, 1), (0, 5)}),
+                                (False, {(0, 0), (5, 0), (0, 5)})):
+        lc = LConv(gg, c_in=2, c_out=2, D=D, K=K, dtype=dtype, symmetric=symmetric)
+        base = lc(W, T)
+        Wp = W.clone()
+        Wp[0, :, 0, 0] += 1.0
+        moved = (lc(Wp, T) - base).abs().amax(dim=(0, 1, -1, -2)) > 1e-12
+        assert {tuple(ix) for ix in moved.nonzero().tolist()} == expected

@@ -207,11 +207,20 @@ editable via `pyproject.toml`. Device order: cuda → mps → cpu.
   `LAct`, `Trace`, `LCNN`. Mirrors `GELT`'s I/O so the two are
   matched-parameter comparable. `LCNN` also takes `in_channels` (the stacked
   multi-level smeared input the glueball task feeds), `init_scale` (output
-  scale, GELT's knob under another name) and `grad_checkpoint` (L-Bilin's
-  channel-pair outer product is the memory wall at the production batch).
+  scale, GELT's knob under another name), `grad_checkpoint` and `symmetric`.
+  **The L-Conv kernel is symmetric** (both orientations, as in the authors'
+  own code): the W† channels do *not* subsume backward hops, because daggering
+  commutes with the adjoint transport, and the one-sided version gave a stack a
+  one-sided cone (`notes/lcnn_shootout.md` §8.1). The block follows the
+  reference's fast contraction order — the channel-pair outer product is never
+  materialised, the transport runs on the raw channels and the augmentation is
+  formed afterwards, and the colour matmuls fold the channel axis (§8.2–8.4);
+  both rewrites are pinned against the naive definitions in `tests/test_lcnn.py`.
   **The matched shootout is wired up but has not been run** — it is
   `GLUEBALL_ARCH=lcnn` in `train_glueball.py`, driven by `lcnn_shootout.sh`;
   design and pre-registered readings in `notes/lcnn_shootout.md`.
+  `scripts/bench_lcnn_reference.py` times our block against
+  `lge-cnn-master/`'s at the production shape.
 - **`cnn_baseline.py`** — `LatticeCNN`: non-equivariant baseline; `Conv2d`/
   `Conv3d` for D=2/3 and a roll-based `_RollConvND` for D≥4.
 
@@ -236,7 +245,9 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   another; the two 7-level nets are d_model 24 but predate the `_d` tag. Dumps
   the test-split Ō arrays to `datasets/…_test_obars.pt` (also kept in `dumps/`).
   **`GLUEBALL_ARCH=lcnn`** swaps in the matched-parameter L-CNN
-  (`GLUEBALL_LCNN_K|_C_HIDDEN|_LAYERS|_INIT_SCALE`, defaults 2/6/4/1.0) and its
+  (`GLUEBALL_LCNN_K|_C_HIDDEN|_LAYERS|_INIT_SCALE`, defaults 2/5/4/1.0 — the
+  width is matched to the net being compared against, `c_hidden=6` for a
+  7-level run) and its
   axis-aligned transports, leaving ensemble, splits, inputs, loss, selection and
   jackknife identical by construction — `_build_model()` is the one constructor
   (`profile_glueball_step.py` calls it too, so the profiler cannot drift). The
@@ -320,8 +331,11 @@ subdirectories. `README.md` has the one-line table; the details that matter:
 - **`test_lcnn.py`** — the L-CNN as the glueball baseline: gauge invariance of
   the per-site readout on stacked multi-level inputs (SU(2) complex128, both
   gates; Z₂ float64), `in_channels` defaulting to the plaquette count,
-  gradient checkpointing bit-exact, `init_scale` linear in the output, and the
-  parameter match against both trained GELT nets (real DOFs within 15%).
+  gradient checkpointing bit-exact, `init_scale` linear in the output, the
+  parameter match against both trained GELT nets (real DOFs within 15%), the
+  optimised `LConv`/`LBilin` against the naive definitions they implement
+  (1e-12, complex128), and the **support of a layer** — that the kernel reaches
+  `x − k·μ̂` as well as `x + k·μ̂`.
 - **`test_data_model.py`** — split validation and CNN-baseline shape guards.
 
 ## Conventions
@@ -425,6 +439,7 @@ bash   scripts/overnight_replication.sh      # fresh ensemble + retraining (~24 
 bash   scripts/curve_batch.sh                # the curve's random trace + 3 trainings
 GLUEBALL_ARCH=lcnn python scripts/train_glueball.py  # the matched-parameter L-CNN
 LCNN_DRY_RUN=1 bash scripts/lcnn_shootout.sh # the L-CNN batch: what would run
+python scripts/bench_lcnn_reference.py       # our L-CNN block vs lge-cnn's
 python scripts/operator_decomposition.py     # O = P + r (offline, seconds)
 python scripts/input_architecture_curve.py   # A₀ vs input content (offline, seconds)
 SFF_NOCACHE=1 python scripts/su2_fair_fight.py     # reproduce ΔA₀ offline
