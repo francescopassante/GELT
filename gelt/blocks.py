@@ -396,6 +396,21 @@ class GEMHSA(nn.Module):
         production shape ``apply_rope`` plus the old score materialised 569 MiB
         per layer per forward where this route materialises 237 MiB.
 
+        The two brackets are then taken in **one pass over K̃**. Run separately
+        they stream it twice — 2.389 GB per layer at the production shape — so
+        the two queries are stacked on a *trailing* variant axis and K̃ enters
+        the product once, stride-0 on that axis, with the within-pair sum over s
+        folded into the same reduction instead of a second kernel. The
+        contraction genuinely reads every K̃ element twice (each pairs with both
+        Q_{p,0} and Q_{p,1}); no rearrangement of Q avoids that, only fusion
+        would, so what this buys is the second *stream*, not the second read.
+        Measured on the V100 at the production per-layer shape: forward
+        28.5 → 23.5 ms, backward 97.8 → 73.4 ms, **1.30×** on the stage, against
+        a two-bracket traffic budget of 7.2 × |K̃| and a measured 8.4 — i.e. the
+        stage was already at its roofline and this moves the roofline. It costs
+        a 2× product tensor: +2.39 GB transient per layer, on a step whose peak
+        is 19.99 GiB of the V100's 32.
+
         ``Q`` : (B, H, d_qkv, *Λ, nc, nc); ``K_tilde`` : the transported,
         *unrotated* keys (B, H, d_qkv, n_off, *Λ, nc, nc).
         """
@@ -403,29 +418,34 @@ class GEMHSA(nn.Module):
         spatial = Q.shape[3:-2]
         nc = Q.shape[-1]
         n = K_tilde.shape[3]
+        P = self.n_pairs
         # Q' — the within-pair swap-and-negate that turns the first bracket into
         # the second. Per-site, so this is the cheap tensor to touch.
-        Qp = Q.reshape(B, H, self.n_pairs, 2, *spatial, nc, nc)
-        Q_swap = torch.stack((Qp[:, :, :, 1], -Qp[:, :, :, 0]), dim=3).reshape(
-            B, H, dq, *spatial, nc, nc
-        )
-
-        def brackets(Qx):
-            # Frobenius product over the colour axes only: the channel axis has
-            # to survive until cos/sin have been applied per pair.
-            t = (Qx.unsqueeze(3).conj() * K_tilde).sum(dim=(-2, -1))
-            return t.reshape(B, H, self.n_pairs, 2, n, *spatial).sum(dim=3)
+        Qp = Q.reshape(B, H, P, 2, *spatial, nc, nc)
+        Q_swap = torch.stack((Qp[:, :, :, 1], -Qp[:, :, :, 0]), dim=3)
+        # The two queries on a trailing variant axis v, and an offset axis of
+        # size 1 for K̃ to broadcast into: (B, H, P, 2, 1, *Λ, nc, nc, v). The
+        # conjugation rides on this small tensor rather than on K̃.
+        Q2 = torch.stack((Qp, Q_swap), dim=-1).conj().unsqueeze(4)
+        # Splitting d_qkv into (P, 2) is a view even on the permuted,
+        # non-contiguous tensor `transport` returns.
+        Kp = K_tilde.reshape(B, H, P, 2, n, *spatial, nc, nc).unsqueeze(-1)
+        # One multiply-reduce: the two colour axes and the within-pair index s
+        # contract in a single kernel, leaving (B, H, P, n, *Λ, v). The channel
+        # *pair* axis has to survive until cos/sin have been applied per pair.
+        t = (Q2 * Kp).sum(dim=(3, -3, -2))
 
         # .real fallbacks: a module-wide ``.to(complex_dtype)`` (the tests cast
         # the whole block) would upcast these real tensors to complex.
         freq = self.rope_freq.real if self.rope_freq.is_complex() else self.rope_freq
         disp = self._rope_disp.real if self._rope_disp.is_complex() else self._rope_disp
         angle = disp * freq  # (n_off, n_pairs)
-        view = (1, 1, self.n_pairs, n) + (1,) * len(spatial)
+        view = (1, 1, P, n) + (1,) * len(spatial)
         cos = torch.cos(angle).t().reshape(view)
         sin = torch.sin(angle).t().reshape(view)
         # cos, sin are real, so Re(cos·u + sin·v) = cos·Re u + sin·Re v.
-        score = (cos * brackets(Q).real + sin * brackets(Q_swap).real).sum(dim=2)
+        t = t.real
+        score = (cos * t[..., 0] + sin * t[..., 1]).sum(dim=2)
         return score / math.sqrt(dq * nc)
 
     def attend(self, Q, KV, Q_v, T, T_dag):

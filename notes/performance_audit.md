@@ -328,82 +328,94 @@ data-dependent attention against 13 axis shifts and plain link products. That is
 the architecture, not a defect, and the shootout's claim is A₀ at matched
 parameters, not wall-clock.
 
-**(ii) `rope_score` is the largest single stage, and §5.3 is now #1.** Per layer
-at production shape: `rope_score` fwd **237.9 ms** — times four layers, that is
-essentially the whole 1154 ms forward — with bwd/fwd 0.35. The gather's backward
-is next (143 ms/layer for the advanced-index candidate, ~570 ms over four).
+**(ii) ~~`rope_score` is the largest single stage~~ — retracted 2026-09-13.**
+The 237.9 ms belonged to three stages, not one. `micro_bench`'s lambda read
 
-§5.3 is right that a naive `einsum` would trade this for millions of 4-element
-GEMMs. Two moves that avoid that trap, in order:
+    blk.rope_score(Q, blk.transport(KV[nb], T, T_dag)[...].detach().requires_grad_())
 
-* **One pass over K̃ instead of two.** `rope_score` reduces against `Q` and
-  against `Q_swap` separately, i.e. it streams the 2.39 GB K̃ twice. Stacking the
-  two queries along the channel axis makes it one multiply-reduce over one pass.
-  Pure traffic, no new GEMM shapes, and the identity is the one already written
-  out in the docstring.
-* **`torch.compile` on `rope_score` alone** (§5.6). Multiply-then-reduce fusion
-  is exactly what inductor does; scoping it to one method sidesteps the
-  whole-model compile risk. Measure, do not assume.
+and `.detach().requires_grad_()` severs the *backward* graph, not the forward
+work — so the gather and the transport were both inside the timed region. Only
+the reported `bwd` (83.3 ms) was rope_score's. Measured in isolation by the
+`PROFILE_ROPE` bench: **rope_score forward is 28.5 ms**, an eighth of it. The
+stages are hoisted out of the timed lambdas now, and the transport row has an
+OOM fallback that runs the K half.
 
-**(iii) Traffic cannot be the whole story — the roofline says 12×.** K̃ at the
-production per-layer shape (B = 144, H = 2, d_qkv = 6, n_off = 25, 12³, nc = 2,
-complex64) is **2.389 GB**. The two-bracket route moves ~7.2× that — mul reads
-K̃ and writes the product, the colour sum reads it back, the within-pair sum
-once more, twice over — i.e. 17.2 GB, which is **19 ms** at 900 GB/s. Measured:
-**238 ms**. Even a perfectly fused kernel only has 2.7 ms of traffic to save, so
-*no* rearrangement of the contraction explains a factor of 12.
+**(iii) The item is the transport, and it always was — §5.1 is #1.** By
+subtraction on the same run — 238.2 total, 9.3 gather, 28.5 rope_score —
+**transport is ≈200 ms per layer per forward**, i.e. ~70% of the 1154 ms
+forward, and with §5.1's bwd/fwd ≈ 2.2 the great majority of the 3241 ms
+backward as well. Its own traffic budget is ~33.5 GB = 47 ms at the measured
+708 GB/s, so it runs ~4.2× off — exactly the tiny-2×2-GEMM penalty §5.1
+predicted for `(nc, nc) @ (nc, H·d·nc)` over millions of 2×2 operands. **The
+adjoint (real SO(3)) representation is the biggest thing left in this repo by a
+wide margin.** Everything else in §5 is a few percent.
 
-The hypothesis §5 did not have: **`GEMHSA.transport` returns
-`out.permute(inv_perm)`, a non-contiguous view.** At the production shape its
-strides are `(…, 48, 24, 1)` for (innermost lattice axis, colour row, colour
-column) — the lattice walks in steps of nc·H·d_qkv·nc elements while the colour
-column walks in 1. So every downstream elementwise kernel reads K̃ (and Ṽ)
-uncoalesced: a warp walking the *contiguous output* touches ~8 cache lines where
-it should touch 2, and TensorIterator cannot collapse the dims because Q is
-broadcast over an offset axis sitting in the middle of the tensor. A 4–8×
-effective-bandwidth loss on top of the 7.2× traffic is the right order for the
-12×.
+**(iv) The rope_score bench, and what it settled.** Run at the production
+per-layer shape with a *measured* 708 GB/s copy bandwidth (K̃ = 2.389 GB, so one
+read = 3.4 ms). "× K̃ read" is time ÷ 3.4 ms — how many streams of K̃ a stage's
+forward would have to justify:
 
-If that is the 12×, **§5.2 (the Q/K/V memory layout) is the next item, not
-§5.3**, and the single-pass rewrite buys far less than its byte count promises —
-it would be optimising the smaller factor.
+| candidate | fwd ms | bwd ms | × K̃ read |
+|---|---|---|---|
+| `floor: K̃.sum(colour)` strided | 13.0 | 17.3 | 3.9 |
+| `floor: K̃.sum(colour)` contig | 4.5 | 17.5 | 1.3 |
+| `K̃.contiguous()` (the copy) | 15.2 | 51.2 | 4.5 |
+| two-bracket (the old route) strided | 28.5 | 97.8 | 8.4 |
+| two-bracket contig | 26.7 | 79.7 | 7.9 |
+| **single pass** strided | **23.5** | **73.4** | **7.0** |
+| single pass contig | 22.5 | 68.6 | 6.7 |
+| single pass, real arithmetic | 30.1 | 104.9 | 8.9 |
+| `torch.compile`, complex | 21.6 | 65.1 | 6.4 |
+| `torch.compile`, real | — | — | fails |
+| `value (α·Ṽ).sum(n)` strided | 19.0 | 15.8 | 5.6 |
+| `value (α·Ṽ).sum(n)` contig | 10.5 | 15.4 | 3.1 |
 
-**The bench that decides it: `PROFILE_ROPE=1 python scripts/profile_glueball_step.py`.**
-It times every candidate on K̃ *as transport returns it* and on a contiguous
-copy, against a **measured** copy bandwidth and a pure-reduction floor
-(`K̃.sum(colour)`), and quotes each stage as "× K̃ read" — how many times the
-tensor a stage would have to stream to justify its time. A pure reduction should
-land near 1; the two-bracket route's traffic budget is 7.2; the current stage is
-somewhere near 90 if the roofline arithmetic above is right. The same A/B runs
-on the value path `(α·Ṽ).sum(n)`, which reads the other half of the same
-permuted tensor, and on the `.contiguous()` copy itself, so the cost of the
-cheap fix is priced in the same table. Every candidate is pinned against
-`GEMHSA.rope_score` at a toy shape before anything is timed.
+Four readings.
 
-The candidates, and what each one isolates:
+* **The traffic model was right and the layout hypothesis was wrong — for this
+  stage.** The old route measured 8.4 × K̃ against a predicted 7.2: rope_score
+  was already *at* its roofline, and contiguity bought it only 6% (28.5 →
+  26.7 ms). The reason the (iii)-of-the-previous-draft argument failed is that
+  the stage's cost is dominated by the **product tensor**, which is contiguous
+  whichever layout K̃ arrives in. The 12× it was trying to explain never existed
+  — it was the artifact in (ii).
+* **The layout penalty is real, just smaller than advertised.** On a pure
+  reduction it is 3.9 → 1.3 × K̃ (a genuine **2.9×**), and on the value path
+  5.6 → 3.1 × (**1.8×**, 8.5 ms per layer per forward). But a standalone
+  `.contiguous()` costs 15.2 ms — more than it saves — so §5.2 is only worth
+  doing as part of a rewrite that makes `transport` *emit* the right layout, and
+  the payoff is the value path, not the score.
+* **The single pass landed: 1.30× on the stage** (126.3 → 96.9 ms fwd+bwd).
+  Worth ~138 ms of the 5056 ms step under checkpointing, i.e. **2.7%**. It costs
+  a 2× product tensor, +2.39 GB transient per layer against a 19.99 GiB peak.
+* **Real arithmetic is a dead end in eager, and §5.6's obstacles are now two.**
+  `Re Σ conj(Q)K = Qr·Kr + Qi·Ki` should halve the product's bytes, but eager
+  does not fuse `a*b + c*d` — it is three kernels and three full
+  materialisations, measured *worse* than the complex route (8.9 vs 8.4). Under
+  compile it is the only candidate that could reach the ~1× floor, and CUDA
+  inductor rejects it: `RuntimeError: self.stride(-1) must be 1`, because
+  `.real`/`.imag` on a complex tensor are stride-2 views. The complex candidate
+  does compile — with the documented `Torchinductor does not support code
+  generation for complex operators` warning — and still returns **1.46×** on the
+  stage (86.7 vs 126.3 ms fwd+bwd), so inductor is fusing *something*. Both are
+  small money while (iii) is open.
 
-| candidate | isolates |
-|---|---|
-| `floor: K̃.sum(colour)` strided vs contig | the layout penalty, with no arithmetic at all |
-| `K̃.contiguous()` | what the cheap fix costs |
-| `current` strided vs contig | the layout penalty on the real stage |
-| `1-pass` (complex) | §5.0's first move: 7.2 → 5.25 × K̃, at a 2× product |
-| `1-pass-re` (real) | the same, in real arithmetic: `Re Σ conj(Q)K = Qr·Kr + Qi·Ki`, so the product is float32 where it was complex64 — the variant axis doubles a tensor that halved, **3.1 × K̃ at the current transient** |
-| `cmp-cplx`, `cmp-real` | §5.6, on both |
+**§5.1 has a number now, by subtraction.** The `transport` row OOM'd again on
+the 2026-09-13 run — 4.45 GiB while the step's ~20 GiB reservation sat
+fragmented and free — because `empty_cache()` (`fef7e83`) frees the arena but
+not the three full-size intermediates the stage itself needs: at the production
+KV shape that is ~19 GiB, which does not fit next to the step on a 32 GiB card.
+The row now falls back to the K half and says so. The direct number would still
+be worth having, but ≈200 ms per layer per forward is not in doubt, and it is
+the whole ranking.
 
-**§5.6's first obstacle is confirmed, not assumed.** Compiling the complex
-candidate emits `UserWarning: Torchinductor does not support code generation for
-complex operators` — so a compiled complex multiply-reduce cannot fuse. The
-real-arithmetic candidate is the only one with a path to the ~1× floor, which is
-why it exists.
+### 5.1 Adjoint (real SO(3)) representation of the transport — **#1, and by a lot**
 
-**Still unmeasured: §5.1.** The micro-bench's `transport` row OOM'd asking for a
-4.45 GiB block while the step's ~20 GiB reservation sat fragmented and free — so
-the number that decides transport-vs-gather is the one we do not have. Fixed in
-`fef7e83` (`empty_cache()` at entry and between stages); re-run the profiler
-before spending effort on the adjoint representation.
-
-### 5.1 Adjoint (real SO(3)) representation of the transport — the biggest one left
+**Measured 2026-09-13 (§5.0(iii)): ≈200 ms per layer per forward, ~70% of the
+forward, and with `bwd/fwd ≈ 2.2` the great majority of the backward too.** Its
+traffic budget is ~33.5 GB = 47 ms at the measured 708 GB/s, so it is running
+~4.2× off — which is the tiny-GEMM penalty this section was written to remove.
+Nothing else in §5 is within an order of magnitude of it.
 
 The two `bmm` calls in `GEMHSA.transport` are 383 MiB per layer per forward with
 `bwd/fwd ≈ 2.2`, and they are `(nc, nc) @ (nc, H·d·nc)` products over millions of

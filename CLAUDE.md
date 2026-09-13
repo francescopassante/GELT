@@ -395,17 +395,18 @@ each covered by a test:
 **Measured end to end on the V100 (2026-09-13): 7.77 → 5.04 s/step**, i.e. the
 landed work is worth **1.54×** in situ (the same profiler says 1.29 s for the
 matched-parameter L-CNN arm, so GELT costs 3.9× what it does — the architecture,
-not a defect). The profile re-ranked the backlog: **backward is 64% of the step
-and `rope_score` is the largest single stage** (238 ms per layer, ~the whole
-forward over four). The roofline then re-ranked it again: that stage's whole
-traffic budget is 19 ms, so it is running **12× off**, and the suspect is that
-`GEMHSA.transport` returns a *non-contiguous* permuted view — making §5.2 (the
-Q/K/V layout), not §5.3 (the contraction), the thing to fix. Measure before
-writing: `PROFILE_ROPE=1 python scripts/profile_glueball_step.py` times every
-candidate on the permuted K̃ and on a contiguous copy against a measured
-bandwidth (§5.0(iii)). §5.1 (adjoint SO(3) transport) is still unmeasured: its micro-bench row
-OOM'd on a fragmented arena, fixed since. The ranked candidates and the numbers
-behind them are §5 of the note.
+not a defect). The profile re-ranked the backlog twice. First: **backward is 64% of the step
+and `rope_score` is the largest single stage** at 238 ms per layer — **this was
+an artifact and is retracted** (`notes/performance_audit.md` §5.0(ii)): the
+micro-bench timed the gather and the transport inside rope_score's lambda, since
+`.detach().requires_grad_()` cuts the backward graph but not the forward work.
+Isolated, rope_score is **28.5 ms**. By subtraction **the transport is ≈200 ms
+per layer per forward, ~70% of the forward**, so **§5.1 (the adjoint SO(3)
+representation) is #1 by a wide margin** and everything else is a few percent.
+The one thing that landed from the rope_score work is the **single pass over
+K̃** (1.30× on the stage, 2.7% of the step); `PROFILE_ROPE=1 python
+scripts/profile_glueball_step.py` is the bench behind it and behind the two
+§5.6 `torch.compile` obstacles (§5.0(iv)).
 
 ## Known caveats
 
