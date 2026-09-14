@@ -39,7 +39,13 @@ or "removed in the 2026-09-09 cleanup", that is where it went.
   §6.2 audit, the presentation layer, the replication.
 - `notes/lcnn_shootout.md` — the design record for the matched-parameter L-CNN
   baseline: what "matched" means on four axes, why it is a switch inside
-  `train_glueball.py`, and the readings fixed in advance. **Built, not run.**
+  `train_glueball.py`, and the readings fixed in advance. **Run 2026-09-14:
+  parity** — ΔA₀(GELT − L-CNN) = +0.007 ± 0.007 (1.1σ), same mass, same
+  noise-to-signal (§9.3); the one asymmetry is robustness (§9.2).
+- `notes/flow_free_topology.md` — the follow-on: *where can attention win, given
+  parity?* The selection rule read off the tie, and the design for the one task
+  that meets it — flow-free topological charge density. **Proposed, nothing
+  built.** Theory in `reports/topology/flow_free_topology.tex` (13 pp).
 - `notes/attention_as_operator.md` — the design record for "the attention map is
   a lattice operator": why ℓ_att failed and the correlator of the attention field
   does not, the three arms, the Z₂ result (§6.1) and its transport to SU(2) (§9).
@@ -57,8 +63,9 @@ or "removed in the 2026-09-09 cleanup", that is where it went.
   Sections 0 (lattice primer) and 1 (L-CNN) are the architecture prerequisites.
 - `notes/resources.md` — textbooks and lecture notes, with a reading order.
 - `reports/` — the LaTeX write-ups and their PDFs: `paper/` (the full draft),
-  `glueball/` (spectroscopy), `attention/` (attention as operator). They pull
-  figures from `results/` via `\graphicspath`.
+  `glueball/` (spectroscopy), `attention/` (attention as operator),
+  `topology/` (the flow-free topology design document — a proposal, not a
+  result). They pull figures from `results/` via `\graphicspath`.
 
 ## Status
 
@@ -89,6 +96,17 @@ The random-init arm tracks ξ too — so the *structural* claim (equivariant
 attention maps are lattice operators with a mass) is established by ξ_A, while
 the *learning* claim rests on ΔA₀. "The network discovers ξ" is **not**
 supportable.
+
+**The matched-parameter L-CNN** (the baseline main.tex names). Same inputs, loss,
+splits, estimator and parameter budget, only the block differs: **parity**.
+ΔA₀(GELT − L-CNN) = +0.012 ± 0.009 (1.3σ) over two ensembles, Δm consistent with
+zero, both beating the classical GEVP by the same margin (+0.077 ± 0.022 and
++0.067 ± 0.020). So "a learned equivariant operator beats the GEVP" is not an
+attention artefact — and what attention buys has to be said precisely: the
+within-layer L1-ball reach, an attention field that is itself a measurable
+operator, 3.9× the step cost, and **robustness** — 3 of 9 L-CNN operators put
+36–98% of C(0) on a single configuration where 0 of 14 GELT ones exceed 1.0%
+(`notes/lcnn_shootout.md` §9–§9.2).
 
 **The two audits.** (i) *Is the classical comparator a straw man?* Against the
 input-matched strengthened arm (`deep`), the spectroscopy claim survives:
@@ -444,6 +462,17 @@ loop-vs-index question, and worth a look after §5.1.
    version; the systematic drift-vs-Ω study does not exist.
 6. **Offset-chunked attention does not exist** — it is the memory gate on running
    the attention studies at physically large R.
+7. **`topological_charge_density` is not parity-odd.** It is the naive,
+   clover-free density: all six plaquettes are based at the corner `x`, so it is
+   not reflection-symmetric about `x`, and neither is its lattice sum. Measured
+   with an exact lattice reflection (`x₁ → (−x₁) mod L` with
+   `U'_1(y) = U_1(P(y+1̂))†`), which preserves the Wilson action to all printed
+   digits — 15478.81704264 → 15478.81704264 on a 6⁴ SU(2) config — the charge
+   goes **Q: −1.3161 → +2.9888**: the sign flips, the magnitude does not.
+   **Latent, not live** — only `tests/test_lattice.py` calls it, no production
+   script does. Fix is `definition="clover"`, plus the test that the clover
+   charge is parity-odd to machine precision and the plaquette one is not. It is
+   WP0 of `notes/flow_free_topology.md`.
 
 ## Running
 
@@ -495,11 +524,17 @@ Ranked in `notes/audit_2026-09-06.md` §4, and unchanged by the cleanup:
    readable; pruning moves nothing (`notes/fable5.1_10-09_audit.md` §8.1).
 4. **Dump per-config Ō from `z2_attention_correlator.py`** so the decomposition
    transports to the attention field without a GPU re-run.
-5. **The matched-parameter L-CNN shootout** on the per-timeslice glueball task —
-   the one baseline the thesis names and has never run. **Wired up 2026-09-13**
-   (`GLUEBALL_ARCH=lcnn`, `scripts/lcnn_shootout.sh`, `notes/lcnn_shootout.md`);
-   what remains is GPU time: a step profile, the LR/init sweep, two trainings.
-   The analysis layer needs no new code — the dumps read as any other.
+5. ~~The matched-parameter L-CNN shootout~~ — **done** 2026-09-14, and it landed
+   on the pre-registered **parity** (`notes/lcnn_shootout.md` §9). One arm is
+   provisional: the ens0 60-epoch run is unusable and the row uses a sweep arm
+   until a clean run exists (§9.1/§9.2).
+6. **Where attention can win, given parity.** The selection rule and a full
+   design for the one task that meets it — flow-free topological charge density,
+   4D SU(2) — are in `notes/flow_free_topology.md` and
+   `reports/topology/flow_free_topology.tex`. WP0 (the clover definition and its
+   parity test, caveat 7) is worth doing whether or not the rest runs. Odds on
+   the architecture half are honestly ~50–55%; the physics half is not
+   conditional on them.
 
 ## Things to keep in mind
 

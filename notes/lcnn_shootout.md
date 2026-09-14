@@ -296,18 +296,26 @@ Fit window Δ ∈ [2, 7], GEVP (t0, td) = (1, 2), blocked jackknife, block 10,
 
 | | ens0 | ens1 | combined |
 |---|---|---|---|
+| A₀(GELT) | 0.903 ± 0.047 | 1.013 ± 0.062 | |
+| A₀(L-CNN) | 0.896 ± 0.047 | 0.997 ± 0.062 | |
+| A₀(GEVP-projected) | 0.837 ± 0.056 | 0.925 ± 0.071 | |
 | ΔA₀(GELT − GEVP) | +0.066 ± 0.031 | +0.089 ± 0.030 | **+0.077 ± 0.022** (3.6σ) |
-| ΔA₀(L-CNN − GEVP) | +0.062 ± 0.031 | +0.072 ± 0.026 | **+0.068 ± 0.020** (3.4σ) |
-| **ΔA₀(GELT − L-CNN)** | +0.004 ± 0.008 (0.5σ) | +0.016 ± 0.013 (1.3σ) | **+0.007 ± 0.007** (1.1σ) |
-| Δm(GELT − L-CNN) | +0.0002 ± 0.0032 | +0.0016 ± 0.0060 | consistent with 0 |
+| ΔA₀(L-CNN − GEVP) | +0.058 ± 0.031 | +0.072 ± 0.026 | **+0.067 ± 0.020** (3.4σ) |
+| **ΔA₀(GELT − L-CNN)** | +0.007 ± 0.013 (0.6σ) | +0.016 ± 0.013 (1.3σ) | **+0.012 ± 0.009** (1.3σ) |
+| Δm(GELT − L-CNN) | +0.0019 ± 0.0052 | +0.0016 ± 0.0060 | consistent with 0 |
+
+(ens0 is the clean 20-epoch rerun of §9.1, `_p2`; masses: GELT 0.3324 ± 0.0268 /
+0.3745 ± 0.0308, L-CNN 0.3305 ± 0.0274 / 0.3730 ± 0.0314.)
 
 (The GELT column reproduces the published +0.078 ± 0.022 from the same dumps, so
 the combination convention here is the published one.)
 
 **The pre-registered expectation holds.** A matched-parameter L-CNN, on the same
-inputs, loss, splits and estimator, is the same operator to within 1.1σ: same
-mass to four decimal places, same A₀, and it beats the classical GEVP by the same
-margin. So §7's first reading applies:
+inputs, loss, splits and estimator, is the same operator to within **1.3σ**: the
+same mass (Δm consistent with zero on both ensembles), an A₀ lower by
+0.012 ± 0.009, and it beats the classical GEVP by the same margin. GELT is ahead
+on both ensembles and by at most ~0.03 in A₀ at 2σ — a direction worth stating,
+not a difference worth claiming. So §7's first reading applies:
 
 * The general claim gets **stronger**: "a learned gauge-equivariant operator
   beats the classical multi-level GEVP" is not an artefact of attention.
@@ -319,7 +327,13 @@ margin. So §7's first reading applies:
   expensive step. Not raw overlap. That is the honest sentence, and it was
   written down before the run.
 
-### 9.1 One arm is provisional: the ens0 60-epoch run is unusable
+### 9.1 The ens0 60-epoch run was unusable — **resolved 2026-09-14**
+
+Rerun at 20 epochs (`_p2`, same lr and init scale, ~1.7 h): val −0.6146 — better
+than the 60-epoch run's −0.6143 — test ratios 0.675 / 0.467 / 0.331, and the
+top-1 configuration back at 0.9%, 4× the median. The §9 table above uses it; the
+paragraphs below are the record of what the bad run was, and §9.2 is why.
+
 
 `best_glueball_lcnn_sm0-2-4-6_test_obars.pt` (ens0, 60 epochs) reports the best
 validation loss of every run — −0.6143 — and a **test** correlator that is
@@ -327,24 +341,11 @@ garbage: C(1)/C(0) = 0.171 against 0.674 for the four 10-epoch sweep arms on the
 *same ensemble and the same splits*, i.e. a test Rayleigh loss of −0.143 where
 val says −0.614. Its A₀ fit does not converge (0.24 ± 0.60).
 
-Every other run is internally consistent (val ≈ −0.61, test ≈ −0.57). The ens0
-row above therefore uses the `lr3e-3_is1e-4` **sweep** arm — a converged trained
-operator on that ensemble (10 epochs; the 60-epoch run improved val by 0.0005, so
-convergence is not the issue) — and the row must be re-measured once a clean ens0
-run exists.
-
-Two candidate causes, not yet separated:
-
-1. **Chain-local overfitting.** The split is contiguous and chain-ordered, so val
-   sits *adjacent* to train and test sits at the far end of the MCMC chain. A net
-   trained 60 epochs can fit chain-local structure that survives into val and not
-   into test. GELT never ran into it because its runs early-stopped at 25 epochs.
-   If this is the cause it is a finding about the protocol, not a bug, and the
-   fix is to select on a test-like split or cap the epochs.
-2. **A checkpoint collision** — two processes writing
-   `best_glueball_lcnn_sm0-2-4-6.pth`, so the eval reloaded weights that never
-   produced that val loss. `logs/lcnn_train_ens0.log` decides it: a smooth val
-   descent to −0.6143 points at (1), anything jagged or duplicated at (2).
+Every other run is internally consistent (val ≈ −0.61, test ≈ −0.57). Two
+candidate causes were considered — chain-local overfitting (val sits adjacent to
+train in chain order, test at the far end) and a checkpoint collision — and
+**both were wrong**: see §9.2. The rerun is kept separate rather than
+overwriting, and the bad dump is kept as the evidence.
 
 ### 9.2 What actually happened to that run: one configuration in 400
 
@@ -391,11 +392,70 @@ Consequences, in order:
 1. `fit_glueball_overlap.py` now prints the top-1 share for **every** arm and
    refuses to let an A₀ be quoted above 10% — uniform, so it is a gate and not a
    thing applied to an arm one dislikes. It fires on exactly the rows above.
-2. The ens0 trained row of §9 stays on the sweep arm until a clean 60-epoch run
-   exists. Deleting config 371 by hand is not the fix: the published protocol has
-   no outlier rejection, and adding one for a single arm would be exactly the
-   move this repo's audits exist to catch.
+2. The ens0 row of §9 is the clean `_p2` rerun. Deleting config 371 by hand was
+   never an option: the published protocol has no outlier rejection, and adding
+   one for a single arm would be exactly the move this repo's audits exist to
+   catch. Note what the rerun does *not* do — it does not make the blow-up go
+   away, it re-rolls it. Three of nine L-CNN operators hit it; the next one
+   might too.
 3. **The untrained L-CNN trace is unusable at seed 0** on both ensembles. Any
    mean over seeds would be meaningless; the rule has to be fixed in advance
    (median over seeds, or the §9.2 gate as an exclusion criterion applied to
    every architecture) before those numbers go anywhere near the curve.
+
+### 9.3 Parity extends to the error bars, and what the one real difference is (2026-09-14)
+
+Two things needed pinning down before parity could be read correctly, and both
+came out of auditing the follow-on question (*given parity, where could attention
+ever win?* — `notes/flow_free_topology.md`).
+
+**Parity also holds in signal-to-noise.** The natural inference from §9.2 is that
+GELT's bounded aggregation should buy smaller error bars. It does not. Blocked
+jackknife of `δC(Δ)/C(Δ)` for the two learned operators on the *same* 400 held-out
+configurations, ens1 (the clean trained pair):
+
+| arm | Δ=1 | Δ=2 | Δ=4 | Δ=6 |
+|---|---|---|---|---|
+| GELT | 0.0322 | 0.0396 | 0.0720 | 0.1695 |
+| L-CNN | 0.0322 | 0.0399 | 0.0728 | 0.1676 |
+
+Indistinguishable. The pathological ens0 60-epoch arm is 1.7–2.3× worse at every
+Δ, as its 71.8% top-1 share predicts — but that is a *failure event*, not a
+systematic variance edge. So §9.2 is a statement about **failure rate across
+training runs** (3 of 9 L-CNN arms unusable, 0 of 14 GELT), and the honest pair
+of sentences stays as written there. **Do not quote it as an error-bar
+advantage**, and do not build a follow-on proposal on one.
+
+**The architectural difference is narrower than "polynomial vs rational".** The
+loose framing — an L-CB stack is a raw matrix polynomial, so its weights are
+fixed — is wrong in a way that matters for designing the next experiment.
+`LAct` is `g(Re Tr W_c / nc) · W_c`, i.e. *input-dependent* gating, and L-Conv
+mixes channels **before** it, so the gate's argument is a learned linear
+combination of transported channels: an L-CNN can realise
+`ReLU(Re Tr[A − B])`, a data-dependent difference test between two scales held in
+different channels. GELT carries the *same* L-Act on its residual branch. So:
+
+> **The only architectural difference between the two arms is whether the weights
+> over *offsets* are input-dependent.** Gating, bilinearity, receptive field,
+> loop degree, inputs, loss, splits and estimator are matched.
+
+That is a better sentence for the architecture chapter than the one §9 currently
+offers, and it makes this shootout a controlled A/B on a single mechanism. The
+mechanism is **normalisation**: softmax depends only on score *differences* and is
+invariant under a common additive shift, so α is a scale-free ratio across the
+neighbourhood; `ReLU(Re Tr[A − B])` thresholds an *absolute* magnitude and must be
+calibrated to an amplitude the fixed weights cannot adapt.
+
+**Why the tie was structural.** Read against that statement, the 0⁺⁺ task offers
+the mechanism nothing: the Rayleigh loss is built from the lattice-summed `Ō(t)`,
+so site-to-site variation is integrated away before the loss sees it
+(`notes/attention_as_operator.md` §1 made this argument about ℓ_att; it applies
+verbatim to the operator); the optimum is a linear functional of loop shapes
+(2.5% outside the `full` span, ~80% of that rectangular loops —
+`notes/fable5.1_10-09_audit.md` §8.3); and there is one β, one scale, one
+maximally symmetric channel. Under those three, softmax attention degenerates into
+a convolution with learned per-offset weights, which is L-Conv. §7's first reading
+was right for a stronger reason than it knew.
+
+The selection rule that follows, and the one task in reach that satisfies it, are
+in `notes/flow_free_topology.md`.

@@ -42,22 +42,14 @@ repo.
 | §Attention as a physical field, `tab:train_rnd_gevp` | ξ_A and A₀, trained / random / GEVP, four β in 3D Z₂ | *GPU:* `python scripts/z2_beta_scan.py` (ensembles + classical mass), `Z2G_R=6 Z2G_N_USE=800 python scripts/train_z2_glueball.py <β>` once per β, then `python scripts/z2_attention_correlator.py`. *offline replot:* `ZAC_REPLOT=results/attention/z2_attention_correlator_diag_R6.pt python scripts/z2_attention_correlator.py` |
 | §…, `tab:su2_train_rnd_gevp` | the same measurement on SU(2) at β = 2.4 | *GPU, ~40 min:* `python scripts/su2_attention_correlator.py` |
 
-Two audits of the above, neither of which main.tex quotes:
+Three audits of the above and one baseline, none of which main.tex quotes:
 
 | question | how |
 |---|---|
 | Is the classical comparator a straw man? | *offline:* `SFF_NOCACHE=1 python scripts/su2_fair_fight.py` reproduces the published ΔA₀; drop the flag (and give it the SU(2) ensemble) for the strengthened `deep` / `shapes` / `full` arms. Verdict in `notes/audit_2026-09-06.md` §6.4/§6.5 |
 | Did the network find operator content the classical basis cannot express? | *offline:* `python scripts/operator_decomposition.py` — 12.9% of the norm² outside the published span, ΔA₀ = +0.076 ± 0.019 (4.0σ). Add `--basis=dumps/su2_fair_fight_obars_run5.pt:deep` for the strong arm (+0.097 ± 0.021) and `--shape-span=…:full` for what `r` is made of (80% rectangular loops); `--m-ref` runs the untrained control, where ΔA₀ flips sign. `notes/operator_decomposition.md` |
 | Is the advantage the architecture, or just richer inputs? | *GPU, ~1.5 days:* `bash scripts/curve_batch.sh` (3 trained points + the untrained trace), then *offline:* one `SFF_TRUNCATE=1 SFF_BASES=1 python scripts/su2_fair_fight.py <dump>` per dump and `python scripts/input_architecture_curve.py`. A₀ against input content for classical / trained / untrained. Verdict in `notes/fable5.1_10-09_audit.md` §8.2 |
-
-**Built but not yet run.** *Is the advantage attention, or any gauge-equivariant
-network on the same inputs?* `GLUEBALL_ARCH=lcnn python scripts/train_glueball.py`
-runs a matched-parameter L-CNN on the identical problem, and
-`bash scripts/lcnn_shootout.sh` is the V100 batch around it (step profile, LR ×
-init-scale sweep, two trainings, the untrained control). The dumps read like any
-other, so the whole offline layer applies unchanged. What "matched" means, and
-the readings fixed in advance, are in `notes/lcnn_shootout.md` — there is no
-result yet.
+| Is the advantage attention, or any gauge-equivariant network on the same inputs? | *GPU, one night:* `bash scripts/lcnn_shootout.sh` trains a matched-parameter L-CNN on the identical problem (`GLUEBALL_ARCH=lcnn`), then *offline:* `python scripts/fit_glueball_overlap.py <gelt dump> --vs=<lcnn dump>` differences the two inside every jackknife sample. **Parity:** ΔA₀(GELT − L-CNN) = +0.012 ± 0.009 (1.3σ), same mass, both beating the GEVP by the same margin — plus a robustness gap parity does not contain (3 of 9 L-CNN operators put 36–98% of C(0) on one configuration; 0 of 14 GELT ones exceed 1.0%). `notes/lcnn_shootout.md` §9 |
 
 **Known caveat that touches the Z₂ table.** Projected Z₂ APE smearing has no
 tunable radius at any α, and at the production `SMEAR_ALPHA = 0.5` it is not
@@ -90,7 +82,8 @@ scripts/               entry points, flat and self-contained (table below)
 tests/                 pytest: gauge invariance/equivariance, sampler exactness,
                        transport, glueball arithmetic
 notes/                 design records and the run-by-run experimental log
-reports/               LaTeX write-ups and their PDFs (paper / glueball / attention)
+reports/               LaTeX write-ups and their PDFs (paper / glueball /
+                       attention / topology — the last a proposal, not a result)
 dumps/                 the two test-split Ō dumps — tracked on purpose
 results/               generated figures, checkpoints, dumps (gitignored)
 datasets/              cached ensembles (gitignored)

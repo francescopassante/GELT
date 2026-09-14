@@ -390,6 +390,20 @@ In the existing GELT results, it was discovered that the connected correlator of
 
 ### Plan 7: Flow-Free Topological Invariants & Non-Perturbative $\theta$-Vacuum Dynamics
 
+> **Status (2026-09-14): this plan now has an audited design document.** After
+> the L-CNN shootout closed on parity, Plan 7 was re-derived from a selection
+> rule for where attention *can* separate from convolution, audited against the
+> literature and against the code, and written up as
+> `notes/flow_free_topology.md` (build order, gates, pre-registered readings) and
+> `reports/topology/flow_free_topology.tex` (13 pp of theory and design). Three
+> things changed in the audit: the L-CNN paper's own topology result is the
+> *algebraic* task (regress the naive density of the configuration it is shown),
+> so the gap is real but narrower than this section assumes; the "save the flow
+> cost" motivation is partly taken by Matsumoto et al., PTEP 2021 023D01; and
+> `topological_charge_density` is not parity-odd as written (CLAUDE.md caveat 7),
+> so the clover definition this section already calls for is a prerequisite, not
+> a refinement. Odds on the architecture half: ~50–55%.
+
 #### 1. Physics Motivation & The Open Problem
 The topological structure of non-Abelian gauge fields—characterized by the integer Pontryagin index $Q = \frac{1}{32\pi^2} \int d^4x \, \epsilon_{\mu\nu\rho\sigma} \Tr[F_{\mu\nu} F_{\rho\sigma}] \in \mathbb{Z}$—underpins crucial phenomena such as the axial $U(1)_A$ anomaly, the mass of the $\eta'$ meson (Witten–Veneziano formula), and the Strong CP problem. On a discrete lattice, the naive topological charge $Q_{\text{naive}} = \sum_x q(x)$ is not an integer and suffers from large multiplicative and additive renormalizations ($Z_Q < 1$) driven by short-distance UV fluctuations. Existing methods (cooling, gradient/Wilson flow, stout smearing) suppress UV noise by diffusing the gauge field over a flow time $t$. However, this diffusion inevitably distorts or annihilates small instanton-antiinstanton pairs, obscuring the true microscopic topological structure.
 
