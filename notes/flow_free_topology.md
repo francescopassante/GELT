@@ -1,7 +1,8 @@
 # Flow-free topological charge density — design record
 
-**Status (2026-09-14): WP0, WP1 and WP2 built; WP2 has not been *run* at
-physics sizes, and everything from WP3 on is still a proposal.** Nothing below §12 is a result about the *physics*; §12 is the build
+**Status (2026-09-14): WP0, WP1 and WP2 built, and WP2's pre-flight has now
+been run (§12.4). Gate 0 is *not* cleanly passed — see below. Everything from
+WP3 on is still a proposal.** Nothing below §12 is a result about the *physics*; §12 is the build
 log for the two work packages that landed, both offline, both CPU-seconds, both
 gated by tests. The theory, the physics background and the argument for the task
 are in `reports/topology/flow_free_topology.tex` (13 pp, compiles); this note is
@@ -364,7 +365,89 @@ several times, and the same site entering the design matrix under two names make
 `G` singular — the fit would not error, it would just return garbage weights
 through the ridge term.
 
-**Not yet done, and next:** run the pre-flight (`chain`, `gate0`) at all three
-(β, L) rows on the V100 and read the gate. Only then is a night of `ensemble` +
-`targets` worth spending. WP3–WP5 (`train_topology.py`, the trainings,
-`fit_topology.py`) are untouched.
+### 12.4 The pre-flight, run (V100, 2026-09-14)
+
+`chain` and `gate0` at all three rows. Two results, one of them a correction to
+this script's own gate.
+
+**No topological freezing, anywhere — and N_SKIP drops from 20 to 10.**
+
+| row | τ_int(Q) | τ_int(plaq) | Q range | sector changes / 400 sweeps |
+|---|---|---|---|---|
+| β=2.3 L=8 | 0.55 (W=4) | 2.35 (W=15) | [−2.65, +3.50] | 303 |
+| β=2.4 L=12 | 0.64 (W=5) | 1.35 (W=9) | [−5.15, +4.11] | 322 |
+| β=2.5 L=16 | **2.76** (W=17) | 0.97 (W=6) | [−5.08, +4.25] | 266 |
+
+The risk priced into §11 did not bite: the chain tunnels between sectors on most
+sweeps at every β. But **the ordering inverts across the rows** — at β = 2.3 the
+plaquette is the slower mode (2.35 vs 0.55) and at β = 2.5 the topology is
+(2.76 vs 0.97). That is the topological slowdown appearing on schedule as `a`
+falls; it is simply not yet large. τ_int(plaquette) would have said 2 sweeps at
+β = 2.5, off by a factor of three — the reason the phase measures the flowed Q.
+With τ_int(Q)'s own error at the worst row ≈ ±1.2, `N_SKIP = 10` keeps ≳3·τ_int,
+and halves the sampling cost against the provisional 20.
+
+**Gate 0's integrality half fails — and the first version of the gate hid it.**
+The gate's criterion was `⟨|Q−[Q]|⟩ < 0.25`. **0.25 is the null**: any
+distribution broad compared to the integer spacing gives 0.250 (uniform,
+Gaussian at rms 0.85, Gaussian at rms 2.15 — all 0.250). So the threshold was
+set exactly at "no integer structure whatever", and it returned PASS on the two
+rows that measured 0.239 and 0.232. Those PASS verdicts are meaningless and are
+retracted. The threshold is now 0.15, the null is printed beside the reading, and
+the real criterion moved into `gatefit` (below).
+
+The measured readings at the primary rung `t/a² = 2`:
+
+| row | ⟨\|Q−[Q]\|⟩ | rms(Q) | per-config \|Q(3)−Q(1.5)\| | ⟨\|Q−[Q]\|⟩ at t=12 |
+|---|---|---|---|---|
+| β=2.3 L=8 | 0.239 | 0.847 | 0.226 | 0.103 |
+| β=2.4 L=12 | 0.232 | 1.081 | 0.250 | 0.088 |
+| β=2.5 L=16 | 0.298 | 2.152 | 0.257 | 0.142 |
+
+So **at no row is Q integer-quantised at t/a² = 2**; integrality only begins to
+appear at `t/a² ≳ 12`, i.e. `r_sm/a ≈ 9.8`, past the Manhattan-8 receptive field
+and — at L = 8 and 12 — past the box itself.
+
+What *does* hold up: the **distribution** of Q plateaus from `t/a² ≈ 2–3`
+onward (rms 1.08 → 1.16 → 1.17 → 1.18 across t = 2, 3, 8, 16 at β = 2.4; 2.15 →
+2.15 → 2.08 → 2.02 at β = 2.5), and the integrator is not the limit —
+`|Q(ε=0.02) − Q(ε=0.005)| ≤ 7.2e−5` at every row, five orders below the effect.
+
+**Two things this exposes about the design itself.**
+
+1. *The smoothing radius must fit in the box, and at β = 2.3 it does not.* The
+   ladder holds `r_sm/a` fixed across β by construction, but `L` grows with β to
+   hold the physical volume — so the top rungs collide with the lattice at the
+   coarsest row. At L = 8, `t/a² = 4` gives `r_sm/a = 5.7` and `t/a² = 8` gives
+   `r_sm/a = 8.0 = L`: the flow has smoothed over the whole torus. Only
+   `t/a² ≤ 2` is box-safe there (`r_sm ≤ L/2`). `gate0` now warns per rung. The
+   choice is to restrict the β = 2.3 row to the lower rungs, or to enlarge it —
+   which breaks the constant-physical-volume design.
+2. *Non-integrality has two possible causes and the gate could not tell them
+   apart.* Either the flow has not resolved the topology at that rung, or the
+   lattice charge carries the usual multiplicative renormalisation
+   `Q_latt ≃ Z(β,t)·Q` with `Z < 1` on a rough field, in which case the integer
+   structure is real but sits at spacing Z. The new **`gatefit`** phase scans Z
+   (offline, seconds, on the cached `gate0` dumps) and reports where the
+   structure is sharpest, with `rms(Q/Z*)` beside it so the degenerate
+   large-Z minimum — every Q driven toward zero, which is an integer — announces
+   itself. Validated on synthetic data: it recovers a planted `Z = 0.8` to two
+   digits and returns NONE on pure noise. `gate0` now also records the naive
+   charge off the same trajectory, so clover-vs-plaquette is available as a
+   discretisation scale.
+
+**Cost, measured.** `gate0` to `t/a² = 16` on 16 configs: 1:19 (L=8), 6:36
+(L=12), 20:47 (L=16). Scaled to the `targets` phase — 1200 configs to the top
+rung `t/a² = 8` — that is ≈ 13 h at L=16, ≈ 4 h at L=12, ≈ 1 h at L=8, so ~18
+GPU-hours of flowing, against the 1–2 h estimated in §11. **That estimate was
+wrong by an order of magnitude.** Two levers before spending it: the top rung
+costs half the trajectory on its own (dropping `t/a² = 8`, which is box-unsafe
+at L=8 anyway, halves the bill), and `TOPO_CHUNK=64` should use the V100 far
+better than the default 16 at these volumes.
+
+**Next:** `TOPO_PHASE=gatefit python scripts/measure_topology.py` — seconds, no
+GPU, reads the dumps already on disk. It decides whether the primary rung moves,
+whether the β = 2.3 row survives as designed, and whether R4 ("reproduces the
+integer Q-histogram") is available at all. Only after that is a night of
+`ensemble` + `targets` worth spending. WP3–WP5 (`train_topology.py`, the
+trainings, `fit_topology.py`) are untouched.

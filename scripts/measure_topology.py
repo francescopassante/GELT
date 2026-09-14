@@ -152,7 +152,12 @@ FLOW_EPS = _env_float("TOPO_EPS", 0.02)
 
 N_CONFIGS = _env_int("TOPO_N_CONFIGS", 1200)  # 800 train / 200 val / 200 test
 N_THERM = _env_int("TOPO_N_THERM", 500)
-N_SKIP = _env_int("TOPO_N_SKIP", 20)  # provisional; the `chain` phase sets it
+# Measured by the `chain` phase 2026-09-14: τ_int(Q) = 0.55 / 0.64 / 2.76 at
+# β = 2.3/2.4/2.5, so 2·τ_int ≤ 5.5 at the worst row. τ_int's own error there is
+# ±1.2 (window 17, 400 samples), so 10 keeps ≳3·τ_int of margin — and halves the
+# sampling cost against the provisional 20. **No topological freezing** was found
+# at any row: 266–322 integer-sector changes in 400 sweeps.
+N_SKIP = _env_int("TOPO_N_SKIP", 10)
 N_OR = _env_int("TOPO_N_OR", 4)
 N_CHAIN = _env_int("TOPO_N_CHAIN", 400)  # consecutive sweeps for τ_int
 N_GATE = _env_int("TOPO_N_GATE", 16)  # configs carried through the Q(t) scan
@@ -218,13 +223,15 @@ def clover_density(U, chunk=None):
     return torch.cat(out)
 
 
-def flowed_densities(U, times, chunk=None, progress=False):
-    """q_clov of the flowed configuration at each requested time.
+def flowed_densities(U, times, chunk=None, progress=False, definitions=("clover",)):
+    """Flowed charge density at each requested time, under each discretisation.
 
     One trajectory per configuration, snapshots taken along it: the cost is the
-    longest rung, not the sum of the rungs.
+    longest rung, not the sum of the rungs — and not the sum over definitions
+    either, which is why they are asked for together rather than by re-flowing.
+    Returns ``{definition: {t: (B, *Λ)}}``.
     """
-    out = {t: [] for t in times}
+    out = {d: {t: [] for t in times} for d in definitions}
     step = chunk or CHUNK
     starts = range(0, U.shape[0], step)
     if progress:
@@ -235,8 +242,11 @@ def flowed_densities(U, times, chunk=None, progress=False):
         # turns a log into a wall of carriage returns.
         snaps = flow_trajectory(block, GROUP, times, eps=FLOW_EPS)
         for t, V in zip(times, snaps):
-            out[t].append(topological_charge_density(V, GROUP).cpu())
-    return {t: torch.cat(v) for t, v in out.items()}
+            for d in definitions:
+                out[d][t].append(
+                    topological_charge_density(V, GROUP, definition=d).cpu()
+                )
+    return {d: {t: torch.cat(v) for t, v in ts.items()} for d, ts in out.items()}
 
 
 def mean_plaquette(U, chunk=None):
@@ -250,7 +260,7 @@ def mean_plaquette(U, chunk=None):
 def _load_or_make_ensemble(beta, L, quiet=False):
     path = _ens_path(beta, L)
     if os.path.exists(path):
-        blob = torch.load(path, map_location="cpu")
+        blob = torch.load(path, map_location="cpu", weights_only=False)
         if not quiet:
             print(f"  [cache] {path}  ({blob['U'].shape[0]} configs)")
         return blob["U"]
@@ -299,7 +309,7 @@ def phase_chain(beta, L):
     path = _result_path("chain", beta, L)
     if os.path.exists(path):
         print(f"  [cache] {path}")
-        return torch.load(path, map_location="cpu")
+        return torch.load(path, map_location="cpu", weights_only=False)
 
     print(f"  chain of {N_CHAIN} sweeps at n_skip=1 …")
     chain, _ = mcmc_ensemble(
@@ -309,7 +319,7 @@ def phase_chain(beta, L):
     )
     chain = chain.cpu()
     plaq = mean_plaquette(chain).numpy()
-    q = flowed_densities(chain, (T_PRIMARY,))[T_PRIMARY]
+    q = flowed_densities(chain, (T_PRIMARY,))["clover"][T_PRIMARY]
     Q = q.flatten(1).sum(1).numpy()
 
     out = {"beta": beta, "L": L, "Q": Q, "plaquette": plaq}
@@ -345,7 +355,7 @@ def phase_gate0(beta, L):
     path = _result_path("gate0", beta, L)
     if os.path.exists(path):
         print(f"  [cache] {path}")
-        return torch.load(path, map_location="cpu")
+        return torch.load(path, map_location="cpu", weights_only=False)
 
     print(f"  {N_GATE} configs, flowing to t/a²={T_GATE_MAX:g} …")
     U, _ = mcmc_ensemble(
@@ -360,8 +370,15 @@ def phase_gate0(beta, L):
                                12.0, T_GATE_MAX}
     )
     grid = [t for t in grid if t <= T_GATE_MAX]
-    dens = flowed_densities(U, tuple(grid), progress=True)
-    Qt = np.stack([dens[t].flatten(1).sum(1).numpy() for t in grid])  # (n_t, B)
+    # Both discretisations off the one trajectory. They converge to the same
+    # continuum charge as the field smooths, so the gap between them at large t
+    # is a discretisation-error scale — which is what tells an honest Z < 1 apart
+    # from a bug in the normalisation.
+    dens = flowed_densities(
+        U, tuple(grid), progress=True, definitions=("clover", "plaquette")
+    )
+    Qt = np.stack([dens["clover"][t].flatten(1).sum(1).numpy() for t in grid])
+    Qt_plaq = np.stack([dens["plaquette"][t].flatten(1).sum(1).numpy() for t in grid])
 
     print(f"    {'t/a²':>6} {'r_sm/a':>7} {'⟨Q⟩':>9} {'rms(Q)':>8} {'⟨|Q−[Q]|⟩':>10}")
     for i, t in enumerate(grid):
@@ -385,14 +402,30 @@ def phase_gate0(beta, L):
     # (every Q is near zero), so the spread across configurations is part of the
     # gate: without it a too-small volume reads as a clean pass.
     spread = float(Qt[ip].std())
+    # ⟨|Q−[Q]|⟩ = 0.25 for ANY broad distribution — uniform, Gaussian, anything
+    # wide compared to the integer spacing. It is the null, not a threshold, and
+    # a first version of this gate used it as one (calling 0.239 a PASS). The
+    # criterion is distance from the null, and it is read after the Z-scan of the
+    # `gatefit` phase, because a multiplicative renormalisation Z < 1 moves Q off
+    # the integers without meaning the topology is unresolved.
     if spread < 0.1:
         verdict, why = "DEGENERATE", "  — no topological content; the volume is too small"
-    elif dev_primary < 0.25 and drift < 0.5:
+    elif dev_primary < 0.15 and drift < 0.5:
         verdict, why = "PASS", ""
     else:
-        verdict, why = "LOOK", "  — move the primary rung and record it"
+        verdict, why = "LOOK", "  — run TOPO_PHASE=gatefit before moving the rung"
     print(f"    rms(Q) across configs at the primary rung: {spread:.3f}")
+    print(f"    ⟨|Q−[Q]|⟩ null for a structureless distribution: 0.250")
     print(f"    gate verdict: {verdict}{why}")
+    # The smoothing radius must fit inside the box: at r_sm ≳ L/2 the flow has
+    # wrapped the torus and the rung means nothing. This is not a property of β,
+    # so it is checked here rather than per-configuration.
+    for t in T_LADDER:
+        if math.sqrt(8 * t) > L / 2:
+            print(
+                f"    !! ladder rung t/a²={t:g} has r_sm/a = {math.sqrt(8 * t):.1f} "
+                f"> L/2 = {L / 2:g}: the flow smooths over the whole lattice"
+            )
 
     # Integrator check: the production step size against a 4× finer one.
     sub = U[: min(4, U.shape[0])].to(DEVICE)
@@ -410,6 +443,7 @@ def phase_gate0(beta, L):
 
     out = {
         "beta": beta, "L": L, "grid": np.array(grid), "Qt": Qt,
+        "Qt_plaq": Qt_plaq,
         "dev_primary": dev_primary, "drift": drift, "verdict": verdict,
         "spread": spread,
         "eps_residual": dq,
@@ -439,6 +473,105 @@ def _plot_gate0(res):
     print(f"    wrote {path}")
 
 
+def phase_gatefit(beta, L):
+    """Offline re-analysis of a cached `gate0` run — seconds, no GPU, no flowing.
+
+    `gate0` answers "is Q near an integer?" with ⟨|Q−[Q]|⟩, and that statistic
+    has a null of **0.25** for any distribution broad compared to the integer
+    spacing (uniform, Gaussian, anything). A reading of 0.24 is therefore not a
+    near-miss, it is the absence of integer structure. What it cannot separate is
+    the two reasons Q might sit off the integers:
+
+      · the flow has not resolved the topology — dislocations survive, the rung
+        is too early, and the target field is UV noise;
+      · the lattice charge carries a multiplicative renormalisation,
+        Q_latt ≃ Z(β,t)·Q with Z < 1 on a rough field, so an honest integer
+        structure sits at spacing Z instead of 1.
+
+    So this phase scans Z and reports where the integer structure is sharpest.
+    A Z* near 1 with a residual still at the null means the first reading; a Z*
+    below 1 with a residual well under the null means the second, and the rung is
+    usable. A Z* that lands near 1/2 or 2 would mean neither — it would mean the
+    normalisation of q_x is wrong, which is why the scan is deliberately wide.
+
+    Also printed: the smoothing radius against the box (a rung with
+    r_sm ≳ L/2 has wrapped the torus), the clover-vs-naive gap (a discretisation
+    scale, and a bug's fingerprint if it does not shrink as the field smooths),
+    and an SEM on every deviation, because 16 configurations is thin.
+    """
+    path = _result_path("gate0", beta, L)
+    if not os.path.exists(path):
+        print(f"  no gate0 dump at {path}; run TOPO_PHASE=gate0 first")
+        return
+    res = torch.load(path, map_location="cpu", weights_only=False)
+    grid, Qt = res["grid"], res["Qt"]
+    Qt_plaq = res.get("Qt_plaq")
+    n = Qt.shape[1]
+    zs = np.linspace(0.4, 2.5, 421)
+
+    print(
+        f"  {n} configs; the null for ⟨|Q−[Q]|⟩ is 0.250 (ANY broad "
+        f"distribution), not a threshold"
+    )
+    head = (
+        f"  {'t/a²':>6} {'r_sm/a':>7} {'r_sm/L':>7} {'rms Q':>7} "
+        f"{'dev(Z=1)':>14} {'Z*':>6} {'dev(Z*)':>14} {'rms Q/Z*':>9}"
+    )
+    print(head + ("" if Qt_plaq is None else f" {'|clov−plaq|':>11}"))
+    rows = {}
+    for i, t in enumerate(grid):
+        Q = Qt[i]
+        dev1 = np.abs(Q - np.round(Q))
+        # dev(Z) = ⟨|Q/Z − [Q/Z]|⟩. Large Z drives every Q toward 0, which is an
+        # integer, so rms(Q/Z*) is printed beside it: a collapsed spread is how
+        # that degenerate minimum announces itself.
+        devs = np.array([np.abs(Q / z - np.round(Q / z)).mean() for z in zs])
+        j = int(devs.argmin())
+        zstar = float(zs[j])
+        dstar = np.abs(Q / zstar - np.round(Q / zstar))
+        line = (
+            f"  {t:6g} {math.sqrt(8 * t):7.2f} {math.sqrt(8 * t) / L:7.2f} "
+            f"{Q.std():7.3f} {dev1.mean():7.3f}±{dev1.std() / math.sqrt(n):<6.3f} "
+            f"{zstar:6.2f} {dstar.mean():7.3f}±{dstar.std() / math.sqrt(n):<6.3f} "
+            f"{(Q / zstar).std():9.3f}"
+        )
+        if Qt_plaq is not None:
+            line += f" {np.abs(Q - Qt_plaq[i]).mean():11.3f}"
+        print(line)
+        rows[float(t)] = dict(
+            rms=float(Q.std()), dev1=float(dev1.mean()),
+            sem1=float(dev1.std() / math.sqrt(n)), zstar=zstar,
+            devstar=float(dstar.mean()),
+            semstar=float(dstar.std() / math.sqrt(n)),
+            rms_scaled=float((Q / zstar).std()),
+        )
+
+    # A rung is usable when the integer structure is real (deviation below the
+    # null by more than its own error) *and* the smoothing still fits in the box.
+    usable = [
+        t for t, r in rows.items()
+        if r["devstar"] + r["semstar"] < 0.20
+        and r["rms_scaled"] > 0.3
+        and math.sqrt(8 * t) <= L / 2
+    ]
+    print(
+        f"\n  rungs with real integer structure and r_sm ≤ L/2: "
+        f"{sorted(usable) if usable else 'NONE'}"
+    )
+    if not usable:
+        print(
+            "  ⇒ Gate 0's integrality half FAILS at this row: no flow time that "
+            "fits inside the box shows integer structure beyond the null.\n"
+            "    The density target q_t(x) is still well defined — it is the "
+            "flowed reference, whatever its normalisation — but reading R4 as "
+            "'reproduces the integer Q-histogram' is not available here, and\n"
+            "    that has to be recorded rather than worked around."
+        )
+    torch.save({"beta": beta, "L": L, "rows": rows, "usable": sorted(usable)},
+               _result_path("gatefit", beta, L))
+    return rows
+
+
 # ── Phase: ensemble / targets ────────────────────────────────────────────────
 def phase_ensemble(beta, L):
     _load_or_make_ensemble(beta, L)
@@ -453,7 +586,7 @@ def phase_targets(beta, L):
     print(f"  clover density at t=0 and the ladder {list(T_LADDER)} …")
     t0 = time.time()
     q0 = clover_density(U)
-    ladder = flowed_densities(U, T_LADDER, progress=True)
+    ladder = flowed_densities(U, T_LADDER, progress=True)["clover"]
     torch.save(
         {
             "q0": q0,
@@ -669,7 +802,7 @@ def phase_arms(beta, L):
     if not os.path.exists(path):
         print(f"  no targets at {path}; run TOPO_PHASE=targets first")
         return
-    blob = torch.load(path, map_location="cpu")
+    blob = torch.load(path, map_location="cpu", weights_only=False)
     q0 = blob["q0"].double()
     y = blob["ladder"][float(T_PRIMARY)].double()
     n = q0.shape[0]
@@ -728,6 +861,7 @@ _PHASES = {
     "selftest": phase_selftest,
     "chain": phase_chain,
     "gate0": phase_gate0,
+    "gatefit": phase_gatefit,
     "ensemble": phase_ensemble,
     "targets": phase_targets,
     "arms": phase_arms,
