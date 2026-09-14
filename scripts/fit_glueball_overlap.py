@@ -75,10 +75,21 @@ for _d in ("results/sampler", "results/glueball", "results/attention",
 
 
 # ── Tunables ──────────────────────────────────────────────────────────────────
+_POSITIONAL = [a for a in sys.argv[1:] if not a.startswith("--")]
 DUMP = (
-    sys.argv[1]
-    if len(sys.argv) > 1
+    _POSITIONAL[0]
+    if _POSITIONAL
     else "results/glueball/best_glueball_gelt_sm0-2-4-6_test_obars.pt"
+)
+# --vs=<dump>: a second learned operator from the SAME ensemble and test split,
+# added as a fourth row and — the point of the option — differenced against the
+# first inside every jackknife sample. That is the matched-architecture
+# comparison (GELT vs L-CNN): both operators see the same 400 configurations, so
+# the shared-ensemble fluctuations cancel exactly as they do against the GEVP,
+# and the two ΔA₀-against-GEVP numbers must NOT be subtracted by hand instead —
+# they are correlated through the classical arm.
+VS = next(
+    (a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--vs=")), None
 )
 FIT_WINDOW = (2, 7)  # shared cosh-fit window [Δmin, Δmax]. Starts at 2 so the
 #                      classical GEVP's residual Δ=1 contamination (the Run-5
@@ -119,6 +130,13 @@ def blocked_jackknife(fn, B, block_size):
     return mean, err
 
 
+def arch_label(meta):
+    """How to name a dump's learned operator: the architecture that made it."""
+    arch = str(meta.get("arch", "gelt")).lower()
+    name = "L-CNN" if arch == "lcnn" else "GELT"
+    return f"{name} (random init)" if meta.get("random_init") else f"{name} (learned)"
+
+
 def project_ground(basis, t0, td):
     """v₀-projected scalar operator (B, Nt) of an (n_ops, B, Nt) basis."""
     v0 = gevp_ground_vector(connected_correlator_matrix(basis), t0=t0, td=td)
@@ -143,6 +161,42 @@ def main():
         f"block {jb} → {-(-B // jb)} jackknife blocks"
     )
 
+    label = arch_label(meta)
+    vs_obar = vs_label = None
+    if VS is not None:
+        vs_blob = torch.load(VS)
+        vs_obar = vs_blob["gelt_obar"].double()
+        vs_label = arch_label(vs_blob.get("meta", {}))
+        # Same ensemble and same split, or the difference below is meaningless.
+        # The fingerprint is the THIN level of the classical basis: it is a
+        # plaquette sum over the raw configurations, with no smearing and no
+        # projection, so two dumps of the same split agree on it bit-exactly.
+        # The smeared levels need a tolerance — dumps made before and after
+        # SU(2).project went closed-form (performance_audit §3.1) differ by
+        # ~4e-7 there, which is a different code path, not a different ensemble.
+        vs_basis = vs_blob["Obar_basis"].double()
+        if vs_obar.shape != gelt_obar.shape or vs_basis.shape != Obar_basis.shape:
+            raise SystemExit(f"--vs dump has a different shape from {DUMP}.")
+        if not torch.equal(vs_basis[0], Obar_basis[0]):
+            raise SystemExit(
+                f"--vs dump is not the same test split as {DUMP}: the thin-link "
+                f"operators differ, so these are different configurations and a "
+                f"correlated difference would be nonsense."
+            )
+        drift = (
+            (vs_basis - Obar_basis).abs().max() / Obar_basis.abs().max()
+        ).item()
+        if drift > 1e-5:
+            raise SystemExit(
+                f"--vs dump shares the configurations but its smeared basis "
+                f"differs by {drift:.1e} — too much for a projection-route "
+                f"change; check SMEAR_ALPHA and the smearing levels."
+            )
+        print(f"        vs {VS}: {vs_label}" + (
+            f"   (smeared basis agrees to {drift:.1e} — the closed-form "
+            f"SU(2).project route)" if drift else ""
+        ))
+
     thin_obar, sm_obar = Obar_basis[0], Obar_basis[-1]
     proj_full = project_ground(Obar_basis, t0, td)
 
@@ -156,6 +210,11 @@ def main():
         lambda m: connected_correlator(proj_full[m]), B, jb
     )
     _, sig_sm = blocked_jackknife(lambda m: connected_correlator(sm_obar[m]), B, jb)
+    sig_vs = (
+        None
+        if vs_obar is None
+        else blocked_jackknife(lambda m: connected_correlator(vs_obar[m]), B, jb)[1]
+    )
 
     def fit_one(C, sig):
         """(m, A₀, χ²) of one operator's correlator on the shared window."""
@@ -175,32 +234,51 @@ def main():
         proj = project_ground(Obar_basis[:, mask], t0, td)
         m_p, a0_p, _ = fit_one(connected_correlator(proj), sig_proj)
         m_s, a0_s, _ = fit_one(connected_correlator(sm_obar[mask]), sig_sm)
-        return torch.tensor(
-            [m_g, a0_g, m_p, a0_p, m_s, a0_s, m_g - m_p, a0_g - a0_p],
-            dtype=torch.float64,
-        )
+        packed = [m_g, a0_g, m_p, a0_p, m_s, a0_s, m_g - m_p, a0_g - a0_p]
+        if vs_obar is not None:
+            m_v, a0_v, _ = fit_one(connected_correlator(vs_obar[mask]), sig_vs)
+            packed += [m_v, a0_v, m_g - m_v, a0_g - a0_v]
+        return torch.tensor(packed, dtype=torch.float64)
 
     stats, stats_err = blocked_jackknife(fit_stats, B, jb)
 
-    names = ["GELT (learned)", "GEVP-projected", f"APE×{levels[-1]}"]
+    names = [label, "GEVP-projected", f"APE×{levels[-1]}"]
     chis = [chi2_g, chi2_p, chi2_s]
+    if vs_obar is not None:
+        _, _, chi2_v = fit_one(connected_correlator(vs_obar), sig_vs)
+        names.append(vs_label)
+        chis.append(chi2_v)
     print(f"\ncosh fits on Δ ∈ [{dmin}, {dmax}]  (χ²/dof from the full sample, dof={dof}):")
     print(f"  {'operator':<16} {'m·a_t (fit)':<20} {'A₀ (ground overlap)':<22} χ²/dof")
-    for i, (nm, c2) in enumerate(zip(names, chis)):
-        m, me = stats[2 * i].item(), stats_err[2 * i].item()
-        a, ae = stats[2 * i + 1].item(), stats_err[2 * i + 1].item()
-        print(f"  {nm:<16} {m:.4f} ± {me:.4f}      {a:.4f} ± {ae:.4f}        {c2 / dof:.2f}")
+    # The --vs operator is packed after the three differences, so its (m, A₀)
+    # live at 8/9 rather than at 2·i.
+    slots = [0, 2, 4] + ([8] if vs_obar is not None else [])
+    for nm, c2, k in zip(names, chis, slots):
+        m, me = stats[k].item(), stats_err[k].item()
+        a, ae = stats[k + 1].item(), stats_err[k + 1].item()
+        print(f"  {nm:<18} {m:.4f} ± {me:.4f}      {a:.4f} ± {ae:.4f}        {c2 / dof:.2f}")
     dm, dme = stats[6].item(), stats_err[6].item()
     da, dae = stats[7].item(), stats_err[7].item()
-    print("\nGELT − GEVP-projected, correlated (same-configs) jackknife of the difference:")
+    print(f"\n{label} − GEVP-projected, correlated (same-configs) jackknife of the difference:")
     print(
         f"  Δm  = {dm:+.4f} ± {dme:.4f}  ({abs(dm) / max(dme, 1e-12):.1f}σ)"
         f"   — same physics ⇔ consistent with 0"
     )
     print(
         f"  ΔA₀ = {da:+.4f} ± {dae:.4f}  ({abs(da) / max(dae, 1e-12):.1f}σ)"
-        f"   — > 0 ⇔ GELT carries more ground-state weight"
+        f"   — > 0 ⇔ the learned operator carries more ground-state weight"
     )
+    if vs_obar is not None:
+        dmv, dmve = stats[10].item(), stats_err[10].item()
+        dav, dave = stats[11].item(), stats_err[11].item()
+        print(f"\n{label} − {vs_label}, correlated (same-configs) jackknife:")
+        print(
+            f"  Δm  = {dmv:+.4f} ± {dmve:.4f}  ({abs(dmv) / max(dmve, 1e-12):.1f}σ)"
+        )
+        print(
+            f"  ΔA₀ = {dav:+.4f} ± {dave:.4f}  ({abs(dav) / max(dave, 1e-12):.1f}σ)"
+            f"   — 0 ⇔ the two architectures are the same operator quality"
+        )
 
     # ── m_eff curves for the fit-band panel ────────────────────────────────────
     meff_gelt, meff_gelt_err = blocked_jackknife(

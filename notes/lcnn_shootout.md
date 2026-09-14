@@ -279,3 +279,69 @@ explanation for the 13.3 s vs 7.77 s gap: not attention being expensive, but one
 block having had two rounds of optimisation and the other none. The details, and
 the three negative readings that came with them, are in
 `notes/performance_audit.md` §6.5.
+
+---
+
+## 9. Result (2026-09-14) — parity, as pre-registered
+
+Ran, offline, on the test-split dumps. `fit_glueball_overlap.py` gained
+`--vs=<dump>`: a second learned operator from the same ensemble and split,
+differenced against the first **inside every jackknife sample**. That is the
+number this whole exercise was for, and it cannot be got by subtracting the two
+ΔA₀-against-GEVP values by hand — they are correlated through the classical arm,
+and the correlated error is ~4× smaller than the naive one.
+
+Fit window Δ ∈ [2, 7], GEVP (t0, td) = (1, 2), blocked jackknife, block 10,
+400 held-out configurations per ensemble — the published protocol, unchanged.
+
+| | ens0 | ens1 | combined |
+|---|---|---|---|
+| ΔA₀(GELT − GEVP) | +0.066 ± 0.031 | +0.089 ± 0.030 | **+0.077 ± 0.022** (3.6σ) |
+| ΔA₀(L-CNN − GEVP) | +0.062 ± 0.031 | +0.072 ± 0.026 | **+0.068 ± 0.020** (3.4σ) |
+| **ΔA₀(GELT − L-CNN)** | +0.004 ± 0.008 (0.5σ) | +0.016 ± 0.013 (1.3σ) | **+0.007 ± 0.007** (1.1σ) |
+| Δm(GELT − L-CNN) | +0.0002 ± 0.0032 | +0.0016 ± 0.0060 | consistent with 0 |
+
+(The GELT column reproduces the published +0.078 ± 0.022 from the same dumps, so
+the combination convention here is the published one.)
+
+**The pre-registered expectation holds.** A matched-parameter L-CNN, on the same
+inputs, loss, splits and estimator, is the same operator to within 1.1σ: same
+mass to four decimal places, same A₀, and it beats the classical GEVP by the same
+margin. So §7's first reading applies:
+
+* The general claim gets **stronger**: "a learned gauge-equivariant operator
+  beats the classical multi-level GEVP" is not an artefact of attention.
+* The attention-specific chapters are untouched — the L-CNN has no attention map,
+  so §6.1/§6.3 are not claims parity can dent.
+* The architecture chapter must now say what attention *does* buy: the L1-ball
+  receptive field within a layer, an attention field that is itself a measurable
+  lattice operator, and — from `notes/performance_audit.md` §5.0 — a 3.9× more
+  expensive step. Not raw overlap. That is the honest sentence, and it was
+  written down before the run.
+
+### 9.1 One arm is provisional: the ens0 60-epoch run is unusable
+
+`best_glueball_lcnn_sm0-2-4-6_test_obars.pt` (ens0, 60 epochs) reports the best
+validation loss of every run — −0.6143 — and a **test** correlator that is
+garbage: C(1)/C(0) = 0.171 against 0.674 for the four 10-epoch sweep arms on the
+*same ensemble and the same splits*, i.e. a test Rayleigh loss of −0.143 where
+val says −0.614. Its A₀ fit does not converge (0.24 ± 0.60).
+
+Every other run is internally consistent (val ≈ −0.61, test ≈ −0.57). The ens0
+row above therefore uses the `lr3e-3_is1e-4` **sweep** arm — a converged trained
+operator on that ensemble (10 epochs; the 60-epoch run improved val by 0.0005, so
+convergence is not the issue) — and the row must be re-measured once a clean ens0
+run exists.
+
+Two candidate causes, not yet separated:
+
+1. **Chain-local overfitting.** The split is contiguous and chain-ordered, so val
+   sits *adjacent* to train and test sits at the far end of the MCMC chain. A net
+   trained 60 epochs can fit chain-local structure that survives into val and not
+   into test. GELT never ran into it because its runs early-stopped at 25 epochs.
+   If this is the cause it is a finding about the protocol, not a bug, and the
+   fix is to select on a test-like split or cap the epochs.
+2. **A checkpoint collision** — two processes writing
+   `best_glueball_lcnn_sm0-2-4-6.pth`, so the eval reloaded weights that never
+   produced that val loss. `logs/lcnn_train_ens0.log` decides it: a smooth val
+   descent to −0.6143 points at (1), anything jagged or duplicated at (2).
