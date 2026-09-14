@@ -517,3 +517,35 @@ physical volume shrinks L at coarse β, and the two requirements meet at
 
 The startup banner now refuses to be quiet about it: any row that cannot host the
 primary rung says so before anything runs.
+
+
+### 12.6 Decisions taken, and the batch size
+
+**Two rows, not three.** β = 2.3 L = 8 is dropped (§12.5 option 1): at the new
+primary rung it cannot fit the flow in its box, and enlarging it to L = 12 would
+have made its physical volume ~5× the others — a confound in exactly the
+comparison R2 makes. The run is **β = 2.4 L = 12 and β = 2.5 L = 16**, both at
+the design volume, primary `t/a² = 4`, ladder `{1, 2, 4, 6, 8}`. R2 is therefore
+a two-point control. It is a control, not the primary reading, and two honest
+points beat three with a volume confound inside one of them.
+
+**The batch size is computed, not guessed.** One "link field" is
+`D · L⁴ · nc² · 8` bytes (8.0 MiB per configuration at L = 16). The peak live set
+is ~13 of them per configuration: six for RK3 (`U`, `W1`, `W2`, three `Z`), two
+for the staple temporaries inside each drift evaluation, five for the clover's
+`F` dict and leaf temporaries. That is ~104 MiB/config at L = 16, so a 20 GiB
+budget holds ~196 and the default caps at 128 for allocator headroom.
+`TOPO_CHUNK` still overrides outright.
+
+**A memory win found in the arithmetic.** `flow_trajectory` holds every ladder
+snapshot to the end — five more link fields per configuration, 28% of the total.
+`flowed_densities` now walks the segments itself and reduces each snapshot to a
+density before flowing on. A density is 1/32 of a link field, so the snapshots
+stop mattering: 144 → 104 MiB/config at L = 16, i.e. **38% more batch for
+free**, and identical numbers (it is the same segmented walk).
+
+**`probe`** times one chunk of the real targets work and extrapolates the row,
+including peak device memory. Two minutes, and it is what should be read before
+committing the night — both because the §12.4 cost estimate came from
+extrapolating a differently-sized run, and because it is the only way to see
+whether the larger chunk is actually being used.

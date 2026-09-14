@@ -61,7 +61,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from gelt.flow import flow_trajectory, wilson_flow
+from gelt.flow import wilson_flow
 from gelt.lattice import SU, plaquette_tensor, topological_charge_density
 from gelt.sampler import (
     _re_tr,
@@ -138,8 +138,13 @@ GROUP = SU(2)
 # legitimate. The scale itself must be re-derived in-repo from
 # rectangular_wilson_loop before it enters any physics claim; it does not enter
 # anything measured here.
-BETAS = _env_floats("TOPO_BETAS", (2.3, 2.4, 2.5))
-LS = _env_ints("TOPO_LS", (8, 12, 16))
+# β = 2.3 L = 8 was dropped 2026-09-14 (notes §12.5): once the pre-flight moved
+# the primary rung to t/a² = 4, that row could not host it — r_sm/a = 5.66 > L/2,
+# i.e. the flow wraps the torus. Running it at L = 12 instead would have made its
+# physical volume ~5× the others, a confound in exactly the comparison R2 makes.
+# Two rows at the design volume, and R2 is a two-point control.
+BETAS = _env_floats("TOPO_BETAS", (2.4, 2.5))
+LS = _env_ints("TOPO_LS", (12, 16))
 
 # The five-rung target ladder, in **lattice units** t/a² — identical across β on
 # purpose, so r_sm/a (and with it the receptive-field requirement) is held fixed
@@ -168,7 +173,9 @@ N_CHAIN = _env_int("TOPO_N_CHAIN", 400)  # consecutive sweeps for τ_int
 N_GATE = _env_int("TOPO_N_GATE", 16)  # configs carried through the Q(t) scan
 T_GATE_MAX = _env_float("TOPO_T_GATE_MAX", 16.0)
 FILTER_R = _env_int("TOPO_FILTER_R", 8)  # Manhattan radius of the linear arm
-CHUNK = _env_int("TOPO_CHUNK", 16)  # configurations flowed at once
+MEM_GB = _env_float("TOPO_MEM_GB", 20.0)  # device budget the chunk is sized to
+CHUNK = _env_int("TOPO_CHUNK", 0)  # 0 ⇒ size it from MEM_GB and L
+CHUNK_CAP = _env_int("TOPO_CHUNK_CAP", 128)
 SPLITS = (2 / 3, 1 / 6, 1 / 6)  # train / val / test, contiguous and chain-ordered
 Z_BAND = (0.6, 1.1)  # plausible range for the charge renormalisation Z(β, t)
 PHASES = _env_str("TOPO_PHASE", "chain,gate0").split(",")
@@ -178,7 +185,7 @@ if SMOKE:
     BETAS, LS = (2.4,), (4,)
     T_LADDER, T_PRIMARY, T_GATE_MAX = (0.5, 1.0), 1.0, 2.0
     N_CONFIGS, N_THERM, N_SKIP, N_CHAIN, N_GATE = 24, 20, 2, 40, 2
-    FILTER_R, CHUNK = 2, 8
+    FILTER_R, CHUNK = 2, 8  # explicit: the auto size is meaningless at L=4
     PHASES = _env_str("TOPO_PHASE", "chain,gate0,ensemble,targets,arms").split(",")
 
 DEVICE = torch.device(
@@ -220,12 +227,34 @@ def _result_path(phase, beta, L):
 
 
 # ── Chunked primitives ───────────────────────────────────────────────────────
+def _auto_chunk(L):
+    """Configurations to flow at once, sized from the device memory budget.
+
+    One "link field" is ``D · L⁴ · nc² · 8`` bytes. The peak live set per
+    configuration is about 13 of them: six for RK3 (``U``, ``W1``, ``W2`` and the
+    three ``Z``), two for the staple temporaries inside each drift evaluation,
+    and five for the clover's ``F`` dict and leaf temporaries. The ladder's
+    snapshots are *not* in that count, because :func:`flowed_densities` reduces
+    each one to a density before flowing on — which is worth ~5 more fields per
+    configuration, i.e. 38% more batch at L=16.
+
+    At L=16 this gives ~104 MiB/config, so a 20 GiB budget holds ~196; the cap
+    keeps the default well inside that, since the caching allocator fragments and
+    the estimate is an estimate. ``TOPO_CHUNK`` overrides it outright.
+    """
+    if CHUNK:
+        return CHUNK
+    link_field = D * (L**D) * GROUP.nc**2 * 8
+    per_config = 13 * link_field
+    return max(1, min(CHUNK_CAP, int(MEM_GB * 2**30 / per_config)))
+
+
 def clover_density(U, chunk=None):
     """q_clov(x) for a batch of configurations, chunked over the batch."""
+    step = chunk or _auto_chunk(U.shape[-5])
     out = []
-    for i in range(0, U.shape[0], chunk or CHUNK):
-        block = U[i : i + (chunk or CHUNK)].to(DEVICE)
-        out.append(topological_charge_density(block, GROUP).cpu())
+    for i in range(0, U.shape[0], step):
+        out.append(topological_charge_density(U[i : i + step].to(DEVICE), GROUP).cpu())
     return torch.cat(out)
 
 
@@ -237,17 +266,25 @@ def flowed_densities(U, times, chunk=None, progress=False, definitions=("clover"
     either, which is why they are asked for together rather than by re-flowing.
     Returns ``{definition: {t: (B, *Λ)}}``.
     """
-    out = {d: {t: [] for t in times} for d in definitions}
-    step = chunk or CHUNK
+    order = sorted(set(times))
+    out = {d: {t: [] for t in order} for d in definitions}
+    step = chunk or _auto_chunk(U.shape[-5])
     starts = range(0, U.shape[0], step)
     if progress:
-        starts = tqdm(starts, desc=f"flow → {max(times):g}", unit="chunk")
+        starts = tqdm(
+            starts, desc=f"flow → {max(times):g} (chunk {step})", unit="chunk"
+        )
     for i in starts:
-        block = U[i : i + step].to(DEVICE)
-        # progress=False on the inner call: one bar per chunk per ladder segment
-        # turns a log into a wall of carriage returns.
-        snaps = flow_trajectory(block, GROUP, times, eps=FLOW_EPS)
-        for t, V in zip(times, snaps):
+        V = U[i : i + step].to(DEVICE)
+        # The same segmented walk flow_trajectory does, but each snapshot is
+        # reduced to a density and dropped instead of being held to the end: a
+        # density is 1/32 of a link field, and keeping five of the latter alive
+        # costs ~5 of the 18 fields per configuration that set the batch size.
+        reached = 0.0
+        for t in order:
+            if t > reached:
+                V = wilson_flow(V, GROUP, t - reached, eps=FLOW_EPS)
+                reached = t
             for d in definitions:
                 out[d][t].append(
                     topological_charge_density(V, GROUP, definition=d).cpu()
@@ -256,9 +293,10 @@ def flowed_densities(U, times, chunk=None, progress=False, definitions=("clover"
 
 
 def mean_plaquette(U, chunk=None):
+    step = chunk or _auto_chunk(U.shape[-5])
     out = []
-    for i in range(0, U.shape[0], chunk or CHUNK):
-        P = plaquette_tensor(U[i : i + (chunk or CHUNK)].to(DEVICE), GROUP)
+    for i in range(0, U.shape[0], step):
+        P = plaquette_tensor(U[i : i + step].to(DEVICE), GROUP)
         out.append((_re_tr(P) / GROUP.nc).flatten(1).mean(1).cpu())
     return torch.cat(out)
 
@@ -593,6 +631,44 @@ def phase_gatefit(beta, L):
 
 
 # ── Phase: ensemble / targets ────────────────────────────────────────────────
+def phase_probe(beta, L):
+    """Time one chunk of the `targets` work and extrapolate the whole phase.
+
+    The design estimated 1–2 h for the targets; the pre-flight's own timings say
+    ~18 GPU-hours at the original chunk size (notes §12.4). That is the kind of
+    number worth measuring for two minutes before committing a night to it, and
+    it is also how the chunk size gets checked: if the auto size is not using the
+    device, the per-configuration time will not have fallen.
+    """
+    step = _auto_chunk(L)
+    n = min(step, 8)
+    print(f"  auto chunk at L={L}: {step} configs "
+          f"({13 * D * L**D * GROUP.nc**2 * 8 / 2**20:.0f} MiB/config estimate, "
+          f"budget {MEM_GB:g} GiB)")
+    U, _ = mcmc_ensemble(
+        L=L, D=D, gaugegroup=GROUP, beta=beta, n_configs=n, n_therm=20, n_skip=1,
+        sweep_fn=SWEEP, dtype=DTYPE, device=DEVICE, progress=False,
+    )
+    U = U.cpu()
+    torch.cuda.synchronize() if DEVICE.type == "cuda" else None
+    t0 = time.time()
+    flowed_densities(U, T_LADDER, chunk=n)
+    torch.cuda.synchronize() if DEVICE.type == "cuda" else None
+    dt = time.time() - t0
+    per = dt / n
+    print(
+        f"  {n} configs through the full ladder in {dt:.1f} s "
+        f"({per:.2f} s/config)\n"
+        f"  ⇒ {N_CONFIGS} configs ≈ {per * N_CONFIGS / 3600:.1f} h for this row"
+    )
+    if DEVICE.type == "cuda":
+        print(
+            f"  peak device memory: "
+            f"{torch.cuda.max_memory_allocated() / 2**30:.1f} GiB "
+            f"(at {n} configs; the production chunk is {step})"
+        )
+
+
 def phase_ensemble(beta, L):
     _load_or_make_ensemble(beta, L)
 
@@ -882,6 +958,7 @@ _PHASES = {
     "chain": phase_chain,
     "gate0": phase_gate0,
     "gatefit": phase_gatefit,
+    "probe": phase_probe,
     "ensemble": phase_ensemble,
     "targets": phase_targets,
     "arms": phase_arms,
