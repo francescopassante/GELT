@@ -1,9 +1,11 @@
 # Flow-free topological charge density — design record
 
-**Status (2026-09-14): proposed, nothing built.** Nothing below is a result.
-The theory, the physics background and the argument for the task are in
-`reports/topology/flow_free_topology.tex` (13 pp, compiles); this note is the
-build order, the gates and the readings fixed in advance.
+**Status (2026-09-14): WP0, WP1 and WP2 built; WP2 has not been *run* at
+physics sizes, and everything from WP3 on is still a proposal.** Nothing below §12 is a result about the *physics*; §12 is the build
+log for the two work packages that landed, both offline, both CPU-seconds, both
+gated by tests. The theory, the physics background and the argument for the task
+are in `reports/topology/flow_free_topology.tex` (13 pp, compiles); this note is
+the build order, the gates and the readings fixed in advance.
 
 The question this answers: **the L-CNN shootout tied on 0⁺⁺ — is there a task
 where GELT's attention is expected to win, and can it be run here?**
@@ -122,9 +124,9 @@ sign flips, the magnitude does not.
 
 | WP | what | gate |
 |---|---|---|
-| **0** | `topological_charge_density(..., definition="clover")` + the parity test | parity-odd to 1e-14 in complex128 |
-| **1** | `gelt/flow.py`: `wilson_flow`, closed-form SU(2) exp + `[·]_TA`, batched; Lüscher RK3 with Euler as cross-check; `flow_trajectory` emits the 5-rung ladder in one pass | flow is gauge covariant, stays on the group, RK3 ≡ Euler(ε→0) |
-| **2** | `scripts/measure_topology.py`: ensembles, **Q(t) plateau check**, `τ_int(Q)`, classical arms (identity + best linear filter) | **Gate 0**: `t/a²=2` on a plateau at every β, Q near integer. If not at β=2.3, move the rung and record it |
+| **0 ✅** | `topological_charge_density(..., definition="clover")` + the parity test | parity-odd to 1e-14 in complex128 — **met, 1.4e-17** (§12.1) |
+| **1 ✅** | `gelt/flow.py`: `wilson_flow`, closed-form SU(2) exp + `[·]_TA`, batched; Lüscher RK3 with Euler as cross-check; `flow_trajectory` emits the 5-rung ladder in one pass | flow is gauge covariant, stays on the group, RK3 ≡ Euler(ε→0) — **all met** (§12.2) |
+| **2 ⚙️** | `scripts/measure_topology.py`: ensembles, **Q(t) plateau check**, `τ_int(Q)`, classical arms (identity + best linear filter) | **Gate 0**: `t/a²=2` on a plateau at every β, Q near integer. If not at β=2.3, move the rung and record it — **written and smoke-verified, gate not yet read** (§12.3) |
 | **3** | `scripts/train_topology.py`: per-site MSE, one `_build_model()`, `TOPO_ARCH=lcnn` switches architecture and nothing else | matched-budget test (real DOFs within 15%) passes in D=4 |
 | **4** | trainings: 3 per-β + 1 mixed-β, × 2 architectures, + untrained controls (3 seeds, **median** fixed in advance) | — |
 | **5** | `scripts/fit_topology.py`: M1–M6 offline, correlated `--vs` difference inside every jackknife sample | — |
@@ -201,3 +203,168 @@ if it bites, the per-site readings M1/M4 survive and the aggregate M2/M3 are
 quoted at β = 2.3, 2.4 only), and **GELT's transport cost in 4D** — for which
 `notes/performance_audit.md` §5.1 (the adjoint SO(3) representation, predicted
 1.8× end to end) is a better bet here than it was on the glueball task.
+
+
+---
+
+## 12. Build log
+
+### 12.1 WP0 — the clover density (`gelt/lattice.py`, 2026-09-14)
+
+`topological_charge_density(U, group, plaquettes=None, definition="clover")`,
+with `"plaquette"` keeping the old naive density. **Clover is the default**:
+nothing in the repository called the function outside `tests/test_lattice.py`, so
+there was no back-compat surface to protect and no published number to revisit.
+
+`F_{μν}(x) = (C_{μν}(x) − C_{μν}†(x))/8i`, with `C` the sum of the four leaves in
+the (μ,ν) plane around `x`. **The basepoint is the whole subtlety.** The leaves
+are cyclic rotations of the plaquettes at `x`, `x−μ̂`, `x−ν̂`, `x−μ̂−ν̂`, and a
+cyclic rotation is a similarity transform by a link — invisible under a trace,
+*not* invisible here, because `q_x` contracts `Tr[F_{μν}F_{ρσ}]` across two
+different planes at the same site. So all four leaves are written as closed loops
+starting and ending at `x`, and the `plaquettes=` shortcut cannot serve the
+clover definition at all: passing it now raises rather than silently evaluating
+`F` in the wrong colour frame.
+
+Measured on a 6⁴ SU(2) config (complex128, seed 0), under the exact reflection
+`x₁ → (−x₁) mod L`:
+
+| | Q | Q′ | site-wise `max|q′(y) + q(Py)|` |
+|---|---|---|---|
+| plaquette | −1.316050 | **+2.988769** | 1.98e−01 |
+| clover | −0.120544 | **+0.120544** | **1.39e−17** |
+
+with the Wilson action preserved to all printed digits
+(18428.51387259 → 18428.51387259, β = 2.4) — and the plaquette row reproduces
+the audit's `−1.3161 → +2.9888` exactly.
+
+**One trap worth recording, because the first attempt hit it.** The link along
+the reflected axis obeys `U′_1(y) = U_1(P(y+1̂))†` and `P(y+1̂) = Py − 1̂`, so the
+shift is *down* by one and it happens **before** the reflection. Shifting up, or
+reflecting first, gives a map that still looks like a reflection and still
+produces a finite answer — but it does not preserve the Wilson action
+(off by 79 out of 18428 on the config above). That is why
+`test_reflection_preserves_wilson_action` runs as its own test and not as an
+assertion buried inside the parity test: the reflection map is the instrument,
+and an instrument this easy to get plausibly wrong has to be calibrated
+separately.
+
+### 12.2 WP1 — the Wilson flow (`gelt/flow.py`, 2026-09-14)
+
+`U_μ(x) ← exp(ε Z_μ(x)) U_μ(x)`, `Z_μ = −[U_μ(x) A_μ(x)]_TA`, the drift read
+straight off `sampler.staple_sum(..., batched=True)` — so the flow inherits the
+batching that made APE smearing 7.4× faster, with no new hot-path code.
+
+**The normalisation is the load-bearing detail**, because `r_sm = √(8t)` and
+therefore the receptive-field argument `√(8t)/a ≲ R` depend on it, and a stray β
+or factor of two would be invisible in every other check (the flow would still
+smooth, still be covariant, still stay on the group — it would just be at the
+wrong time). Two independent confirmations:
+
+1. *Analytic.* For `U_μ = exp(iθ_μ)` in the small-field limit the drift reduces
+   to `θ̇_μ = Δ²θ_μ` plus a gauge term, i.e. the lattice heat equation with unit
+   coefficient, whose 4D kernel has `⟨x²⟩ = 8t`. No β survives: it cancels
+   against the `g₀²` in the flow equation.
+2. *Measured.* A transverse plane wave (σ₃ phase on the direction-0 links,
+   depending on `x₁` only, so its lattice divergence vanishes) must decay as
+   `exp(−k̂²t)` with `k̂² = 4sin²(k/2)`. At L = 8, t = 1:
+
+   | mode | measured | `exp(−k̂²t)` |
+   |---|---|---|
+   | n = 1 | 0.556668 | 0.556668 |
+   | n = 2 | 0.135335 | 0.135335 |
+
+   This is `test_linearised_flow_is_the_unit_heat_kernel`, and it is the test to
+   look at if a flow time ever stops meaning what it should.
+
+Integrators, on a 4⁴ SU(2) config flowed to t = 0.4, error against RK3 at
+ε = 0.0025:
+
+| ε | Euler | ratio | RK3 | ratio |
+|---|---|---|---|---|
+| 0.1 | 1.95e−01 | | 3.51e−03 | |
+| 0.05 | 1.12e−01 | 1.74 | 4.11e−04 | 8.53 |
+| 0.025 | 6.02e−02 | 1.86 | 5.65e−05 | 7.27 |
+
+First order and third order respectively, as intended; at *matched cost*
+(RK3 is three drift evaluations per step) RK3 at ε = 0.06 beats Euler at
+ε = 0.02 by more than 10×. RK3 is the default.
+
+Two API decisions worth their line:
+
+- **The step is `t / ceil(t/eps)`, not `eps` with a ragged remainder.** A
+  trajectory lands exactly on the requested `t`. The ladder is defined at
+  specific flow times and the rungs have to be comparable across β, so "close to
+  t" is not good enough — `t = 0.15` with `eps = 0.1` runs two steps of 0.075 and
+  is bit-identical to asking for `eps = 0.075`.
+- **Z₂ raises.** `[M]_TA` of a real 1×1 matrix is identically zero, so the flow
+  on Z₂ is the identity map. Silently returning the input would be the worst
+  possible failure mode for a smoother; `wilson_flow` refuses instead.
+
+Gauge covariance measures 1.7e−15, the group is preserved to 1e−13 over a full
+trajectory with no reprojection (`reunitarize_every` exists for long float32
+runs and is off by default), and the action falls monotonically. 21 tests in
+`tests/test_flow.py`, 5.4 s on CPU; the whole suite is 144 tests in 8 s.
+
+### 12.3 WP2 — the classical half (`scripts/measure_topology.py`, 2026-09-14)
+
+**Written and smoke-verified; not run.** Every number this script can produce is
+still unmeasured — the gate verdict below is the *mechanism*, not a result.
+
+Five phases, each caching its artifact and skipped if present:
+
+| phase | what | artifact |
+|---|---|---|
+| `selftest` | the linear arm's estimator against the naive definition | — |
+| `chain` | one chain at `n_skip = 1`, τ_int of the **flowed Q** and of the plaquette | `results/topology/chain_*.pt` |
+| `gate0` | **the gate**: `Q(t)` to `t/a² = 16`, plateau + integer proximity, plus a step-size check | `gate0_*.{pt,png}` |
+| `ensemble` | the production ensembles | `datasets/topo_ens_*.pt` |
+| `targets` | `q_clov` at `t = 0` and the five-rung ladder, one trajectory per config | `datasets/topo_targets_*.pt` |
+| `arms` | identity, identity×Z, best linear filter (free and isotropic) | `arms_*.pt` |
+
+Default is `chain,gate0` — the pre-flight, which has to be read before a night
+of sampling is spent. `TOPO_SMOKE=1` runs all five at L=4 in ~30 s on a CPU.
+
+**Three decisions worth recording.**
+
+*The gate can fail in three ways, not two.* A small volume carries no topology,
+every `Q(t)` sits near zero, and "Q is near an integer" then passes trivially —
+the smoke run at L=4 does exactly this. So the spread of Q across configurations
+is part of the gate, and a third verdict **DEGENERATE** exists for it. Without
+that, the cheapest possible run would have looked like the cleanest pass.
+
+*τ_int is measured on the flowed Q, not on the plaquette.* Both are printed side
+by side precisely so the gap is visible, and the phase refuses quietly to be
+reassuring: if `2·τ_int(Q)` exceeds the configured `N_SKIP` it says the ensemble
+is **not** decorrelated in the topological sector and to raise it before sampling.
+Sector-change counts are printed for the same reason — that is what freezing at
+β = 2.5 will look like if it bites.
+
+*The best linear filter is fitted exactly, not by gradient descent.* For
+`ŷ(x) = Σ_Δ w_Δ q(x+Δ)` on a periodic lattice, translation invariance is exact,
+so the normal equations are `G_ij = A(Δ_j − Δ_i)`, `h_i = C(Δ_i)` with `A` the
+autocorrelation of `q_clov[U]` and `C` its cross-correlation with the target —
+both one FFT pair, and the fit is then a single linear solve. Applying the filter
+is another FFT pair rather than the ~3.6k rolls a Manhattan-8 ball in 4D would
+need. Two consequences:
+
+- **The arm is the true least-squares optimum**, so "the network beat the best
+  linear filter" cannot be an artifact of under-training the baseline. Both the
+  free filter and the hypercubic-symmetrised one are reported; the free one is
+  the stronger control and is the one the gate should be read against.
+- **The conventions had to be pinned.** A sign, a conjugate or a shift in either
+  FFT would still produce plausible numbers, so `arms` runs a self-test first:
+  synthesise `y` with a known random filter and require that the fit recovers it.
+  Measured: `max|FFT − naive rolls| = 1.4e−14`, `max|ŵ − w_true| = 1.3e−15`,
+  `R² = 1.000000000000`.
+
+One implementation trap, recorded because it silently destroys the arm: offsets
+must be **de-duplicated modulo L**. A Manhattan-8 ball wraps an L = 8 torus
+several times, and the same site entering the design matrix under two names makes
+`G` singular — the fit would not error, it would just return garbage weights
+through the ridge term.
+
+**Not yet done, and next:** run the pre-flight (`chain`, `gate0`) at all three
+(β, L) rows on the V100 and read the gate. Only then is a night of `ensemble` +
+`targets` worth spending. WP3–WP5 (`train_topology.py`, the trainings,
+`fit_topology.py`) are untouched.

@@ -150,8 +150,16 @@ implementation (MIT, Favoni et al. 2012.12901), layer sources only, tracked so
     action `β Σ_p (1 − Re Tr P / nc)`. **Anisotropic** when `xi ≠ 1`: temporal
     plaquettes weighted `β_t = β·ξ`, spatial `β_s = β/ξ` (tree-level); `xi = 1` is
     the bit-exact isotropic path.
-  - `topological_charge_density` / `topological_charge` — naive (plaquette)
-    `q_x`, clover-free, `F_{μν} = (P − P†)/2i`; and its lattice sum.
+  - `topological_charge_density(U, group, plaquettes=None, definition="clover")`
+    / `topological_charge` — `q_x = ε_{μνρσ} Tr[F_{μν}F_{ρσ}]/32π²` and its
+    lattice sum, D = 4 only. **`"clover"` is the default**: `F_{μν} = (C − C†)/8i`
+    with `C_{μν}(x)` the sum of the four leaves around `x`, all based at `x`
+    (a cyclic rotation of a plaquette is a similarity transform by a link, and
+    `q_x` contracts two planes at one site, so the basepoint is not free) —
+    hypercubic-symmetric and **exactly parity-odd**. `"plaquette"` is the naive
+    corner-based `F_{μν} = (P − P†)/2i`, L-CNN Eq. (13), kept because that is
+    what the L-CNN paper regresses and because the parity test is comparative.
+    The `plaquettes=` shortcut is plaquette-only and raises otherwise.
   - `rectangular_wilson_loop(U, group, R, T, mu, nu)` → `Re Tr W/nc` per site.
   - `link_gauge_transformation` / `local_gauge_transformation` — apply site-local
     Ω to links (`U_μ(x) → Ω(x) U_μ(x) Ω†(x+μ̂)`) or to an adjoint field
@@ -186,6 +194,27 @@ implementation (MIT, Favoni et al. 2012.12901), layer sources only, tracked so
   - **`integrated_autocorrelation_time(series, c=6, max_lag=None)`** → `(rho,
     tau_int, window)`, Madras–Sokal windowing. Samples `n_skip ≳ 2·τ_int` apart
     are effectively independent.
+- **`flow.py`** — Wilson (gradient) flow: the smoother that defines the
+  topology targets. `U_μ(x) ← exp(ε Z_μ(x)) · U_μ(x)` with
+  `Z_μ = −[U_μ(x) A_μ(x)]_TA`, the drift read straight off
+  `sampler.staple_sum(..., batched=True)`. **No β** — it cancels against the
+  `g₀²` of the flow equation, and that normalisation is what makes flow time the
+  lattice-unit `t/a²` with `r_sm/a = √(8 t/a²)`; pinned by a test that the
+  linearised flow decays a transverse plane wave as exactly `exp(−k̂² t)`,
+  `k̂² = 4 sin²(k/2)`, to 6 digits.
+  - `wilson_flow(U, group, t, eps=0.02, integrator="rk3", reunitarize_every=0)`
+    — `"rk3"` is Lüscher's third-order Runge–Kutta (three drift evaluations per
+    step, measured ratio 8.5 per halving), `"euler"` is the first-order
+    cross-check. The step is `t / ceil(t/eps)`, so a trajectory lands *exactly*
+    on `t` instead of overshooting: the ladder rungs must be comparable across β.
+  - `flow_trajectory(U, group, times, ...)` — one trajectory, a snapshot per
+    requested time, at the cost of the longest rung alone.
+  - `group_exp` is closed form at `nc = 2` (`X² = −det X·𝟙` ⇒
+    `cos θ·𝟙 + sinc(θ/π)·X`, no `linalg`, so it runs on MPS), `matrix_exp`
+    above; `traceless_antihermitian` is `[·]_TA`.
+  - **SU(N) only.** Z₂ raises: `[M]_TA` of a real 1×1 is identically zero, so
+    the flow would be a silent no-op rather than a smoother.
+
 - **`data.py`** — `build_plaquette_datasets(N, D, L, group, target, ...)`.
   `target` is a callable `target(configs, group) -> Tensor` (bind extras with
   `functools.partial`). `structured=True` keeps the `(N, n_pairs, *Λ, nc, nc)`
@@ -318,6 +347,24 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   an untrained net, whose own cosh fit does not converge). All three are
   repeatable — one value, or one per dump — so both ensembles combine in one
   run; `--proj-eps` cuts the span's Gram, `--out-tag` names the artifacts.
+- **`measure_topology.py`** — the classical half of the flow-free topology
+  study (WP2). Five phases via `TOPO_PHASE`, each caching its artifact:
+  `selftest` (the linear arm's estimator against the naive definition),
+  `chain` (τ_int of the **flowed Q**, not the plaquette — the topological modes
+  are the slow ones, and freezing at β = 2.5 is a live risk), `gate0` (**the
+  gate**: `Q(t)` to `t/a² = 16`, the primary rung must sit on a plateau near an
+  integer; the verdict is PASS / LOOK / **DEGENERATE**, the last when the volume
+  carries no topology at all and the integer test would pass trivially),
+  `ensemble`, `targets` (the five-rung ladder, one trajectory per config) and
+  `arms` (identity, identity×Z, and the **best linear filter** — the
+  least-squares-optimal convolution on the Manhattan-R ball, free and
+  hypercubic-symmetrised). The filter is fitted from FFT correlations (exact on a
+  periodic lattice: `G_ij = A(Δ_j − Δ_i)`, `h_i = C(Δ_i)`) and applied as an FFT
+  cross-correlation, both pinned to 1e-14 against roll-by-roll oracles by the
+  self-test that `arms` runs first. Offsets are de-duplicated modulo L — a
+  Manhattan-8 ball wraps an L=8 torus and the same site under two names makes the
+  normal equations singular. `TOPO_SMOKE=1` runs every phase at L=4 in ~30 s on
+  CPU. **Written and smoke-verified; not yet run at physics sizes.**
 - **`profile_glueball_step.py`** — where one optimizer step goes, per stage,
   forward **and backward** separately. It goes through
   `train_glueball.config_inputs`, i.e. the pipeline the training loop actually
@@ -329,9 +376,17 @@ subdirectories. `README.md` has the one-line table; the details that matter:
 
 - **`test_lattice.py`** — gauge invariance of `plaquette_tensor` / `action`
   (bit-exact in Z₂ float64), anisotropic-action invariance, the `xi = 1` match,
-  non-cubic shapes, and `SU(2).project`'s closed-form route against the SVD polar
+  non-cubic shapes, `SU(2).project`'s closed-form route against the SVD polar
   it replaced (far-from-group and near-group input; SU(3) still takes the general
-  route).
+  route), and **parity**: an exact lattice reflection (checked first to preserve
+  the Wilson action to 1e-9) under which the clover density is odd site by site
+  to 1.4e-17 and the plaquette density demonstrably is not.
+- **`test_flow.py`** — the Wilson flow: gauge covariance (1.7e-15), the group
+  preserved over a long trajectory with no reprojection, the action falling
+  monotonically, the drift in the algebra, the closed-form SU(2) exponential
+  against `matrix_exp` (θ = 0 included), RK3's third order against Euler's first
+  and the two agreeing in the limit, the ladder's rungs equal to standalone
+  flows, the `exp(−k̂²t)` normalisation, and the Z₂ guard.
 - **`test_transport.py`** — `l1_ball_offsets` counts, brute-force per-octant
   pattern, octant-relation consistency, gauge covariance for Z₂ and `nc = 2`.
 - **`test_blocks.py`** — gauge equivariance of `GEMHSA`/`GELT` (SU(2) complex128,
@@ -462,17 +517,18 @@ loop-vs-index question, and worth a look after §5.1.
    version; the systematic drift-vs-Ω study does not exist.
 6. **Offset-chunked attention does not exist** — it is the memory gate on running
    the attention studies at physically large R.
-7. **`topological_charge_density` is not parity-odd.** It is the naive,
-   clover-free density: all six plaquettes are based at the corner `x`, so it is
-   not reflection-symmetric about `x`, and neither is its lattice sum. Measured
-   with an exact lattice reflection (`x₁ → (−x₁) mod L` with
-   `U'_1(y) = U_1(P(y+1̂))†`), which preserves the Wilson action to all printed
-   digits — 15478.81704264 → 15478.81704264 on a 6⁴ SU(2) config — the charge
-   goes **Q: −1.3161 → +2.9888**: the sign flips, the magnitude does not.
-   **Latent, not live** — only `tests/test_lattice.py` calls it, no production
-   script does. Fix is `definition="clover"`, plus the test that the clover
-   charge is parity-odd to machine precision and the plaquette one is not. It is
-   WP0 of `notes/flow_free_topology.md`.
+7. ~~**`topological_charge_density` is not parity-odd.**~~ **Fixed 2026-09-14**
+   (WP0 of `notes/flow_free_topology.md`): `definition="clover"` is now the
+   default and is parity-odd to 1.4e-17 site by site. `definition="plaquette"`
+   keeps the old corner-based density, which is *not* — under the exact lattice
+   reflection `x₁ → (−x₁) mod L` with `U'_1(y) = U_1(P(y+1̂))†` (which preserves
+   the Wilson action to all printed digits) the charge goes
+   **Q: −1.3161 → +2.9888**, sign flipped, magnitude not. That is now a test
+   rather than a defect, and nothing was invalidated: no production script ever
+   called the function. **Note the reflection's index order** — `P(y+1̂) = Py − 1̂`,
+   so the link along the reflected axis is shifted *down* before reflecting;
+   the other order gives a plausible map that silently fails to preserve the
+   action, which is why the test checks the action first.
 
 ## Running
 
@@ -485,6 +541,9 @@ python scripts/train_cnn.py                  # CNN baseline, 1×2 Wilson loop
 python scripts/train_gelt.py                 # GELT, the same problem
 python scripts/train_lcnn.py                 # L-CNN baseline
 python scripts/check_glueball_autocorrelation.py   # τ_int → production n_skip
+python scripts/measure_topology.py           # topology pre-flight: τ_int(Q) + Gate 0
+TOPO_SMOKE=1 python scripts/measure_topology.py    # …all five phases, L=4, 30 s
+TOPO_PHASE=ensemble,targets,arms python scripts/measure_topology.py  # the night run
 python scripts/measure_glueball.py           # classical 0⁺⁺ baseline + ensemble
 python scripts/train_glueball.py             # GELT as a variational operator
 python scripts/fit_glueball_overlap.py [dump]      # cosh fits + A₀ (offline)
@@ -531,10 +590,12 @@ Ranked in `notes/audit_2026-09-06.md` §4, and unchanged by the cleanup:
 6. **Where attention can win, given parity.** The selection rule and a full
    design for the one task that meets it — flow-free topological charge density,
    4D SU(2) — are in `notes/flow_free_topology.md` and
-   `reports/topology/flow_free_topology.tex`. WP0 (the clover definition and its
-   parity test, caveat 7) is worth doing whether or not the rest runs. Odds on
-   the architecture half are honestly ~50–55%; the physics half is not
-   conditional on them.
+   `reports/topology/flow_free_topology.tex`. **WP0 (clover + parity test), WP1
+   (`gelt/flow.py`) and WP2 (`scripts/measure_topology.py`) landed
+   2026-09-14**; WP0/WP1 are gated by tests, WP2 is smoke-verified but **its
+   gate has not been read at physics sizes** — that is the next thing to run,
+   and it needs the V100. Nothing after it (WP3–WP5) is built. Odds on the architecture
+   half are honestly ~50–55%; the physics half is not conditional on them.
 
 ## Things to keep in mind
 
