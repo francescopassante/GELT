@@ -345,3 +345,57 @@ Two candidate causes, not yet separated:
    `best_glueball_lcnn_sm0-2-4-6.pth`, so the eval reloaded weights that never
    produced that val loss. `logs/lcnn_train_ens0.log` decides it: a smooth val
    descent to −0.6143 points at (1), anything jagged or duplicated at (2).
+
+### 9.2 What actually happened to that run: one configuration in 400
+
+Not chain-overfitting and not a checkpoint collision. **A single test
+configuration carries 71.8% of that operator's C(0)** — config 371, 1187× the
+median configuration's contribution. Drop it and the correlator is ordinary:
+C(1)/C(0) goes 0.171 → 0.634, and dropping a second gets 0.673, which *is* the
+sweep arms' value. The Δ ≥ 1 shape was never wrong — the run's own log shows
+m_eff(Δ=1) = 0.396 ± 0.041 against the GEVP's 0.398 ± 0.016 — only the A₀
+denominator was, which is why the mass looked fine and the overlap did not.
+
+Config 371 is unremarkable to every classical operator: rank 145/400 by variance
+at thin links, 1.07–1.44× the median across the smearing ladder. So it is not a
+bad configuration. It is the network.
+
+Measured across every dump we have (share of C(0) on its single largest
+configuration):
+
+| operator | top-1 share | × median |
+|---|---|---|
+| GELT, 12 untrained + 2 trained | 0.5 – 1.0% | 2.2 – 4.2 |
+| L-CNN, trained ens1 + all 4 sweeps | 0.5 – 0.9% | 2.1 – 4.2 |
+| **L-CNN trained ens0 (60 epochs)** | **71.8%** | 1187 |
+| **L-CNN untrained, seed 0, ens0** | **35.9%** | 1.2 × 10⁶ |
+| **L-CNN untrained, seed 0, ens1** | **97.9%** | 3.2 × 10⁶ |
+
+0 of 14 GELT operators, 3 of 9 L-CNN ones. That is not bad luck with a seed, it
+is the architecture: an L-CB stack is a raw matrix polynomial in the plaquettes —
+degree ≤ 16 after four layers — aggregated by L-Conv with unbounded weights, so a
+configuration in the tail of the input distribution is amplified without limit.
+GEMHSA aggregates over its neighbourhood with a **softmax**: a convex combination
+with weights in (0, 1), on a score already normalised by √(d_qkv·nc). It cannot
+put 72% of its output variance on one configuration, and across 14 measured
+operators it never does.
+
+**This is a real result of the shootout, and parity in A₀ does not contain it.**
+The honest pair of sentences: at matched parameters the two architectures reach
+the same ground-state overlap (§9), and the attention block is markedly more
+robust across configurations than the convolutional one. It also costs 3.9× more
+per step (`notes/performance_audit.md` §5.0) — all three belong in the write-up.
+
+Consequences, in order:
+
+1. `fit_glueball_overlap.py` now prints the top-1 share for **every** arm and
+   refuses to let an A₀ be quoted above 10% — uniform, so it is a gate and not a
+   thing applied to an arm one dislikes. It fires on exactly the rows above.
+2. The ens0 trained row of §9 stays on the sweep arm until a clean 60-epoch run
+   exists. Deleting config 371 by hand is not the fix: the published protocol has
+   no outlier rejection, and adding one for a single arm would be exactly the
+   move this repo's audits exist to catch.
+3. **The untrained L-CNN trace is unusable at seed 0** on both ensembles. Any
+   mean over seeds would be meaningless; the rule has to be fixed in advance
+   (median over seeds, or the §9.2 gate as an exclusion criterion applied to
+   every architecture) before those numbers go anywhere near the curve.

@@ -130,6 +130,28 @@ def blocked_jackknife(fn, B, block_size):
     return mean, err
 
 
+def outlier_share(obar):
+    """How much of C(0) one configuration carries: (share, index, × median).
+
+    An operator's A₀ is a ratio to C(0), so a single configuration that blows up
+    destroys the measurement while leaving the Δ ≥ 1 shape — and the mass — fine.
+    It is not hypothetical: one trained L-CNN and two untrained ones put 36–98%
+    of C(0) on a single configuration that every classical operator finds
+    unremarkable (notes/lcnn_shootout.md §9.2), where all 14 GELT operators
+    measured sit at 0.5–1.0%, i.e. the 1/400 a healthy operator should show.
+    Printed for every arm, so the check is uniform rather than something applied
+    to an arm one dislikes.
+    """
+    d = obar - obar.mean()
+    per_cfg = d.pow(2).mean(dim=1)
+    top = per_cfg.argmax().item()
+    return (
+        (per_cfg[top] / per_cfg.sum()).item(),
+        top,
+        (per_cfg[top] / per_cfg.median()).item(),
+    )
+
+
 def arch_label(meta):
     """How to name a dump's learned operator: the architecture that made it."""
     arch = str(meta.get("arch", "gelt")).lower()
@@ -257,6 +279,28 @@ def main():
         m, me = stats[k].item(), stats_err[k].item()
         a, ae = stats[k + 1].item(), stats_err[k + 1].item()
         print(f"  {nm:<18} {m:.4f} ± {me:.4f}      {a:.4f} ± {ae:.4f}        {c2 / dof:.2f}")
+    # Single-configuration dominance of C(0) — the A₀ denominator.
+    print("\nshare of C(0) carried by its single largest configuration "
+          "(healthy ≈ 1/N_cfg):")
+    arms = [(names[0], gelt_obar), ("GEVP-projected", proj_full),
+            (f"APE×{levels[-1]}", sm_obar)]
+    if vs_obar is not None:
+        arms.append((vs_label, vs_obar))
+    flagged = []
+    for nm, ob in arms:
+        share, idx, rel = outlier_share(ob)
+        mark = "   ** DOMINATED — A₀ below is not a measurement **" if share > 0.10 else ""
+        print(f"  {nm:<18} {100 * share:5.1f}%   (config {idx}, {rel:.0f}× the median){mark}")
+        if share > 0.10:
+            flagged.append(nm)
+    if flagged:
+        print(
+            "  → " + ", ".join(flagged) + ": one configuration owns the A₀ "
+            "denominator. Re-run that arm; do not quote its A₀, and do not "
+            "silently drop the configuration either — see "
+            "notes/lcnn_shootout.md §9.2."
+        )
+
     dm, dme = stats[6].item(), stats_err[6].item()
     da, dae = stats[7].item(), stats_err[7].item()
     print(f"\n{label} − GEVP-projected, correlated (same-configs) jackknife of the difference:")
