@@ -309,25 +309,121 @@ def _permutation_sign(perm: Tuple[int, ...]) -> int:
     return sign
 
 
+def _site_shift(T: torch.Tensor, axis: int, delta: int) -> torch.Tensor:
+    """Field value at ``x + delta·ê_axis`` brought to index ``x`` (periodic BCs).
+
+    ``torch.roll`` with a negative shift moves data from higher indices down, so
+    ``shifts=-delta`` puts ``T(x + delta)`` at position ``x``. Same convention as
+    :func:`plaquette_tensor` and :func:`gelt.sampler.staple_sum`.
+    """
+    return torch.roll(T, shifts=-delta, dims=axis)
+
+
+def _clover_leaf_sum(
+    U: torch.Tensor,
+    gaugegroup: GaugeGroup,
+    mu: int,
+    nu: int,
+) -> torch.Tensor:
+    """Sum of the four 1×1 leaves of the (μ, ν) clover, all based at ``x``.
+
+    The leaves are the four plaquettes in the (μ, ν) plane that touch ``x``, one
+    per quadrant, each traversed as a closed loop *starting and ending at* ``x``::
+
+        Q₁ (+μ,+ν) = U_μ(x)  U_ν(x+μ̂)    U_μ†(x+ν̂)     U_ν†(x)
+        Q₂ (−μ,+ν) = U_ν(x)  U_μ†(x+ν̂−μ̂) U_ν†(x−μ̂)     U_μ(x−μ̂)
+        Q₃ (−μ,−ν) = U_μ†(x−μ̂) U_ν†(x−μ̂−ν̂) U_μ(x−μ̂−ν̂) U_ν(x−ν̂)
+        Q₄ (+μ,−ν) = U_ν†(x−ν̂) U_μ(x−ν̂)  U_ν(x+μ̂−ν̂)   U_μ†(x)
+
+    The basepoint is what makes this a *matrix* average rather than a trace
+    average: ``q_x`` contracts ``Tr[F_{μν} F_{ρσ}]`` across two different planes
+    at the same site, so all four leaves must live in the same colour frame at
+    ``x``. The leaves are cyclic rotations of the plaquettes based at ``x``,
+    ``x−μ̂``, ``x−ν̂`` and ``x−μ̂−ν̂``, and a cyclic rotation is a similarity
+    transform by a link — invisible under a trace, not invisible here. This is
+    why the ``plaquettes`` shortcut of :func:`topological_charge_density` cannot
+    serve the clover definition.
+
+    Under μ ↔ ν the same four loops are traversed backwards, so
+    ``C_{νμ} = C_{μν}†`` and therefore ``F_{νμ} = −F_{μν}`` exactly, as for the
+    plaquette definition.
+
+    Parameters
+    ----------
+    U
+        Batched links ``(B, D, *Λ, nc, nc)``.
+    gaugegroup
+        Gauge group (used for the dagger).
+    mu, nu
+        Plane indices.
+
+    Returns
+    -------
+    ``(B, *Λ, nc, nc)`` — the leaf sum ``C_{μν}(x) = Σ_i Q_i(x)``.
+    """
+    # Lattice axis μ sits at tensor dim μ + 1 (the leading axis is the batch).
+    amu, anu = mu + 1, nu + 1
+    Umu = U[:, mu]
+    Unu = U[:, nu]
+    dag = gaugegroup.dagger
+
+    # Shifted links, named after the argument they carry.
+    Unu_pmu = _site_shift(Unu, amu, +1)  # U_ν(x + μ̂)
+    Umu_pnu = _site_shift(Umu, anu, +1)  # U_μ(x + ν̂)
+    Umu_mmu = _site_shift(Umu, amu, -1)  # U_μ(x − μ̂)
+    Unu_mmu = _site_shift(Unu, amu, -1)  # U_ν(x − μ̂)
+    Umu_mnu = _site_shift(Umu, anu, -1)  # U_μ(x − ν̂)
+    Unu_mnu = _site_shift(Unu, anu, -1)  # U_ν(x − ν̂)
+    Umu_pnu_mmu = _site_shift(Umu_pnu, amu, -1)  # U_μ(x + ν̂ − μ̂)
+    Unu_pmu_mnu = _site_shift(Unu_pmu, anu, -1)  # U_ν(x + μ̂ − ν̂)
+    Umu_mmu_mnu = _site_shift(Umu_mmu, anu, -1)  # U_μ(x − μ̂ − ν̂)
+    Unu_mmu_mnu = _site_shift(Unu_mmu, anu, -1)  # U_ν(x − μ̂ − ν̂)
+
+    Q1 = Umu @ Unu_pmu @ dag(Umu_pnu) @ dag(Unu)
+    Q2 = Unu @ dag(Umu_pnu_mmu) @ dag(Unu_mmu) @ Umu_mmu
+    Q3 = dag(Umu_mmu) @ dag(Unu_mmu_mnu) @ Umu_mmu_mnu @ Unu_mnu
+    Q4 = dag(Unu_mnu) @ Umu_mnu @ Unu_pmu_mnu @ dag(Umu)
+    return Q1 + Q2 + Q3 + Q4
+
+
 def topological_charge_density(
     U: torch.Tensor,
     gaugegroup: GaugeGroup,
     plaquettes: Optional[torch.Tensor] = None,
+    definition: str = "clover",
 ) -> torch.Tensor:
-    """Plaquette ("naive") topological charge density q_x at every site.
+    """Topological charge density q_x at every site (D = 4 only).
 
         q_x = (ε_{μνρσ} / 32π²) Tr[ F_{μν}(x) · F_{ρσ}(x) ],
-        F_{μν}(x) = (P_{μν}(x) − P_{μν}†(x)) / (2i),
 
-    summed over all four indices μ, ν, ρ, σ ∈ {0,1,2,3}.  ``F_{μν}`` is the
-    Hermitian (anti-Hermitian-part-of-the-plaquette) lattice field strength
-    built from the 1×1 plaquette ``P_{μν}``; it is antisymmetric in its plane
-    indices (``F_{νμ} = −F_{μν}``, since ``P_{νμ} = P_{μν}†``).
+    summed over all four indices μ, ν, ρ, σ ∈ {0,1,2,3}, with the lattice field
+    strength ``F_{μν}`` built from one of two discretisations:
+
+    ``definition="clover"`` (default)
+        ``F_{μν}(x) = (C_{μν}(x) − C_{μν}†(x)) / 8i`` with ``C_{μν}`` the sum of
+        the four leaves of :func:`_clover_leaf_sum` — the plaquette average over
+        the four quadrants around ``x``, i.e. ``F`` centred *on* the site.
+        Hypercubic-symmetric, and **exactly parity-odd** (both q_x and
+        ``Q = Σ_x q_x``).
+
+    ``definition="plaquette"``
+        ``F_{μν}(x) = (P_{μν}(x) − P_{μν}†(x)) / 2i`` — the naive density, Eq.
+        (13) of the L-CNN paper. All six plaquettes are based at the *corner*
+        ``x``, so it is not reflection-symmetric about ``x`` and **is not
+        parity-odd**: under an exact lattice reflection the sign of Q flips but
+        its magnitude does not (``−1.3161 → +2.9888`` on a 6⁴ SU(2) config, with
+        the Wilson action preserved to all printed digits). Kept because it is
+        what the L-CNN paper regresses, and because the parity test in
+        ``tests/test_lattice.py`` is comparative: the clover charge is parity-odd
+        to machine precision and this one is not.
+
+    ``F_{μν}`` is Hermitian and antisymmetric in its plane indices
+    (``F_{νμ} = −F_{μν}``) under both definitions.
 
     Defined only in D = 4 — the Levi-Civita symbol ε_{μνρσ} needs exactly four
-    directions. The density vanishes identically for Z₂/real links (``P`` is
-    its own dagger), and the total charge ``Q = Σ_x q_x`` only carries
-    topological meaning for non-abelian SU(N≥2).
+    directions. The density vanishes identically for Z₂/real links (``P`` and
+    ``C`` are their own daggers), and the total charge ``Q = Σ_x q_x`` only
+    carries topological meaning for non-abelian SU(N≥2).
 
     Parameters
     ----------
@@ -338,6 +434,14 @@ def topological_charge_density(
         Gauge group (used for the dagger).
     plaquettes
         Optional precomputed ``(B, n_pairs, *Λ, nc, nc)`` plaquette tensor.
+        **Only accepted for** ``definition="plaquette"``: the clover leaves are
+        cyclic rotations of plaquettes based at four different sites, related to
+        them by a similarity transform by a link, so they cannot be recovered
+        from the plaquette tensor alone (see :func:`_clover_leaf_sum`). Passing
+        it with the clover definition raises rather than silently using a wrong
+        colour frame.
+    definition
+        ``"clover"`` (default) or ``"plaquette"``.
 
     Returns
     -------
@@ -348,19 +452,39 @@ def topological_charge_density(
         raise ValueError(
             f"Topological charge density is defined only in D=4, got D={D}."
         )
-    P = plaquettes if plaquettes is not None else plaquette_tensor(U, gaugegroup)
+    if definition not in ("clover", "plaquette"):
+        raise ValueError(
+            f"definition must be 'clover' or 'plaquette', got {definition!r}."
+        )
+    if plaquettes is not None and definition != "plaquette":
+        raise ValueError(
+            "Precomputed plaquettes cannot be reused for the clover definition "
+            "(its leaves need per-leaf basepoint transport); drop the argument "
+            "or pass definition='plaquette'."
+        )
 
-    # F_{μν} = (P_{μν} − P_{μν}†)/(2i) for each μ<ν plane (the order
-    # plaquette_tensor stacks them in); fill in F_{νμ} = −F_{μν}. Dividing by
-    # the imaginary 2i promotes Z₂'s real (and identically antisymmetric-zero)
+    # F_{μν} for each μ<ν plane (the order plaquette_tensor stacks them in);
+    # fill in F_{νμ} = −F_{μν}. Dividing by the imaginary 2i (8i for the clover's
+    # four leaves) promotes Z₂'s real (and identically antisymmetric-zero)
     # plaquettes to complex, matching SU(N).
     pairs = [(mu, nu) for mu in range(D) for nu in range(mu + 1, D)]
     F: Dict[Tuple[int, int], torch.Tensor] = {}
-    for idx, (mu, nu) in enumerate(pairs):
-        Pmn = P[:, idx]
-        f = (Pmn - gaugegroup.dagger(Pmn)) / 2j
-        F[(mu, nu)] = f
-        F[(nu, mu)] = -f
+    if definition == "plaquette":
+        P = plaquettes if plaquettes is not None else plaquette_tensor(U, gaugegroup)
+        for idx, (mu, nu) in enumerate(pairs):
+            Pmn = P[:, idx]
+            f = (Pmn - gaugegroup.dagger(Pmn)) / 2j
+            F[(mu, nu)] = f
+            F[(nu, mu)] = -f
+    else:
+        # Plane by plane, so only one plane's leaves are alive at a time: the
+        # clover holds 4× the plaquette tensor's data and D=4 production volumes
+        # (L=16, batched) are where this gets called.
+        for mu, nu in pairs:
+            C = _clover_leaf_sum(U, gaugegroup, mu, nu)
+            f = (C - gaugegroup.dagger(C)) / 8j
+            F[(mu, nu)] = f
+            F[(nu, mu)] = -f
 
     # q_x = (1/32π²) Σ_{μνρσ} ε_{μνρσ} Tr[F_{μν} F_{ρσ}]. itertools.permutations
     # enumerates exactly the 24 all-distinct index tuples (every other term has
@@ -380,13 +504,19 @@ def topological_charge(
     U: torch.Tensor,
     gaugegroup: GaugeGroup,
     plaquettes: Optional[torch.Tensor] = None,
+    definition: str = "clover",
 ) -> torch.Tensor:
     """Total topological charge ``Q = Σ_x q_x`` (one scalar per config).
 
     Sums :func:`topological_charge_density` over all sites; returns shape
     ``(B,)``. This is the scalar regression target analogous to :func:`action`.
+    ``definition`` is forwarded — only the ``"clover"`` default gives a Q that is
+    odd under lattice reflections, and only a *flowed* configuration gives one
+    near an integer.
     """
-    q = topological_charge_density(U, gaugegroup, plaquettes=plaquettes)
+    q = topological_charge_density(
+        U, gaugegroup, plaquettes=plaquettes, definition=definition
+    )
     return q.flatten(1).sum(1)
 
 

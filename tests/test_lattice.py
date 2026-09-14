@@ -157,7 +157,8 @@ def test_random_links_noncubic_shape():
 # ---------------------------------------------------------------------------
 
 
-def test_topo_charge_invariant_su2():
+@pytest.mark.parametrize("definition", ["clover", "plaquette"])
+def test_topo_charge_invariant_su2(definition):
     """q_x is gauge invariant: F→ΩFΩ† leaves Tr[FF] unchanged (SU(2), complex128)."""
     L, D = 4, 4
     su2 = SU(2)
@@ -165,27 +166,28 @@ def test_topo_charge_invariant_su2():
     U = random_links(L, D, su2, dtype=torch.complex128)
     omega = _random_omega(L, D, su2, torch.complex128, seed=4)
 
-    q_before = topological_charge_density(U.unsqueeze(0), su2)[0]
+    q_before = topological_charge_density(U.unsqueeze(0), su2, definition=definition)[0]
     U_prime = link_gauge_transformation(U, omega, su2)
-    q_after = topological_charge_density(U_prime.unsqueeze(0), su2)[0]
+    q_after = topological_charge_density(U_prime.unsqueeze(0), su2, definition=definition)[0]
 
     assert torch.allclose(q_before, q_after, atol=1e-12), (
-        f"Topological charge density not gauge invariant (SU(2)); "
+        f"Topological charge density not gauge invariant (SU(2), {definition}); "
         f"max diff = {(q_before - q_after).abs().max().item()}"
     )
 
 
-def test_topo_charge_nonzero_su2_zero_z2(z2):
+@pytest.mark.parametrize("definition", ["clover", "plaquette"])
+def test_topo_charge_nonzero_su2_zero_z2(z2, definition):
     """q_x is generically nonzero for SU(2) but identically zero for Z₂."""
     L, D = 4, 4
     su2 = SU(2)
     torch.manual_seed(0)
     U_su2 = random_links(L, D, su2, dtype=torch.complex128)
-    q_su2 = topological_charge_density(U_su2.unsqueeze(0), su2)[0]
+    q_su2 = topological_charge_density(U_su2.unsqueeze(0), su2, definition=definition)[0]
     assert q_su2.abs().max() > 1e-6, "Expected nonzero q_x for SU(2) links."
 
     U_z2 = random_links(L, D, z2, dtype=torch.float64)
-    q_z2 = topological_charge_density(U_z2.unsqueeze(0), z2)[0]
+    q_z2 = topological_charge_density(U_z2.unsqueeze(0), z2, definition=definition)[0]
     assert q_z2.abs().max() < 1e-12, "Expected identically zero q_x for Z₂ links."
 
 
@@ -194,6 +196,131 @@ def test_topo_charge_requires_4d(z2):
     U = random_links(4, 3, z2, dtype=torch.float64).unsqueeze(0)
     with pytest.raises(ValueError, match="D=4"):
         topological_charge_density(U, z2)
+
+
+def test_topo_charge_rejects_unknown_definition():
+    """An unknown discretisation name is an error, not a silent fallback."""
+    su2 = SU(2)
+    torch.manual_seed(0)
+    U = random_links(4, 4, su2, dtype=torch.complex128).unsqueeze(0)
+    with pytest.raises(ValueError, match="clover"):
+        topological_charge_density(U, su2, definition="clovr")
+
+
+def test_topo_charge_clover_refuses_precomputed_plaquettes():
+    """The ``plaquettes`` shortcut is plaquette-only: the clover leaves are
+    similarity transforms of plaquettes at four different basepoints, so reusing
+    the tensor would silently evaluate F in the wrong colour frame."""
+    su2 = SU(2)
+    torch.manual_seed(0)
+    U = random_links(4, 4, su2, dtype=torch.complex128).unsqueeze(0)
+    P = plaquette_tensor(U, su2)
+    with pytest.raises(ValueError, match="clover"):
+        topological_charge_density(U, su2, plaquettes=P)
+    # …and it is still accepted, and exact, for the naive definition.
+    q_ref = topological_charge_density(U, su2, definition="plaquette")
+    q_pre = topological_charge_density(U, su2, plaquettes=P, definition="plaquette")
+    assert torch.equal(q_ref, q_pre)
+
+
+# ---------------------------------------------------------------------------
+# Parity: the clover charge is odd under lattice reflections, the naive one is not
+# ---------------------------------------------------------------------------
+
+
+def _reflect_field(T: torch.Tensor, axis: int) -> torch.Tensor:
+    """``x_axis → (−x_axis) mod L`` on a field whose lattice axis is ``axis``.
+
+    ``flip`` gives ``T[L−1−i]``; the extra ``roll(+1)`` turns that into
+    ``T[(−i) mod L]``, i.e. a reflection about the origin rather than about the
+    half-integer point between sites.
+    """
+    return torch.roll(torch.flip(T, dims=[axis]), shifts=1, dims=axis)
+
+
+def _reflect_links(U: torch.Tensor, gaugegroup, d: int = 1) -> torch.Tensor:
+    """Exact lattice reflection ``P: x_d → −x_d`` applied to links ``(D,*Λ,nc,nc)``.
+
+    A link in direction ν ≠ d is carried along: ``U'_ν(y) = U_ν(Py)``. The link
+    along d is reversed as well as moved, so it becomes the dagger of the link on
+    the other side: ``U'_d(y) = U_d(P(y+d̂))†``, and ``P(y+d̂) = Py − d̂`` — hence
+    shift *down* by one first and reflect after. Getting that order wrong still
+    produces a plausible-looking map that does not preserve the Wilson action,
+    which is why the test checks the action first.
+    """
+    D = U.shape[0]
+    out = []
+    for nu in range(D):
+        if nu != d:
+            out.append(_reflect_field(U[nu], d))
+        else:
+            back = torch.roll(U[nu], shifts=+1, dims=d)  # U_d(y − d̂)
+            out.append(gaugegroup.dagger(_reflect_field(back, d)))
+    return torch.stack(out, dim=0)
+
+
+def test_reflection_preserves_wilson_action():
+    """The reflection map used below is an exact symmetry of the Wilson action."""
+    su2 = SU(2)
+    torch.manual_seed(0)
+    U = random_links(6, 4, su2, dtype=torch.complex128)
+    U_refl = _reflect_links(U, su2, d=1)
+
+    S = action(U.unsqueeze(0), su2, beta=2.4)[0]
+    S_refl = action(U_refl.unsqueeze(0), su2, beta=2.4)[0]
+    assert torch.allclose(S, S_refl, atol=1e-9), (
+        f"Reflection is not a symmetry of the action: {S.item():.8f} → "
+        f"{S_refl.item():.8f}"
+    )
+
+
+def test_clover_charge_is_parity_odd():
+    """q_clov(x) is exactly odd under reflection, site by site and summed.
+
+    The gate of ``notes/flow_free_topology.md`` WP0. Parity-oddness is the
+    property the naive density lacks (see the companion test), and it is what
+    makes the clover density usable as a regression target.
+    """
+    su2 = SU(2)
+    torch.manual_seed(0)
+    U = random_links(6, 4, su2, dtype=torch.complex128)
+    U_refl = _reflect_links(U, su2, d=1)
+
+    q = topological_charge_density(U.unsqueeze(0), su2)[0]
+    q_refl = topological_charge_density(U_refl.unsqueeze(0), su2)[0]
+
+    # Parity-odd means q'(y) = −q(Py) at every site, not merely Q' = −Q.
+    site_residual = (q_refl + _reflect_field(q, 1)).abs().max().item()
+    assert site_residual < 1e-14, (
+        f"Clover density is not parity-odd site by site: max residual "
+        f"{site_residual:.3e}"
+    )
+    Q, Q_refl = q.sum().item(), q_refl.sum().item()
+    assert abs(Q) > 1e-3, "Test config has no charge to speak of; pick another seed."
+    assert abs(Q + Q_refl) < 1e-12, f"Q is not parity-odd: {Q:+.6f} → {Q_refl:+.6f}"
+
+
+def test_plaquette_charge_is_not_parity_odd():
+    """…and the naive density is not — the defect that motivates the clover.
+
+    Caveat 7 of CLAUDE.md, reproduced exactly: the sign of Q flips but the
+    magnitude does not, on a configuration whose action the same map preserves to
+    all printed digits.
+    """
+    su2 = SU(2)
+    torch.manual_seed(0)
+    U = random_links(6, 4, su2, dtype=torch.complex128)
+    U_refl = _reflect_links(U, su2, d=1)
+
+    q = topological_charge_density(U.unsqueeze(0), su2, definition="plaquette")[0]
+    q_refl = topological_charge_density(U_refl.unsqueeze(0), su2, definition="plaquette")[0]
+    Q, Q_refl = q.sum().item(), q_refl.sum().item()
+
+    # Not a near-miss: |Q + Q'| is of the same order as |Q| itself.
+    assert abs(Q + Q_refl) > 0.1 * abs(Q), (
+        f"The naive density unexpectedly looks parity-odd ({Q:+.6f} → "
+        f"{Q_refl:+.6f}); if this ever starts passing the definition changed."
+    )
 
 
 # ---------------------------------------------------------------------------
