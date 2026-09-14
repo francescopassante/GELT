@@ -62,7 +62,12 @@ import torch
 from tqdm import tqdm
 
 from gelt.flow import wilson_flow
-from gelt.lattice import SU, plaquette_tensor, topological_charge_density
+from gelt.lattice import (
+    SU,
+    plaquette_tensor,
+    random_links,
+    topological_charge_density,
+)
 from gelt.sampler import (
     _re_tr,
     heatbath_overrelaxation_sweep,
@@ -632,41 +637,79 @@ def phase_gatefit(beta, L):
 
 # ── Phase: ensemble / targets ────────────────────────────────────────────────
 def phase_probe(beta, L):
-    """Time one chunk of the `targets` work and extrapolate the whole phase.
+    """Throughput against batch size, and the extrapolated cost of `targets`.
 
-    The design estimated 1–2 h for the targets; the pre-flight's own timings say
-    ~18 GPU-hours at the original chunk size (notes §12.4). That is the kind of
-    number worth measuring for two minutes before committing a night to it, and
-    it is also how the chunk size gets checked: if the auto size is not using the
-    device, the per-configuration time will not have fallen.
+    The first version of this phase timed 8 configurations whatever the chunk
+    was, which measured the one thing it was not supposed to: it reproduced the
+    old estimate at the old batch size and said nothing about whether a larger
+    chunk helps. At these volumes each kernel is small — a 2×2 complex matmul per
+    site — so the device is launch- and bandwidth-bound and throughput should
+    improve markedly with batch. That is a claim to measure, not to assume.
+
+    Timing does not depend on the physics (no data-dependent branching anywhere
+    in the flow), so this uses Haar-random links and never touches the sampler.
+    One RK3 step is timed directly and the ladder is extrapolated from it:
+    `t_max/ε` steps plus one clover per rung, which is a rounding error beside
+    them (5 clovers against 1200 drift evaluations).
     """
-    step = _auto_chunk(L)
-    n = min(step, 8)
-    print(f"  auto chunk at L={L}: {step} configs "
-          f"({13 * D * L**D * GROUP.nc**2 * 8 / 2**20:.0f} MiB/config estimate, "
-          f"budget {MEM_GB:g} GiB)")
-    U, _ = mcmc_ensemble(
-        L=L, D=D, gaugegroup=GROUP, beta=beta, n_configs=n, n_therm=20, n_skip=1,
-        sweep_fn=SWEEP, dtype=DTYPE, device=DEVICE, progress=False,
-    )
-    U = U.cpu()
-    torch.cuda.synchronize() if DEVICE.type == "cuda" else None
-    t0 = time.time()
-    flowed_densities(U, T_LADDER, chunk=n)
-    torch.cuda.synchronize() if DEVICE.type == "cuda" else None
-    dt = time.time() - t0
-    per = dt / n
+    n_steps = int(round(max(T_LADDER) / FLOW_EPS))
+    sizes = sorted({8, 32, 64, _auto_chunk(L)})
     print(
-        f"  {n} configs through the full ladder in {dt:.1f} s "
-        f"({per:.2f} s/config)\n"
-        f"  ⇒ {N_CONFIGS} configs ≈ {per * N_CONFIGS / 3600:.1f} h for this row"
+        f"  ladder {list(T_LADDER)} ⇒ {n_steps} RK3 steps + {len(T_LADDER)} "
+        f"clover evaluations per configuration\n"
+        f"  auto chunk at L={L}: {_auto_chunk(L)} "
+        f"(estimate {13 * D * L**D * GROUP.nc**2 * 8 / 2**20:.0f} MiB/config, "
+        f"budget {MEM_GB:g} GiB)"
     )
-    if DEVICE.type == "cuda":
+    print(
+        f"  {'batch':>6} {'ms/step':>9} {'s/config':>9} "
+        f"{'h for ' + str(N_CONFIGS):>10} {'peak GiB':>9} {'MiB/config':>11}"
+    )
+    best = None
+    for n in sizes:
+        try:
+            U = random_links(L, D, GROUP, dtype=DTYPE, N=n).to(DEVICE)
+            if DEVICE.type == "cuda":
+                torch.cuda.reset_peak_memory_stats()
+            wilson_flow(U, GROUP, 2 * FLOW_EPS, eps=FLOW_EPS)  # warm up the allocator
+            _sync()
+            t0 = time.time()
+            wilson_flow(U, GROUP, 10 * FLOW_EPS, eps=FLOW_EPS)
+            _sync()
+            step = (time.time() - t0) / 10
+            t0 = time.time()
+            for _ in range(2):
+                topological_charge_density(U, GROUP)
+            _sync()
+            clover = (time.time() - t0) / 2
+        except torch.cuda.OutOfMemoryError:
+            print(f"  {n:6d}   out of memory — the budget estimate is optimistic")
+            torch.cuda.empty_cache()
+            break
+        total = n_steps * step + len(T_LADDER) * clover
+        per_config = total / n
+        peak = torch.cuda.max_memory_allocated() / 2**30 if DEVICE.type == "cuda" else 0
         print(
-            f"  peak device memory: "
-            f"{torch.cuda.max_memory_allocated() / 2**30:.1f} GiB "
-            f"(at {n} configs; the production chunk is {step})"
+            f"  {n:6d} {step * 1e3:9.1f} {per_config:9.2f} "
+            f"{per_config * N_CONFIGS / 3600:10.1f} {peak:9.2f} "
+            f"{peak * 2**10 / n:11.0f}"
         )
+        if best is None or per_config < best[1]:
+            best = (n, per_config)
+        del U
+        if DEVICE.type == "cuda":
+            torch.cuda.empty_cache()
+    if best:
+        print(
+            f"  ⇒ best batch {best[0]}: {best[1] * N_CONFIGS / 3600:.1f} h for this "
+            f"row ({N_CONFIGS} configs). Set TOPO_CHUNK={best[0]} if it is not "
+            f"already the auto size."
+        )
+
+
+def _sync():
+    if DEVICE.type == "cuda":
+        torch.cuda.synchronize()
 
 
 def phase_ensemble(beta, L):

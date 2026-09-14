@@ -544,8 +544,21 @@ density before flowing on. A density is 1/32 of a link field, so the snapshots
 stop mattering: 144 → 104 MiB/config at L = 16, i.e. **38% more batch for
 free**, and identical numbers (it is the same segmented walk).
 
-**`probe`** times one chunk of the real targets work and extrapolates the row,
-including peak device memory. Two minutes, and it is what should be read before
-committing the night — both because the §12.4 cost estimate came from
-extrapolating a differently-sized run, and because it is the only way to see
-whether the larger chunk is actually being used.
+**`probe`** sweeps the batch size and extrapolates the row from a timed RK3
+step, with peak device memory per point. Two minutes, no sampler (timing has no
+data dependence, so Haar links do), and it is what should be read before
+committing the night.
+
+*Its first version measured the wrong thing.* It timed
+`n = min(chunk, 8)` configurations — i.e. 8, whatever the chunk was — so it
+reproduced the §12.4 estimate at the §12.4 batch size (4.1 h + 13.0 h = 17.1 h)
+and said nothing about the question it existed to answer. At these volumes each
+kernel is a 2×2 complex matmul per site, so the device is launch- and
+bandwidth-bound and throughput should improve markedly with batch; that is now
+measured across `{8, 32, 64, auto}` rather than assumed.
+
+*What it did confirm:* **the memory model is right.** Measured 0.8 GiB at 8
+configurations at L = 16, i.e. 100 MiB/config against the 104 MiB predicted from
+13 link fields — so the auto chunk of 128 needs ≈ 12.5 GiB, comfortably inside a
+32 GB card. At L = 12 the measured 25 MiB/config runs a little under the 33
+predicted, which is the right direction for a budget estimate to err.
