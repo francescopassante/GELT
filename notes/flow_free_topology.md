@@ -1,7 +1,8 @@
 # Flow-free topological charge density — design record
 
 **Status (2026-09-14): WP0, WP1 and WP2 built, and WP2's pre-flight has now
-been run (§12.4). Gate 0 is *not* cleanly passed — see below. Everything from
+been run (§12.4–§12.5). Gate 0 relocated the primary rung, from t/a² = 2 to 4,
+and cost the β = 2.3 row its lattice size. Everything from
 WP3 on is still a proposal.** Nothing below §12 is a result about the *physics*; §12 is the build
 log for the two work packages that landed, both offline, both CPU-seconds, both
 gated by tests. The theory, the physics background and the argument for the task
@@ -451,3 +452,68 @@ whether the β = 2.3 row survives as designed, and whether R4 ("reproduces the
 integer Q-histogram") is available at all. Only after that is a night of
 `ensemble` + `targets` worth spending. WP3–WP5 (`train_topology.py`, the
 trainings, `fit_topology.py`) are untouched.
+
+
+### 12.5 `gatefit`: the rung moves to t/a² = 4, and β = 2.3 loses its box
+
+The Z-scan separates the two readings §12.4 could not. **The integer structure is
+real and the charge is renormalised**, exactly as the alternative hypothesis
+said: Z* converges to a stable value at large flow time on every row, and it
+rises with β as it must —
+
+| row | Z* at the three smoothest rungs | dev(Z*) there |
+|---|---|---|
+| β=2.3 L=8 | 0.86 | 0.055 → 0.020 |
+| β=2.4 L=12 | 0.91 → 0.94 | 0.059 → 0.039 |
+| β=2.5 L=16 | 0.92 → 0.93 | 0.068 → 0.043 |
+
+Z → 1 as a → 0 is the continuum expectation, and a Z* near 1/2 or 2 would have
+indicted the normalisation of `q_x` rather than the physics — that is what the
+deliberately wide scan was for. It did not happen. **The clover charge is
+behaving correctly**; what the naive reading of §12.4 called "no integer
+structure" was a renormalisation of 10–15%.
+
+**Where the structure actually sets in.** Applying the criterion — deviation
+below the null by more than its own error, `r_sm ≤ L/2`, and Z* inside a
+plausible band:
+
+| row | usable rungs | the constraint that binds |
+|---|---|---|
+| β=2.3 L=8 | `[2]`, and marginal (Z* = 0.62, far from its converged 0.86) | the box: `r_sm ≤ L/2` ⇒ `t/a² ≤ 2` |
+| β=2.4 L=12 | `[4]` | the box above, the null below |
+| β=2.5 L=16 | `[3, 4, 6]` | the null below |
+
+Consistent across rows: **topology is resolved at `r_sm/a ≈ 4.9–5.7`, i.e.
+`t/a² = 3–4`** — in lattice units, the same everywhere, which is the fixed-`t/a²`
+design vindicated at a rung the design set too low. So the primary rung moves
+**2 → 4** and the ladder becomes `{1, 2, 4, 6, 8}`. `r_sm/a = 5.66` is still
+inside Manhattan 8, but it eats the margin the design kept: the task is now
+strictly harder for both architectures, and the well-posedness question
+(§eq:wellposed) is correspondingly sharper.
+
+**One filter bug found and fixed on the way.** The first `usable` criterion
+accepted two aliasing minima — β=2.4 at `t=1` with Z* = 0.44 and β=2.5 at `t=8`
+with Z* = 0.46. Dividing by a small Z inflates the spread until *some* alignment
+with the integers appears; `rms(Q/Z*)` gives it away (2.17 against a raw 0.96;
+4.59 against 2.09). Z is a renormalisation factor, so the band `[0.6, 1.1]` is
+now part of the criterion and out-of-band minima are flagged in the table. With
+the band, the three rows read cleanly and consistently.
+
+**The β = 2.3 row cannot host the new primary rung.** At L = 8, `t/a² = 4` gives
+`r_sm/a = 5.66 > L/2`: the flow wraps the torus. This is the collision §12.4
+flagged, now binding — the ladder holds `r_sm/a` fixed across β while constant
+physical volume shrinks L at coarse β, and the two requirements meet at
+`L ≥ 12`. Three ways out, none free:
+
+1. **Drop the row.** Two β (2.4, 2.5) at the design volume, primary `t/a² = 4`,
+   no new cost. R2 (scale adaptivity) becomes a two-point control.
+2. **Run β = 2.3 at L = 12.** Three rows, but its physical volume is then ≈5×
+   the others — a confound in exactly the comparison R2 makes, and ~4 GPU-hours
+   more flowing.
+3. **Keep `t/a² = 2` as the primary rung everywhere** and accept a target whose
+   topology is only partly resolved (dev(Z*) ≈ 0.17, Z* well short of converged).
+   The architecture readings R1–R3 survive — they only need a well-defined field
+   — but R4, the physics deliverable, does not.
+
+The startup banner now refuses to be quiet about it: any row that cannot host the
+primary rung says so before anything runs.

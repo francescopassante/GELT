@@ -146,8 +146,13 @@ LS = _env_ints("TOPO_LS", (8, 12, 16))
 # and a mixed-β model's degradation is attributable to scale adaptivity rather
 # than to a capacity wall at one β. r_sm/a = √(8 t/a²) = 2.0, 2.8, 4.0, 5.7, 8.0;
 # the top rung sits at the Manhattan-8 boundary on purpose, as the capacity control.
-T_LADDER = _env_floats("TOPO_LADDER", (0.5, 1.0, 2.0, 4.0, 8.0))
-T_PRIMARY = _env_float("TOPO_T_PRIMARY", 2.0)
+# Moved up after the 2026-09-14 pre-flight (notes §12.5): at t/a² = 2 the charge
+# shows no integer structure beyond the null at any β, and the renormalisation
+# Z* has not converged there either. Structure sets in at t/a² = 3–4
+# (r_sm/a ≈ 4.9–5.7) on every row that can host it. The pre-registered response
+# to exactly this was "the primary rung moves, and the fact is recorded".
+T_LADDER = _env_floats("TOPO_LADDER", (1.0, 2.0, 4.0, 6.0, 8.0))
+T_PRIMARY = _env_float("TOPO_T_PRIMARY", 4.0)
 FLOW_EPS = _env_float("TOPO_EPS", 0.02)
 
 N_CONFIGS = _env_int("TOPO_N_CONFIGS", 1200)  # 800 train / 200 val / 200 test
@@ -165,6 +170,7 @@ T_GATE_MAX = _env_float("TOPO_T_GATE_MAX", 16.0)
 FILTER_R = _env_int("TOPO_FILTER_R", 8)  # Manhattan radius of the linear arm
 CHUNK = _env_int("TOPO_CHUNK", 16)  # configurations flowed at once
 SPLITS = (2 / 3, 1 / 6, 1 / 6)  # train / val / test, contiguous and chain-ordered
+Z_BAND = (0.6, 1.1)  # plausible range for the charge renormalisation Z(β, t)
 PHASES = _env_str("TOPO_PHASE", "chain,gate0").split(",")
 
 if SMOKE:
@@ -537,6 +543,8 @@ def phase_gatefit(beta, L):
         )
         if Qt_plaq is not None:
             line += f" {np.abs(Q - Qt_plaq[i]).mean():11.3f}"
+        if not Z_BAND[0] <= zstar <= Z_BAND[1]:
+            line += "  * Z* out of band: aliasing, not a renormalisation"
         print(line)
         rows[float(t)] = dict(
             rms=float(Q.std()), dev1=float(dev1.mean()),
@@ -546,14 +554,26 @@ def phase_gatefit(beta, L):
             rms_scaled=float((Q / zstar).std()),
         )
 
-    # A rung is usable when the integer structure is real (deviation below the
-    # null by more than its own error) *and* the smoothing still fits in the box.
+    # Z is a renormalisation factor: it lies in (0, 1] and rises toward 1 as the
+    # field smooths. A minimiser that reports Z* far below that is not measuring
+    # a renormalisation, it has found an aliasing solution — dividing by a small
+    # Z inflates the spread until *some* alignment with the integers appears, and
+    # rms(Q/Z*) gives it away (the pre-flight produced two such entries, β=2.4 at
+    # t=1 with Z*=0.44 and β=2.5 at t=8 with Z*=0.46, both flagged usable by an
+    # earlier version of this filter). So the band is part of the criterion, and
+    # the wide scan is kept only as the diagnostic it was meant to be.
     usable = [
         t for t, r in rows.items()
         if r["devstar"] + r["semstar"] < 0.20
         and r["rms_scaled"] > 0.3
+        and Z_BAND[0] <= r["zstar"] <= Z_BAND[1]
         and math.sqrt(8 * t) <= L / 2
     ]
+    # Z at the smoothest rungs, where it should have converged: a measured
+    # quantity, and a check on the charge's normalisation (a Z* near 1/2 or 2
+    # would indict the definition of q_x, not the physics).
+    z_conv = np.mean([rows[float(t)]["zstar"] for t in grid[-3:]])
+    print(f"  Z at the three smoothest rungs: {z_conv:.2f}")
     print(
         f"\n  rungs with real integer structure and r_sm ≤ L/2: "
         f"{sorted(usable) if usable else 'NONE'}"
@@ -873,6 +893,14 @@ if __name__ == "__main__":
     unknown = [p for p in PHASES if p not in _PHASES]
     if unknown:
         raise SystemExit(f"unknown phase(s) {unknown}; known: {list(_PHASES)}")
+    for beta, L in zip(BETAS, LS):
+        if math.sqrt(8 * T_PRIMARY) > L / 2:
+            print(
+                f"!! β={beta:g} L={L} cannot host the primary rung: "
+                f"r_sm/a = {math.sqrt(8 * T_PRIMARY):.2f} > L/2 = {L / 2:g}. The "
+                f"flow wraps the torus there; this row needs a larger L or a "
+                f"lower rung, and either choice has to be recorded."
+            )
     print(
         f"device: {DEVICE}   phases: {PHASES}\n"
         f"rows: {[f'β={b:g} L={l}' for b, l in zip(BETAS, LS)]}   "
