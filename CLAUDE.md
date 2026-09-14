@@ -42,6 +42,14 @@ or "removed in the 2026-09-09 cleanup", that is where it went.
   `train_glueball.py`, and the readings fixed in advance. **Run 2026-09-14:
   parity** — ΔA₀(GELT − L-CNN) = +0.007 ± 0.007 (1.1σ), same mass, same
   noise-to-signal (§9.3); the one asymmetry is robustness (§9.2).
+- `notes/topology_go_nogo.md` — **the decision dossier for the topology study**:
+  everything measured (2026-09-14), positive and negative, separating measured
+  from extrapolated from assumed, with the command that reproduces each number.
+  Read this before spending compute on it. Headline facts: infrastructure
+  verified to machine precision; no topological freezing; the primary rung had to
+  move to `t/a² = 4`; β = 2.3 dropped; the flow alone costs 17 GPU-hours against
+  the design's 1–2 h estimate; training cost unmeasured; the study's own stop
+  condition (the best linear filter) is obtainable for ~2 h at one row.
 - `notes/flow_free_topology.md` — the follow-on: *where can attention win, given
   parity?* The selection rule read off the tie, and the design for the one task
   that meets it — flow-free topological charge density. **Proposed, nothing
