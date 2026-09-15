@@ -65,6 +65,10 @@ SWEEP_EPOCHS="${PROBE_SWEEP_EPOCHS:-6}"
 # to prevent — so extend and re-run part 1 (finished points are skipped):
 #   PROBE_PARTS=1 PROBE_SWEEP_LRS="3e-2 3e-4" bash scripts/probe_batch.sh
 SWEEP_LRS="${PROBE_SWEEP_LRS:-1e-2 3e-3 1e-3}"
+# …and which arms to sweep, so chasing one unbracketed arm down does not re-run
+# the four that are already settled:
+#   PROBE_PARTS=1 PROBE_SWEEP_LRS=1e-4 PROBE_SWEEP_ARMS="lcnn lcnn_norm" …
+SWEEP_ARMS="${PROBE_SWEEP_ARMS:-gelt frozen lcnn lcnn_norm frozen_matched}"
 # Per-arm learning rates for parts 2–5, set from part 1's val curves. The
 # defaults are GELT's glueball LR for every arm, which is exactly the situation
 # part 1 exists to fix — do not run the grid on them without reading the sweep.
@@ -152,8 +156,8 @@ fi
 # ── part 1: the per-arm LR sweep ─────────────────────────────────────────────
 if wants 1; then
   echo "[$(stamp)] ══ part 1: LR sweep on T2 / ens0 / seed 0, ${SWEEP_EPOCHS} epochs"
-  echo "[$(stamp)]    grid: ${SWEEP_LRS}"
-  for ARM in gelt frozen lcnn lcnn_norm frozen_matched; do
+  echo "[$(stamp)]    grid: ${SWEEP_LRS}   arms: ${SWEEP_ARMS}"
+  for ARM in ${SWEEP_ARMS}; do
     for SLR in ${SWEEP_LRS}; do
       TAG="_sweep_lr${SLR}"
       run_phase "probe_sweep_${ARM}_lr${SLR}" \

@@ -205,7 +205,18 @@ def main():
 
     # The reported number is always the selected checkpoint's, never the last
     # epoch's — selection is on val, evaluation on test, and the two never mix.
-    model.load_state_dict(torch.load(checkpoint, map_location=device))
+    # Unless nothing was ever selected: a run whose val loss is nan from the
+    # first epoch never improves on ``inf``, so no checkpoint is written. Score
+    # the weights as they stand instead of dying on a file that does not exist —
+    # the runs that reach this branch are exactly R-F's most extreme points, and
+    # crashing here would delete the evidence of divergence rather than record
+    # it. (``train_glueball.py``'s checkpoint comment warns about the same trap.)
+    if best_epoch < 0:
+        print("  ** no epoch improved on the initialisation — no checkpoint was "
+              "written, scoring the final weights and recording the run as "
+              "diverged")
+    else:
+        model.load_state_dict(torch.load(checkpoint, map_location=device))
     test_loss, stats = run_split(model, arch, U3, y, te, device, per_config=True)
     r2, err, _ = jackknife(stats, r2_from_stats)
     diverged = not (best_val < DIVERGENCE_VAL)  # not (<) also catches nan

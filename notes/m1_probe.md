@@ -367,6 +367,46 @@ predictor scores 1.0):
 
 ‡ best at epoch 1 — it got worse after the first epoch and never recovered.
 
+Extended to 3e−2 and 3e−4 (`PROBE_SWEEP_LRS`), which is what settled it:
+
+| arm | 3e−2 | 1e−2 | 3e−3 | 1e−3 | 3e−4 | 1e−4 | chosen |
+|---|---|---|---|---|---|---|---|
+| `gelt` | 1.008 ‡ | **0.642** | 0.732 | 0.810 | 0.980 | — | **1e−2**, interior |
+| `frozen` | 0.901 | **0.798** | 0.863 | 0.904 | 0.981 | — | **1e−2**, interior |
+| `frozen_matched` | 0.979 ‡ | **0.821** | 0.949 ‡ | 0.893 | 0.981 | — | **1e−2**, interior |
+| `lcnn` | *crashed* | 3.2e20 | 0.989 | **0.712** | 0.950 | — | **1e−3**, interior |
+| `lcnn_norm` | *crashed* | 6.7e17 | 0.988 | 0.985 | **0.951** | ? | edge — chased |
+
+All three GELT-family arms sit at **1e−2** with both neighbours worse, and
+`lcnn` at **1e−3** with both neighbours worse. Two arms did not resolve:
+
+- **`lcnn_norm` is still at an edge** and, worse, barely learns at any rate —
+  its best is 0.951 against a trivial predictor's 1.0, where the unbounded
+  `lcnn` reaches 0.712 on the same budget. Bounding every ``(c_out, c_in)``
+  pair's profile over offsets is a genuine restriction and some of that gap is
+  the arm's nature, which is the point of a control. But **if it is still far
+  behind at twenty epochs, R-D is uninterpretable** — "the bounded arm is worse
+  everywhere" is not evidence about M2 — and the note must say so rather than
+  read it as one.
+- **Both L-CNN arms crashed at 3e−2**, and that was a defect in `train_probe.py`,
+  not in them: a run whose val loss is nan from the first epoch never improves on
+  `inf`, so no checkpoint is written and the reload at the end died on a missing
+  file. Those are exactly R-F's most extreme points, so the crash was deleting
+  the evidence of divergence instead of recording it. Fixed — such a run now
+  scores its final weights and records `diverged=True`.
+
+### The training-budget gate
+
+Six epochs converges nothing and twenty may not either, so before the grid one
+GELT run at 1e−2 on T2/ens0/seed0 is taken to **forty** epochs under a
+`_budget` tag and its val curve read. The tag matters: an untagged 40-epoch run
+would occupy the `gelt`/T2/ens0/seed0 grid cell, which part 3 would then skip,
+leaving one cell at a different budget from the other 71 — a silent,
+uninterpretable inhomogeneity. `PROBE_EPOCHS` for the whole grid is set from
+where that curve flattens, and §3.2's linear ceiling of **0.62** is the number
+it has to clear: below it, every arm is losing to a five-parameter radial
+convolution and every ΔR² is a statement about optimisation.
+
 **Three readings, and two of them stop the grid from starting.**
 
 1. **Neither family's optimum is bracketed.** Every GELT-family arm is monotone
@@ -417,11 +457,17 @@ predictor scores 1.0):
   indistinguishable, so the M1-free ceiling is a five-parameter object. Nothing
   was retuned on the strength of it.
 - **2026-09-15, part 1 — the sweep does not clear the grid to start** (§8).
-  Neither family's optimum is bracketed, six epochs converges nothing, and both
-  L-CNN arms diverged where no GELT arm did. Extending the grid, then the
-  training-budget gate, then the runs.
-- Next: extend the sweep (`PROBE_SWEEP_LRS="3e-2 3e-4"`), then one 20-epoch GELT
-  run against §3.2's 0.62 ceiling, then parts 2–4.
+  Neither family's optimum was bracketed, six epochs converges nothing, and both
+  L-CNN arms diverged where no GELT arm did.
+- **2026-09-15, part 1 extended** (§8). Four of five arms now have interior
+  optima: 1e−2 for all three GELT-family arms, 1e−3 for `lcnn`. `lcnn_norm`
+  remains at an edge and barely learns at any rate, which is a live risk to
+  R-D's interpretability and is written down as one. The 3e−2 crashes were a
+  missing-checkpoint bug in `train_probe.py`, now fixed — it was discarding
+  precisely the runs R-F counts.
+- Next: chase `lcnn_norm` to 1e−4, re-run the two 3e−2 cells now that they
+  record instead of crash, then the 40-epoch `_budget` run against §3.2's 0.62
+  ceiling, then parts 2–4.
 
 ### Reproducing the smoke test
 
