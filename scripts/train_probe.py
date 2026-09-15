@@ -69,7 +69,14 @@ NULL = env_flag("PROBE_NULL", False)
 LR = env_float("PROBE_LR", 3e-3)
 WEIGHT_DECAY = env_float("PROBE_WEIGHT_DECAY", 1e-3)
 EPOCHS = env_int("PROBE_EPOCHS", 20)
-PATIENCE = env_int("PROBE_PATIENCE", 5)
+# **Off by default, and that is not an oversight.** The schedule below is a
+# cosine annealed to zero at ``EPOCHS``, so the low-rate epochs at the end are
+# precisely where it converges; stopping early on a patience counter throws away
+# the half of the run that does the converging, and it does so *at different
+# epochs for different arms*, which turns a matched budget into an unmatched
+# one. Measured: the 40-epoch gelt gate stopped at epoch 16 of 40 on a val
+# oscillation and never saw its own anneal. Set PROBE_PATIENCE > 0 to re-enable.
+PATIENCE = env_int("PROBE_PATIENCE", 0)
 BATCH_CONFIGS = env_int("PROBE_BATCH", 8)
 GRAD_CHECKPOINT = env_flag("PROBE_GRAD_CHECKPOINT", True)
 RUN_TAG = env_str("PROBE_RUN_TAG", "")
@@ -199,7 +206,7 @@ def main():
             since += 1
         print(f"  epoch {epoch + 1:3d}/{EPOCHS}  train {train_loss:.5f}  "
               f"val {val_loss:.5f}  ({time.time() - t0:.1f}s){mark}")
-        if since >= PATIENCE:
+        if PATIENCE > 0 and since >= PATIENCE:
             print(f"  early stop: {PATIENCE} epochs without improvement")
             break
 
@@ -220,7 +227,8 @@ def main():
     test_loss, stats = run_split(model, arch, U3, y, te, device, per_config=True)
     r2, err, _ = jackknife(stats, r2_from_stats)
     diverged = not (best_val < DIVERGENCE_VAL)  # not (<) also catches nan
-    print(f"\nbest epoch {best_epoch + 1} (val {best_val:.5f})"
+    print(f"\nbest epoch {best_epoch + 1} of {len(history)} "
+          f"(val {best_val:.5f}, last {history[-1][1]:.5f})"
           + (f"  ** DIVERGED (> {DIVERGENCE_VAL:g}, the trivial predictor scores "
              f"1.0) **" if diverged else ""))
     print(f"test MSE {test_loss:.5f}   R² = {r2:+.4f} ± {err:.4f} "

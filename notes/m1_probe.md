@@ -432,7 +432,36 @@ what either architecture can represent, and the same question applies to
 `frozen`, whose 6-epoch val is 0.798 against `gelt`'s 0.642 — a gap that is
 either the M1 signal or a convergence difference, and the curve is what tells
 them apart. `PROBE_EPOCHS` is then set where the *slowest* of the three
-flattens. The tag matters: an untagged 40-epoch run
+flattens.
+
+#### What the first gate returned — *measured 2026-09-15*
+
+`gelt`, 1e−2, 40 epochs: **R² = 0.7262 ± 0.0021**, against §3.2's linear
+ceiling of 0.6206. The target is reachable and the arms are not fighting over a
+residual — GELT clears the best convolution at matched reach by 0.11, which is
+ten times any ΔR² this study is trying to resolve. That is the gate's first
+question answered yes.
+
+Its second question answered no, twice over.
+
+**The schedule never annealed.** The run stopped at epoch 16 of 40 on the
+patience counter, best at epoch 11. A cosine annealed to zero at `EPOCHS` puts
+its convergence in the *last* epochs, so patience-based early stopping throws
+away the half of the run that does the converging — and throws away a different
+half for each arm, which turns a matched budget into an unmatched one. Early
+stopping is now **off by default**; `PROBE_PATIENCE > 0` re-enables it.
+
+**And 1e−2 is not the right rate for a 40-epoch schedule.** The val curve
+descends smoothly to 0.597 by epoch 5, reaches 0.271 at epoch 11, then
+oscillates violently — 0.756, 0.534, 0.868 — without ever diverging. The reason
+is structural, not bad luck: **part 1 swept at `T_max` = 6, where the cosine
+pulls the rate down almost immediately, and the grid runs at `T_max` = 40, where
+it sits near the peak rate for many epochs.** A rate chosen on a 6-epoch anneal
+is not transferable to a 40-epoch one, and the sweep's short horizon biases it
+upward exactly as §8's second reading warned. The gate is what caught it; the
+fix is to re-gate `gelt` at 1e−2 and 3e−3 over the full 40-epoch schedule with
+early stopping off, and take the rate that ends lower, not the one that dips
+lowest. The tag matters: an untagged 40-epoch run
 would occupy the `gelt`/T2/ens0/seed0 grid cell, which part 3 would then skip,
 leaving one cell at a different budget from the other 71 — a silent,
 uninterpretable inhomogeneity. `PROBE_EPOCHS` for the whole grid is set from
@@ -503,8 +532,16 @@ convolution and every ΔR² is a statement about optimisation.
   instead of crashing. Final rates: 1e−2 / 1e−2 / 1e−2 / 1e−3 / 3e−4. R-F's
   ledger at matched rates is **0 of 15 against 4 of 10**, and GELT's optimum is
   the rate where both L-CNN arms die.
-- Next: three 40-epoch `_budget` runs (`gelt`, `frozen`, `lcnn`) against §3.2's
-  0.62 ceiling, then parts 2–4 at whatever budget the slowest of them needs.
+- **2026-09-15, the first budget gate — the ceiling clears, the schedule does
+  not.** `gelt` at 1e−2/40ep reached R² = 0.7262 ± 0.0021 against a 0.6206
+  linear ceiling, so the task has room. But it early-stopped at epoch 16 of 40
+  and never annealed, and its val curve oscillated 0.271 → 0.756 → 0.868 after
+  epoch 11. Two fixes: early stopping off by default (a cosine converges in the
+  epochs patience deletes), and the rate re-gated at the grid's own horizon —
+  part 1 swept at `T_max` = 6, which systematically favours rates too large for
+  `T_max` = 40.
+- Next: re-gate `gelt` at 1e−2 and 3e−3 over the full 40 epochs, then `frozen`
+  and `lcnn` at the rate that survives, then parts 2–4.
 
 ### Reproducing the smoke test
 
