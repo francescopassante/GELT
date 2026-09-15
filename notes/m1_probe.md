@@ -375,31 +375,64 @@ Extended to 3e−2 and 3e−4 (`PROBE_SWEEP_LRS`), which is what settled it:
 | `frozen` | 0.901 | **0.798** | 0.863 | 0.904 | 0.981 | — | **1e−2**, interior |
 | `frozen_matched` | 0.979 ‡ | **0.821** | 0.949 ‡ | 0.893 | 0.981 | — | **1e−2**, interior |
 | `lcnn` | *crashed* | 3.2e20 | 0.989 | **0.712** | 0.950 | — | **1e−3**, interior |
-| `lcnn_norm` | *crashed* | 6.7e17 | 0.988 | 0.985 | **0.951** | ? | edge — chased |
+| `lcnn_norm` | inf † | 6.7e17 | 0.988 | 0.985 | **0.951** | 0.987 | **3e−4**, interior |
 
-All three GELT-family arms sit at **1e−2** with both neighbours worse, and
-`lcnn` at **1e−3** with both neighbours worse. Two arms did not resolve:
+† diverged outright: not one epoch improved on the initialisation. Both L-CNN
+arms crashed here on the first pass, which was a defect in `train_probe.py` and
+not in them — a run whose val loss is nan from epoch one never improves on
+`inf`, so no checkpoint was written and the reload at the end died on a missing
+file. Those are exactly R-F's most extreme points, so the crash was deleting the
+evidence of divergence instead of recording it. Fixed; both cells now score
+their final weights and record `diverged=True`.
 
-- **`lcnn_norm` is still at an edge** and, worse, barely learns at any rate —
-  its best is 0.951 against a trivial predictor's 1.0, where the unbounded
-  `lcnn` reaches 0.712 on the same budget. Bounding every ``(c_out, c_in)``
-  pair's profile over offsets is a genuine restriction and some of that gap is
-  the arm's nature, which is the point of a control. But **if it is still far
-  behind at twenty epochs, R-D is uninterpretable** — "the bounded arm is worse
-  everywhere" is not evidence about M2 — and the note must say so rather than
-  read it as one.
-- **Both L-CNN arms crashed at 3e−2**, and that was a defect in `train_probe.py`,
-  not in them: a run whose val loss is nan from the first epoch never improves on
-  `inf`, so no checkpoint is written and the reload at the end died on a missing
-  file. Those are exactly R-F's most extreme points, so the crash was deleting
-  the evidence of divergence instead of recording it. Fixed — such a run now
-  scores its final weights and records `diverged=True`.
+**All five arms have interior optima.** 1e−2 for the three GELT-family arms,
+1e−3 for `lcnn`, 3e−4 for `lcnn_norm`. One risk stands and one reading falls
+out.
+
+**The risk: `lcnn_norm` barely learns at any rate.** Its best is 0.951 against a
+trivial predictor's 1.0, where the unbounded `lcnn` reaches 0.712 on the same
+budget. Bounding every `(c_out, c_in)` pair's profile over offsets is a genuine
+restriction and some of that gap is the arm's nature, which is the point of a
+control. But **if it is still far behind at the full budget, R-D is
+uninterpretable** — "the bounded arm is worse everywhere" is not evidence about
+M2 — and this note says so before the number exists.
+
+**The reading: R-F's ledger, at rates both families visited.** Five rates
+(3e−2 … 3e−4) were run for every arm:
+
+| family | runs | diverged |
+|---|---|---|
+| GELT (`gelt`, `frozen`, `frozen_matched`) | 15 | **0** |
+| L-CNN (`lcnn`, `lcnn_norm`) | 10 | **4** |
+
+The mix of rates is uniform across families here, which is the one condition
+under which §4.1's count is more than a count. Two things sharpen it:
+
+1. **GELT's optimum is 1e−2 — the rate at which both L-CNN arms diverge.** The
+   GELT family's best operating point sits inside a region the L-CNN family
+   cannot enter at all. That is a cleaner statement of M2 than an accuracy
+   difference, and it is the fourth independent sighting.
+2. **`normalize_shifts` did not prevent divergence, only shrank it** — 6.7e17
+   against 3.2e20 at 1e−2, and both arms alike at 3e−2. Bounding the L-Conv's
+   aggregation over offsets is therefore *not* what bounds an L-CNN: the L-CB
+   stack's bilinear degree growth is the dominant amplifier, and it is untouched
+   by anything R-D varies. This is an informative negative about the control
+   itself, and it means R-F, not R-D, is where the M2 evidence in this study
+   lives.
 
 ### The training-budget gate
 
 Six epochs converges nothing and twenty may not either, so before the grid one
-GELT run at 1e−2 on T2/ens0/seed0 is taken to **forty** epochs under a
-`_budget` tag and its val curve read. The tag matters: an untagged 40-epoch run
+run per **family** — `gelt` at 1e−2, `frozen` at 1e−2, `lcnn` at 1e−3 — is taken
+to **forty** epochs on T2/ens0/seed0 under a `_budget` tag and its val curve
+read. Three rather than one because the tuned rates differ by an order of
+magnitude between families: if `gelt` has converged at forty epochs and `lcnn`
+at 1e−3 has not, then R-C is a statement about trainability rather than about
+what either architecture can represent, and the same question applies to
+`frozen`, whose 6-epoch val is 0.798 against `gelt`'s 0.642 — a gap that is
+either the M1 signal or a convergence difference, and the curve is what tells
+them apart. `PROBE_EPOCHS` is then set where the *slowest* of the three
+flattens. The tag matters: an untagged 40-epoch run
 would occupy the `gelt`/T2/ens0/seed0 grid cell, which part 3 would then skip,
 leaving one cell at a different budget from the other 71 — a silent,
 uninterpretable inhomogeneity. `PROBE_EPOCHS` for the whole grid is set from
@@ -465,9 +498,13 @@ convolution and every ΔR² is a statement about optimisation.
   R-D's interpretability and is written down as one. The 3e−2 crashes were a
   missing-checkpoint bug in `train_probe.py`, now fixed — it was discarding
   precisely the runs R-F counts.
-- Next: chase `lcnn_norm` to 1e−4, re-run the two 3e−2 cells now that they
-  record instead of crash, then the 40-epoch `_budget` run against §3.2's 0.62
-  ceiling, then parts 2–4.
+- **2026-09-15, part 1 settled.** `lcnn_norm` brackets at 3e−4 (1e−3 → 0.985,
+  3e−4 → 0.951, 1e−4 → 0.987); the re-run 3e−2 cells recorded as diverged
+  instead of crashing. Final rates: 1e−2 / 1e−2 / 1e−2 / 1e−3 / 3e−4. R-F's
+  ledger at matched rates is **0 of 15 against 4 of 10**, and GELT's optimum is
+  the rate where both L-CNN arms die.
+- Next: three 40-epoch `_budget` runs (`gelt`, `frozen`, `lcnn`) against §3.2's
+  0.62 ceiling, then parts 2–4 at whatever budget the slowest of them needs.
 
 ### Reproducing the smoke test
 
