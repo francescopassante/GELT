@@ -52,6 +52,10 @@ or "removed in the 2026-09-09 cleanup", that is where it went.
   M2 directly. §5's pre-flight rule is the cheap gate that stopped topology for
   ~4 h instead of ~60–100: **measure the best classical method at the
   architecture's own reach before building any training code.**
+- `notes/m1_probe_status.md` — **the plain-language orientation for the M1
+  probe: read it before `m1_probe.md`.** What is being tested and why, the
+  arms and targets in one table each, the findings so far, what is running,
+  what to run when it finishes, and the five things not to re-break.
 - `notes/m1_probe.md` — **attempt 3, built and pre-flighted 2026-09-15, not yet
   run.** The confound `where_attention_can_win.md` §1 missed: GELT and the
   matched L-CNN differ in *two* things (input-dependent offset weights **and**

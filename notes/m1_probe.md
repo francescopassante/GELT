@@ -1,5 +1,8 @@
 # The M1 probe — does input-dependent offset weighting pay?
 
+> **New to this? Read `notes/m1_probe_status.md` first** — the plain-language
+> orientation: what is being tested, what has been found, what is running.
+
 **Status (2026-09-15): built, pre-flight passed on both production ensembles,
 grid not yet run.** Everything below
 labelled *measured* was measured; §4's readings are pre-registered and §5's
