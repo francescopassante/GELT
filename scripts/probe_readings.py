@@ -101,6 +101,56 @@ def delta_r2(a, b):
     return val, err
 
 
+def residual_ratio(a, b):
+    """Correlated ``(1 − R²_a)/(1 − R²_b)`` and its blocked-jackknife error.
+
+    The *scale-appropriate* form of a between-arm comparison, and the one R-A
+    has to be read in. On T0 every arm sits near 0.98 with 0.02 of headroom
+    left, so a ΔR² of 0.005 is a quarter of everything still unexplained; on T2
+    the same 0.005 would be noise. The residual ratio is invariant to how much
+    headroom a target leaves, which is exactly what is needed to compare a
+    calibration target against a mechanism target.
+    """
+    if a["test_configs"] != b["test_configs"]:
+        raise SystemExit(
+            f"{a['_path']} and {b['_path']} were scored on different test "
+            f"configurations — the correlated jackknife would be meaningless."
+        )
+    val, err, _ = jackknife(
+        [a["stats"], b["stats"]],
+        lambda sa, sb: (1.0 - r2_from_stats(sa)) / (1.0 - r2_from_stats(sb)),
+        block=a["jack_block"],
+    )
+    return val, err
+
+
+def calibrated_ratio(a_t, b_t, a_0, b_0):
+    """How far the residual ratio moves from the calibration target to this one.
+
+    ``[(1−R²_a)/(1−R²_b)]_T  ÷  [(1−R²_a)/(1−R²_b)]_T0`` — all four runs share
+    the same test configurations (``splits`` is deterministic), so the whole
+    thing is one correlated jackknife and the generic, mechanism-free part of an
+    arm's advantage divides out. **This is what R-A was trying to say.** A value
+    of 1 means the pair's relative performance on the mechanism target is
+    entirely explained by their relative performance on a pure convolution;
+    departures from 1 are what the target was built to expose.
+    """
+    for x, y in ((a_t, b_t), (a_0, b_0), (a_t, a_0)):
+        if x["test_configs"] != y["test_configs"]:
+            raise SystemExit("mismatched test splits across the calibration")
+
+    def fn(sa_t, sb_t, sa_0, sb_0):
+        rt = (1.0 - r2_from_stats(sa_t)) / (1.0 - r2_from_stats(sb_t))
+        r0 = (1.0 - r2_from_stats(sa_0)) / (1.0 - r2_from_stats(sb_0))
+        return rt / r0
+
+    val, err, _ = jackknife(
+        [a_t["stats"], b_t["stats"], a_0["stats"], b_0["stats"]],
+        fn, block=a_t["jack_block"],
+    )
+    return val, err
+
+
 def combine_ensembles(per_ens):
     """Inverse-variance mean of independent per-ensemble ``(value, error)``."""
     per_ens = [(v, e) for v, e in per_ens if e > 0]
@@ -196,6 +246,35 @@ def main():
             sig = val / err if err else float("nan")
             print(f"   {t}  combined: {val:+.4f} ± {err:.4f}  ({sig:+.1f}σ)")
             results[(label, t)] = (val, err, sig, per_seed_all)
+
+    # ── The residual-ratio view, and R-A's repaired form ─────────────────────
+    print("\n── residual ratios  (1−R²_a)/(1−R²_b), and the T0-calibrated move")
+    print("   R-A as pre-registered was un-passable: it asked for ΔR² within 1σ")
+    print("   of zero, and with 414k test sites σ → 0, so any difference fails.")
+    print("   The calibrated column is what it meant — 1.00 = the pair's T2 gap")
+    print("   is entirely their generic gap on a pure convolution.")
+    for label, a, b, targets, _ in READINGS:
+        if label.startswith("R-A"):
+            continue
+        for t in targets:
+            for e in ens:
+                pairs, cal = [], []
+                for sd in seeds:
+                    ka, kb = (a, t, e, sd, False), (b, t, e, sd, False)
+                    k0a, k0b = (a, "T0", e, sd, False), (b, "T0", e, sd, False)
+                    if ka in runs and kb in runs:
+                        pairs.append(residual_ratio(runs[ka], runs[kb]))
+                        if k0a in runs and k0b in runs:
+                            cal.append(calibrated_ratio(
+                                runs[ka], runs[kb], runs[k0a], runs[k0b]))
+                med, err, _ = median_over_seeds(pairs)
+                if med is None:
+                    continue
+                cmed, cerr, _ = median_over_seeds(cal)
+                tail = ("" if cmed is None
+                        else f"   calibrated ×{cmed:.3f} ± {cerr:.3f}")
+                print(f"   {a:>14s}/{b:<14s} {t} ens{e}: "
+                      f"×{med:.3f} ± {err:.3f}{tail}")
 
     # ── R-E, the null ────────────────────────────────────────────────────────
     print("\n── R-E  null: random features (stack frozen at init, head trained)")

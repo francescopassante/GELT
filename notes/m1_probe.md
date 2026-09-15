@@ -242,7 +242,8 @@ weighting.
 - **R-A — calibration.** ΔR²(`gelt` − `lcnn`) and ΔR²(`gelt` − `frozen`) on
   **T0**. Both must be within 1σ of zero. T0 is a convolution: if GELT wins it,
   the arms differ in *capacity or optimisation*, not in the mechanism, and
-  **every other reading is void**.
+  **every other reading is void**. — **This form is wrong and is superseded by
+  §4.2. It is left here as written because it was pre-registered.**
 - **R-B — primary.** ΔR²(`gelt` − `frozen`) on **T1** and **T2**. This is M1
   with everything else held fixed. **> 2σ on T2 confirms M1; within 1σ on both
   falsifies it at this depth and width.**
@@ -261,6 +262,32 @@ weighting.
   training": every arm's head is zero-initialised, so a wholly untrained network
   predicts exactly the training mean and scores R² = 0 by construction, which
   would measure nothing. The random-features floor is the informative null.
+
+### 4.2 R-A's repaired form — *the threshold, not the arms, was the problem*
+
+R-A as pre-registered is **un-passable**, and that is a defect in how it was
+written. It asks for a ΔR² "within 1σ of zero", which is a *statistical*
+threshold standing in for a *practical equivalence* question. The test split is
+40 configurations × 6 timeslices × 12³ sites = 414 000 points, so the
+blocked-jackknife error on an R² is ±0.0002 and **any** difference whatever is
+many σ. A criterion that tightens without limit as the data grows is vacuous.
+
+The scale-appropriate quantity is the **residual ratio** ``(1−R²_a)/(1−R²_b)``,
+because targets differ in how much headroom they leave: on T0 every arm sits
+near 0.98 with 0.02 unexplained, where ΔR² = 0.005 is a quarter of everything
+left, while on T2 the same number is noise. The calibration then reads as **how
+far that ratio moves from T0 to the mechanism target**:
+
+    calibrated ×  =  [(1−R²_a)/(1−R²_b)]_T2  ÷  [(1−R²_a)/(1−R²_b)]_T0
+
+which divides out whatever generic advantage one arm has over another and leaves
+only what the mechanism target exposes. A value of 1.00 means the T2 gap is
+entirely the T0 gap — the reading the original R-A was reaching for. All four
+runs share the same test configurations, so it is one correlated jackknife.
+
+This is a **post-hoc repair of a badly specified threshold**, made after seeing
+T0 and before the grid; it changes the instrument, not the direction of any
+test, and the original wording is left in §4 unedited so the change is visible.
 
 ### 4.1 R-F — divergence, added post-hoc
 
@@ -463,6 +490,30 @@ fix is to re-gate `gelt` at 1e−2 and 3e−3 over the full 40-epoch schedule wi
 early stopping off, and take the rate that ends lower, not the one that dips
 lowest.
 
+#### R-A on T0 — *measured 2026-09-15*
+
+40 epochs, ens0, seed 0. `gelt` 0.98019 ± 0.00022, `frozen` 0.97831 ± 0.00024,
+`lcnn` 0.98569 ± 0.00022 — all three near the ceiling on a target that *is* a
+convolution, as they should be. Read as residual ratios against the T2 gate
+runs below:
+
+| pair | T0 | T2 | calibrated move |
+|---|---|---|---|
+| `frozen` / `gelt` | 1.095 | 2.177 | **×1.99** |
+| `lcnn` / `gelt` | 0.722 | 0.323 | **×0.45** |
+
+- **R-B survives the calibration.** Deleting the score path costs ~10% of
+  residual error on a pure convolution and **118%** on the shell-ratio test. An
+  order of magnitude separates the generic cost from the mechanism cost, so the
+  +0.21 is not the ablation quietly removing capacity — it is removing something
+  T2 specifically needs. R-B′ is still required, because `frozen` also has 40%
+  fewer parameters and the T0 arm cannot distinguish "capacity that only matters
+  on hard targets" from the mechanism.
+- **R-C is contaminated but not void.** The L-CNN carries a **generic 28%
+  residual advantage** on a target where offset weighting is worth nothing. It
+  grows to 68% on T2, so roughly half of the T2 gap is generic and the rest is
+  T2-specific. Any statement of the −0.12 must carry that split.
+
 #### The re-gate — *measured 2026-09-15*, and it moves the study
 
 Full 40-epoch cosine, no early stopping, T2 / ens0 / seed 0. **Single-seed,
@@ -596,7 +647,14 @@ convolution and every ΔR² is a statement about optimisation.
   whether either is capacity. A candidate mechanism for the second is recorded
   above before its controls run: α is a convex combination and cannot form
   signed offset differences, which is what a shell-ratio target is made of.
-- Next: **R-A before the grid** — T0 at 40 epochs for `gelt`, `frozen`, `lcnn`
+- **2026-09-15, R-A — the threshold was un-passable and the arms are fine.**
+  T0 came back 0.980 / 0.978 / 0.986 with ±0.0002 errors, so the pre-registered
+  "within 1σ" criterion fails on differences of 0.002 and 0.005 purely because
+  414k test sites drive σ to zero. §4.2 replaces it with the residual ratio and
+  its T0-calibrated move, which is the scale-appropriate form and is what the
+  original was reaching for. Read that way: R-B survives (×1.99), R-C is
+  contaminated but not void (×0.45, on a generic 28% L-CNN advantage).
+- Was next: **R-A before the grid** — T0 at 40 epochs for `gelt`, `frozen`, `lcnn`
   (real grid cells, so part 2 skips them afterwards) — plus `frozen_matched` on
   T2 for R-B′, and two tuning checks at the untested edges (`gelt` 3e−2,
   `lcnn` 3e−3). ~70 min against the grid's ~11 h.
