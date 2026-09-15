@@ -262,6 +262,22 @@ weighting.
   predicts exactly the training mean and scores R² = 0 by construction, which
   would measure nothing. The random-features floor is the informative null.
 
+### 4.1 R-F — divergence, added post-hoc
+
+**Not pre-registered.** It was added after part 1's sweep (§8) showed both
+L-CNN arms blowing up at a learning rate at which no GELT-family arm did. The
+statistic: a run whose *best* validation loss exceeds 10× the trivial
+predictor's, which on a standardised target is an absolute threshold (predicting
+the training mean scores exactly 1.0), recorded per run as `diverged` and
+counted per architecture family by `probe_readings.py`.
+
+It is confirmatory rather than exploratory only because
+`notes/lcnn_shootout.md` §9.2's **3-of-9 vs 0-of-14** is the prior and M2 is the
+mechanism that predicts it. It is a **count over a non-uniform mix of learning
+rates, never a probability**, and it must not be quoted as one: the sweep
+deliberately visits rates chosen to fail. What it can say is whether the two
+families fail at the same places.
+
 ---
 
 ## 5. The pre-registered sentence
@@ -335,6 +351,50 @@ T2 is the primary target and T1 is the position-only supporting reading.
 
 ## 8. Build log
 
+### The part-1 sweep — *measured 2026-09-15, V100*
+
+T2 / ens0 / seed 0, 6 epochs, each a complete cosine schedule annealed to zero
+at its own rate. Best validation MSE on the standardised target (the trivial
+predictor scores 1.0):
+
+| arm | 1e−2 | 3e−3 | 1e−3 |
+|---|---|---|---|
+| `gelt` | **0.642** | 0.732 | 0.810 |
+| `frozen` | **0.798** | 0.863 | 0.904 |
+| `frozen_matched` | **0.821** | 0.949 ‡ | 0.893 |
+| `lcnn` | **3.2 × 10²⁰** | 0.989 | **0.712** |
+| `lcnn_norm` | **6.7 × 10¹⁷** | 0.988 | **0.985** |
+
+‡ best at epoch 1 — it got worse after the first epoch and never recovered.
+
+**Three readings, and two of them stop the grid from starting.**
+
+1. **Neither family's optimum is bracketed.** Every GELT-family arm is monotone
+   in the learning rate and best at the *top* edge of the grid; both L-CNN arms
+   are best at the *bottom* edge. An unbracketed optimum is the same defect part
+   1 exists to prevent — "a losing arm at another arm's learning rate is
+   uninterpretable" — so the sweep is extended (`PROBE_SWEEP_LRS`) with 3e−2 and
+   3e−4 before anything else runs. Running all five arms at both is a few
+   minutes of waste and documents where the blow-up boundary sits.
+2. **Six epochs does not converge, and the grid's twenty may not either.** Every
+   run but one improved right up to its final epoch, and GELT's 0.642 is
+   R²_val ≈ 0.36 against a linear ceiling of **0.62** (§3.2). *If the arms land
+   below a five-parameter radial convolution at twenty epochs, every ΔR² between
+   them is a statement about optimisation, not about the mechanism.* One
+   20-epoch GELT run on T2/ens0/seed0 at the chosen rate is the gate — it is a
+   grid cell, so the grid skips it afterwards and it costs nothing. §3.2's
+   ceiling is the number it has to clear.
+3. **Both L-CNN arms diverged at 1e−2 and no GELT-family arm did** (0 of 3
+   against 2 of 2, at the rate where each family's own optimum sits or sits just
+   past). `lcnn_norm` blew up **480× less** than `lcnn` — bounding the
+   aggregation over offsets bounds the damage without preventing it, which is
+   what it should do, since it bounds neither the L-Bilin degree growth nor the
+   head. This is M2 turning up uninvited for the fourth time. It is *not* the
+   pre-registered R-D reading, which is an accuracy difference; it became R-F
+   (§4.1), post-hoc and labelled.
+
+
+
 - **2026-09-15** — WP-A landed (`alpha_mode` in `GEMHSA`/`GELT`,
   `normalize_shifts` in `LConv`/`LCB`/`LCNN`), 9 new tests in
   `tests/test_blocks.py`, 2 in `tests/test_lcnn.py`. WP-B landed
@@ -356,7 +416,12 @@ T2 is the primary target and T1 is the position-only supporting reading.
   ens1 agreeing inside their errors. The full-ball and radial linear filters are
   indistinguishable, so the M1-free ceiling is a five-parameter object. Nothing
   was retuned on the strength of it.
-- Next: `probe_batch.sh` part 1, the per-arm LR sweep.
+- **2026-09-15, part 1 — the sweep does not clear the grid to start** (§8).
+  Neither family's optimum is bracketed, six epochs converges nothing, and both
+  L-CNN arms diverged where no GELT arm did. Extending the grid, then the
+  training-budget gate, then the runs.
+- Next: extend the sweep (`PROBE_SWEEP_LRS="3e-2 3e-4"`), then one 20-epoch GELT
+  run against §3.2's 0.62 ceiling, then parts 2–4.
 
 ### Reproducing the smoke test
 

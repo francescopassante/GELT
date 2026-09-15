@@ -60,6 +60,11 @@ ENSEMBLES="${PROBE_ENSEMBLES:-0 1}"
 SEEDS="${PROBE_SEEDS:-0 1 2}"
 EPOCHS="${PROBE_EPOCHS:-20}"
 SWEEP_EPOCHS="${PROBE_SWEEP_EPOCHS:-6}"
+# The sweep grid. **An arm whose best LR sits at an edge of this list is not
+# bracketed**, and running the grid on it would be the same defect part 1 exists
+# to prevent — so extend and re-run part 1 (finished points are skipped):
+#   PROBE_PARTS=1 PROBE_SWEEP_LRS="3e-2 3e-4" bash scripts/probe_batch.sh
+SWEEP_LRS="${PROBE_SWEEP_LRS:-1e-2 3e-3 1e-3}"
 # Per-arm learning rates for parts 2–5, set from part 1's val curves. The
 # defaults are GELT's glueball LR for every arm, which is exactly the situation
 # part 1 exists to fix — do not run the grid on them without reading the sweep.
@@ -147,8 +152,9 @@ fi
 # ── part 1: the per-arm LR sweep ─────────────────────────────────────────────
 if wants 1; then
   echo "[$(stamp)] ══ part 1: LR sweep on T2 / ens0 / seed 0, ${SWEEP_EPOCHS} epochs"
+  echo "[$(stamp)]    grid: ${SWEEP_LRS}"
   for ARM in gelt frozen lcnn lcnn_norm frozen_matched; do
-    for SLR in 1e-2 3e-3 1e-3; do
+    for SLR in ${SWEEP_LRS}; do
       TAG="_sweep_lr${SLR}"
       run_phase "probe_sweep_${ARM}_lr${SLR}" \
         "results/m1_probe/probe_${ARM}_T2_ens0_init0${TAG}_stats.pt" \
@@ -157,7 +163,9 @@ if wants 1; then
         --lr="${SLR}" --run-tag="${TAG}"
     done
   done
-  echo "[$(stamp)]    compare each arm's best val, then run"
+  echo "[$(stamp)]    grep -H 'best epoch' logs/probe_sweep_*.log"
+  echo "[$(stamp)]    Check each arm's winner is NOT at an edge of the grid"
+  echo "[$(stamp)]    before believing it. Then run"
   echo "[$(stamp)]    PROBE_PARTS=2,3,4 PROBE_LR_GELT=… PROBE_LR_FROZEN=… PROBE_LR_LCNN=… bash scripts/probe_batch.sh"
 fi
 

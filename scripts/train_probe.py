@@ -81,6 +81,14 @@ if TARGET not in TARGETS:
 if RUN_TAG and not RUN_TAG.startswith("_"):
     raise SystemExit(f"PROBE_RUN_TAG must start with '_' (got {RUN_TAG!r})")
 
+# A run whose *best* validation loss is this much worse than the trivial
+# predictor has diverged. The target is standardised, so predicting the training
+# mean scores exactly 1.0 and the threshold is absolute, not relative to some
+# other run — which is what makes it a statistic rather than a ranking.
+# Recorded per run because M2 is a failure-rate property, not an accuracy one
+# (notes/where_attention_can_win.md §7); reading R-F in notes/m1_probe.md.
+DIVERGENCE_VAL = env_float("PROBE_DIVERGENCE_VAL", 10.0)
+
 OUT_DIR = "results/m1_probe"
 # Every knob that changes the result is in the name, so no run can overwrite
 # another — the same rule train_glueball.py's artifact names follow.
@@ -200,7 +208,10 @@ def main():
     model.load_state_dict(torch.load(checkpoint, map_location=device))
     test_loss, stats = run_split(model, arch, U3, y, te, device, per_config=True)
     r2, err, _ = jackknife(stats, r2_from_stats)
-    print(f"\nbest epoch {best_epoch + 1} (val {best_val:.5f})")
+    diverged = not (best_val < DIVERGENCE_VAL)  # not (<) also catches nan
+    print(f"\nbest epoch {best_epoch + 1} (val {best_val:.5f})"
+          + (f"  ** DIVERGED (> {DIVERGENCE_VAL:g}, the trivial predictor scores "
+             f"1.0) **" if diverged else ""))
     print(f"test MSE {test_loss:.5f}   R² = {r2:+.4f} ± {err:.4f} "
           f"(blocked jackknife, block {JACK_BLOCK} configs)")
 
@@ -212,6 +223,7 @@ def main():
         "ensemble_seed": ENSEMBLE_SEED, "init_seed": INIT_SEED, "run_tag": RUN_TAG,
         "lr": LR, "weight_decay": WEIGHT_DECAY, "epochs_run": len(history),
         "best_epoch": best_epoch, "best_val": best_val, "history": history,
+        "diverged": diverged, "divergence_val": DIVERGENCE_VAL,
         "target_mu": mu, "target_sigma": sigma,
         "n_configs": N_CONFIGS, "n_slices": N_SLICES,
         "test_configs": te.tolist(), "jack_block": JACK_BLOCK,
@@ -219,7 +231,8 @@ def main():
     }, dump)
     print(f"wrote {dump}")
     print(json.dumps({"arm": ARM, "target": TARGET, "init": INIT_SEED,
-                      "null": NULL, "r2": round(r2, 5), "err": round(err, 5)}))
+                      "null": NULL, "r2": round(r2, 5), "err": round(err, 5),
+                      "diverged": diverged}))
 
 
 if __name__ == "__main__":

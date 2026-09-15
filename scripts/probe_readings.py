@@ -207,11 +207,44 @@ def main():
         if any("—" not in c for c in cells):
             print(f"{arm:16s}" + "".join(cells))
 
+    divergence_report(DIR)
+
     os.makedirs("results/m1_probe", exist_ok=True)
     out = f"results/m1_probe/readings{OUT_TAG}.pt"
     torch.save({"table": table, "results": results, "runs": sorted(runs)}, out)
     print(f"\nwrote {out}")
     write_tex(results, f"results/m1_probe/readings{OUT_TAG}.tex")
+
+
+def divergence_report(directory):
+    """R-F — the failure rate, per architecture family, over *every* run.
+
+    **Post-hoc, and labelled as such** (``notes/m1_probe.md`` §4.1): it was added
+    after the part-1 sweep showed both L-CNN arms blowing up at a learning rate
+    at which no GELT-family arm did. It is confirmatory rather than exploratory
+    only because ``notes/lcnn_shootout.md`` §9.2's 3-of-9 vs 0-of-14 is the
+    prior.
+
+    Sweep runs are *included* here, unlike everywhere else in this script. A
+    divergence is a divergence whatever the tag, and excluding the short runs
+    would throw away most of the evidence — at the cost that the rate is over a
+    non-uniform mix of learning rates, so it is a count, never a probability.
+    """
+    rows = {}
+    for path in sorted(glob.glob(os.path.join(directory, "probe_*_stats.pt"))):
+        d = torch.load(path, map_location="cpu", weights_only=False)
+        if "diverged" not in d:  # written before the flag existed
+            continue
+        fam = "GELT family" if d["arch"] == "gelt" else "L-CNN family"
+        hit, tot = rows.get(fam, (0, 0))
+        rows[fam] = (hit + bool(d["diverged"]), tot + 1)
+    if not rows:
+        return
+    print("\n── R-F  divergence (post-hoc): best val worse than 10× the trivial "
+          "predictor")
+    print("   counts over every run on disk, sweep runs included — not a rate")
+    for fam, (hit, tot) in sorted(rows.items()):
+        print(f"   {fam:14s} {hit} of {tot}")
 
 
 def write_tex(results, path):
