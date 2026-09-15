@@ -145,6 +145,27 @@ class GEMHSA(nn.Module):
     combination, or the ablation would remove boundedness (M2) at the same time
     and re-confound the two candidate mechanisms
     (``notes/where_attention_can_win.md`` §1).
+
+    Two further modes decompose what the softmax *else* does. Softmax makes α
+    both input-dependent **and** a convex combination — non-negative and summing
+    to one — so a layer can only take weighted *averages* over neighbours and can
+    never form a signed difference between two offsets in one aggregation. A
+    matched L-CNN's L-Conv weights are signed and unbounded and build such
+    differences directly, which is the standing hypothesis for why it beats GELT
+    on a shell-*ratio* target (``notes/m1_probe.md`` §8).
+
+    * ``"signed"`` — ``α = score / n_offsets``: the same input-dependent score,
+      with the softmax removed. Signed and unbounded, i.e. L-Conv-like
+      aggregation that still reads the input. **Identical parameter count to
+      ``"softmax"``** — it is one nonlinearity, not a different model.
+    * ``"signed_bounded"`` — ``α = tanh(score) / n_offsets``: signed but bounded.
+
+    The three together separate the two constraints: ``softmax`` → ``signed``
+    changes sign *and* boundedness, ``softmax`` → ``signed_bounded`` changes only
+    the sign, and ``signed_bounded`` → ``signed`` only the boundedness. The
+    ``1/n_offsets`` is a fixed rescale so all three start at the same output
+    magnitude (softmax weights average ``1/n_offsets``); it is absorbable by the
+    channel mix and changes nothing an optimiser cannot undo.
     """
 
     def __init__(
@@ -163,9 +184,10 @@ class GEMHSA(nn.Module):
         alpha_mode: str = "softmax",
     ):
         super(GEMHSA, self).__init__()
-        if alpha_mode not in ("softmax", "frozen"):
+        if alpha_mode not in ("softmax", "frozen", "signed", "signed_bounded"):
             raise ValueError(
-                f"alpha_mode must be 'softmax' or 'frozen', got {alpha_mode!r}"
+                f"alpha_mode must be 'softmax', 'frozen', 'signed' or "
+                f"'signed_bounded', got {alpha_mode!r}"
             )
         self.alpha_mode = alpha_mode
         self.gaugegroup = gaugegroup
@@ -272,9 +294,10 @@ class GEMHSA(nn.Module):
         # RoPE only exists to make the *score* offset-selective, so the frozen-α
         # arm has no use for it: its offset selectivity is the logit table. The
         # geometry above (_rope_disp, n_pairs) is registered either way — it is a
-        # buffer, costs nothing, and keeps the two modes' shape bookkeeping the
-        # same.
-        if self.alpha_mode == "softmax":
+        # buffer, costs nothing, and keeps the modes' shape bookkeeping the
+        # same. Every mode that *has* a score keeps the frequencies, which is why
+        # this tests for the one mode that does not.
+        if self.alpha_mode != "frozen":
             self.rope_freq = nn.Parameter(freq)
 
         # Channel augmentation expands
@@ -553,8 +576,8 @@ class GEMHSA(nn.Module):
         score = self.rope_score(Q, K_tilde)
         # score: (B, H, n_off, *Λ)
 
-        # 5. Softmax over offsets.
-        alpha = torch.softmax(score, dim=2)
+        # 5. Score → offset weights (softmax, or one of the signed variants).
+        alpha = self.offset_weights(score)
 
         # 6. Value path.
         bilin = self.value_path(alpha, V_tilde, Q_v)
@@ -562,6 +585,19 @@ class GEMHSA(nn.Module):
         self.stash(score, alpha, Q, Q_v, K_tilde, V_tilde, bilin)
         return bilin
         # return self.alpha_attn * V_weighted + self.alpha_bilin * bilin
+
+    def offset_weights(self, score):
+        """Turn the per-offset score into the weights :meth:`value_path` applies.
+
+        The one line that distinguishes ``"softmax"`` from the two signed modes;
+        see the class docstring for what each is for. ``score`` is
+        ``(B, H, n_off, *Λ)`` and the reduction is over the offset axis, dim 2.
+        """
+        if self.alpha_mode == "softmax":
+            return torch.softmax(score, dim=2)
+        if self.alpha_mode == "signed_bounded":
+            return torch.tanh(score) / self.n_offsets
+        return score / self.n_offsets  # "signed"
 
     def value_path(self, alpha, V_tilde, Q_v):
         """Sum V' over n_off with α weights BEFORE the Q† matmul.
@@ -886,7 +922,9 @@ class GELT(nn.Module):
          ``(B, *Λ)`` for per-site supervision (e.g. ``Re Tr W(R,T,x)/nc``).
 
     ``alpha_mode`` is threaded to every GEMHSA layer: ``"softmax"`` is the
-    architecture, ``"frozen"`` is the M1 ablation (see ``GEMHSA``).
+    architecture, ``"frozen"`` is the M1 ablation, and ``"signed"`` /
+    ``"signed_bounded"`` decompose what the softmax does besides reading the
+    input (see ``GEMHSA``).
     """
 
     def __init__(

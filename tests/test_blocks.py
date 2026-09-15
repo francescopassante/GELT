@@ -139,7 +139,14 @@ def _oracle_forward(blk, W, T):
 
     score = (Q.unsqueeze(3).conj() * K_tilde).sum(dim=(2, -2, -1)).real
     score = score / math.sqrt(blk.d_qkv * nc)
-    alpha = torch.softmax(score, dim=2)
+    # Written out independently of GEMHSA.offset_weights — an oracle that called
+    # the module's own dispatch would not be checking anything.
+    if blk.alpha_mode == "softmax":
+        alpha = torch.softmax(score, dim=2)
+    elif blk.alpha_mode == "signed_bounded":
+        alpha = torch.tanh(score) / blk.n_offsets
+    else:
+        alpha = score / blk.n_offsets
     V_weighted = (
         alpha.unsqueeze(2).unsqueeze(-1).unsqueeze(-1) * V_tilde
     ).sum(dim=3)
@@ -158,6 +165,7 @@ def _oracle_forward(blk, W, T):
     return W + g.unsqueeze(-1).unsqueeze(-1) * W_mix, score, alpha
 
 
+@pytest.mark.parametrize("alpha_mode", ["softmax", "signed", "signed_bounded"])
 @pytest.mark.parametrize(
     "group, dtype, D, R, d_qkv",
     [
@@ -166,14 +174,15 @@ def _oracle_forward(blk, W, T):
         (Z2(), torch.float64, 2, 2, 2),
     ],
 )
-def test_rope_attend_matches_naive_oracle(group, dtype, D, R, d_qkv):
+def test_rope_attend_matches_naive_oracle(group, dtype, D, R, d_qkv, alpha_mode):
     torch.manual_seed(0)
     L, B, C, H = 4, 2, 6, 2
     nc = group.nc
     U = torch.stack([random_links(L, D, group, dtype=dtype) for _ in range(B)])
     T = build_transport_average(U, R, group)
     blk = GEMHSA(
-        group, L, D, R, d_input=C, nhead=H, d_qkv=d_qkv, dtype=dtype
+        group, L, D, R, d_input=C, nhead=H, d_qkv=d_qkv, dtype=dtype,
+        alpha_mode=alpha_mode,
     )
     blk.store_attention = True
 
@@ -695,3 +704,113 @@ def test_gelt_frozen_alpha_gauge_invariant_readout():
     )
     y, y_g = model(X, P), model(X_g, P_g)
     assert torch.allclose(y, y_g, atol=1e-9), (y - y_g).abs().max().item()
+
+
+# ---------------------------------------------------------------------------
+# The signed-α modes (notes/m1_probe.md §8 — decomposing what the softmax does)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("alpha_mode", ["signed", "signed_bounded"])
+@pytest.mark.parametrize("gate", ["relu", "softplus"])
+def test_signed_modes_are_gauge_equivariant_su2(alpha_mode, gate):
+    """Dropping the softmax changes the weights, not the equivariance argument:
+    α is still a real scalar per (head, offset, site) multiplying terms that are
+    each equivariant, and any real linear combination of those is too."""
+    torch.manual_seed(7)
+    L, D, R, C, H, nc = 4, 2, 2, 3, 2, 2
+    gg, dtype = SU(nc), torch.complex128
+
+    U = random_links(L=L, D=D, gaugegroup=gg, dtype=dtype)
+    W = torch.randn(1, C, *([L] * D), nc, nc, dtype=dtype)
+    omega = _unitary_omega(L, D, nc, seed=7)
+
+    T = build_transport_average(U.unsqueeze(0), R=R, gaugegroup=gg)
+    T_g = build_transport_average(
+        link_gauge_transformation(U, omega, gg).unsqueeze(0), R=R, gaugegroup=gg
+    )
+    block = GEMHSA(
+        gaugegroup=gg, L=L, D=D, R=R, d_input=C, nhead=H, d_qkv=4, gate=gate,
+        dtype=dtype, alpha_mode=alpha_mode,
+    ).to(dtype)
+
+    out = block(W, T)
+    out_g = block(local_gauge_transformation(W, omega, gg), T_g)
+    expected = local_gauge_transformation(out, omega, gg)
+    assert torch.allclose(out_g, expected, atol=1e-10), (
+        (out_g - expected).abs().max().item()
+    )
+
+
+@pytest.mark.parametrize("alpha_mode", ["signed", "signed_bounded"])
+def test_signed_modes_are_gauge_equivariant_z2(alpha_mode):
+    torch.manual_seed(3)
+    L, D, R, C, H = 4, 2, 1, 2, 2
+    gg, dtype = Z2(), torch.float64
+
+    U = random_links(L=L, D=D, gaugegroup=gg, dtype=dtype)
+    W = torch.randn(1, C, *([L] * D), 1, 1, dtype=dtype)
+    omega = torch.where(
+        torch.rand(*([L] * D), 1, 1) < 0.5,
+        torch.tensor(-1.0, dtype=dtype),
+        torch.tensor(1.0, dtype=dtype),
+    )
+    T = build_transport_average(U.unsqueeze(0), R=R, gaugegroup=gg)
+    T_g = build_transport_average(
+        link_gauge_transformation(U, omega, gg).unsqueeze(0), R=R, gaugegroup=gg
+    )
+    block = GEMHSA(
+        gaugegroup=gg, L=L, D=D, R=R, d_input=C, nhead=H, d_qkv=2, dtype=dtype,
+        alpha_mode=alpha_mode,
+    )
+    out = block(W, T)
+    out_g = block(local_gauge_transformation(W, omega, gg), T_g)
+    assert torch.allclose(
+        out_g, local_gauge_transformation(out, omega, gg), atol=1e-12
+    )
+
+
+def test_signed_modes_drop_convexity_but_keep_the_input_and_the_budget():
+    """The three properties the decomposition rests on.
+
+    α must actually take both signs (or the mode is a relabelled softmax), it
+    must still depend on the input (or it is a relabelled frozen arm), and the
+    parameter count must be *identical* to the softmax arm — the whole point is
+    that this is one nonlinearity removed, not a different model, so no
+    matched-parameter argument is needed for it at all.
+    """
+    torch.manual_seed(21)
+    L, D, R, B, C, H, nc = 4, 3, 1, 2, 4, 2, 2
+    gg, dtype = SU(nc), torch.complex128
+
+    U = torch.stack([random_links(L, D, gg, dtype=dtype) for _ in range(B)])
+    T = build_transport_average(U, R, gg)
+    W1 = torch.randn(B, C, *([L] * D), nc, nc, dtype=dtype)
+    W2 = torch.randn(B, C, *([L] * D), nc, nc, dtype=dtype)
+
+    def dofs(m):
+        return sum(p.numel() * (2 if p.is_complex() else 1) for p in m.parameters())
+
+    ref = GEMHSA(gg, L, D, R, d_input=C, nhead=H, d_qkv=4, dtype=dtype)
+    for mode in ("signed", "signed_bounded"):
+        blk = GEMHSA(gg, L, D, R, d_input=C, nhead=H, d_qkv=4, dtype=dtype,
+                     alpha_mode=mode)
+        blk.store_attention = True
+        assert dofs(blk) == dofs(ref), mode
+
+        blk(W1, T)
+        a1 = blk._last_alpha.clone()
+        blk(W2, T)
+        a2 = blk._last_alpha
+        assert (a1 < 0).any() and (a1 > 0).any(), f"{mode}: α is single-signed"
+        assert (a1 - a2).abs().max() > 1e-9, f"{mode}: α ignores the input"
+        # …and it is *not* a convex combination, which is what separates these
+        # two modes from both "softmax" and "frozen".
+        assert (a1.sum(dim=2) - 1.0).abs().max() > 1e-3, mode
+
+    # "signed_bounded" is bounded by construction, "signed" is not constrained.
+    blk = GEMHSA(gg, L, D, R, d_input=C, nhead=H, d_qkv=4, dtype=dtype,
+                 alpha_mode="signed_bounded")
+    blk.store_attention = True
+    blk(W1, T)
+    assert blk._last_alpha.abs().max() <= 1.0 / blk.n_offsets + 1e-12

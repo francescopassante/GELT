@@ -44,6 +44,10 @@ inside a ball of radius 4 around each site, which both networks can see.
 | `frozen_matched` | same, widened back to GELT's budget | 14505 | 1e−2 |
 | `lcnn` | matched-parameter L-CNN | 14801 | 1e−3 |
 | `lcnn_norm` | L-CNN with bounded offset weights | 15077 | 3e−4 |
+| `signed` | GELT, softmax dropped — weights may go negative | 15405 | sweeping |
+| `signed_bounded` | same but bounded (tanh instead of softmax) | 15405 | sweeping |
+
+The last two were added late, to answer section 4's last bullet. See section 5b.
 
 ## 4. What we have found so far
 
@@ -80,6 +84,30 @@ the network frozen at initialisation. It writes one small file per run to
 `results/m1_probe/` and logs to `logs/`. It skips anything already done, so it
 is safe to kill and restart.
 
+## 5b. The side experiment (second GPU, ~6 h)
+
+GELT's weights are non-negative and sum to 1, so a layer can only *average*
+neighbours — it can never subtract one from another. T2 is built from exactly
+such subtractions, which is the best guess for why the L-CNN wins it. The two
+new arms drop that constraint while keeping everything else, **at exactly the
+same parameter count as `gelt`**, so there is no capacity argument to make.
+
+```bash
+CUDA_VISIBLE_DEVICES=1 PROBE_PARTS=6 PROBE_EPOCHS=40 bash scripts/probe_batch.sh
+grep -H "best epoch\|R² =" logs/probe_sweep40_*.log     # pick the rates
+CUDA_VISIBLE_DEVICES=1 PROBE_PARTS=7 PROBE_EPOCHS=40 \
+  PROBE_LR_SIGNED=… PROBE_LR_SIGNED_BOUNDED=… bash scripts/probe_batch.sh
+```
+
+It shares no output files with the main grid, so the two can run at once. What
+it answers:
+
+- if `signed_bounded` ≈ `lcnn` (0.94), the L-CNN's win was the *sign* constraint
+  and nothing else — a one-line change to GELT closes it;
+- if `signed` is better than `signed_bounded` but fails more often at high
+  learning rates, then boundedness is a price GELT pays for robustness, measured
+  inside one architecture instead of across two.
+
 ## 6. When it finishes
 
 ```bash
@@ -95,6 +123,8 @@ Offline, seconds, no GPU. Prints every reading with proper error bars. The names
 - **R-B′** — `gelt` vs `frozen_matched`. Is R-B just parameters?
 - **R-C** — `gelt` vs `lcnn`. The thesis-relevant number, but confounded.
 - **R-D / R-F** — the two M2 readings: accuracy, and failure rate.
+- **R-G / R-H** — the side experiment: is the L-CNN's win the sign constraint,
+  and what does boundedness cost inside GELT.
 - **R-E** — the untrained-network floor.
 
 ## 7. Things fixed along the way — do not re-break them

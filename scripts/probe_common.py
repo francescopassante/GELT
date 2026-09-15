@@ -228,6 +228,14 @@ ARMS = {
     "frozen_matched": dict(arch="gelt", alpha_mode="frozen", d_model=16, d_qkv=10),
     "lcnn": dict(arch="lcnn", c_hidden=6, normalize_shifts=False),
     "lcnn_norm": dict(arch="lcnn", c_hidden=6, normalize_shifts=True),
+    # The two signed arms (notes/m1_probe.md §8). Identical geometry and
+    # therefore identical parameter count to `gelt` — they are one nonlinearity
+    # removed, so "matched-parameter" is not an argument that has to be made for
+    # them, it is arithmetic.
+    "signed": dict(arch="gelt", alpha_mode="signed", d_model=16, d_qkv=6),
+    "signed_bounded": dict(
+        arch="gelt", alpha_mode="signed_bounded", d_model=16, d_qkv=6
+    ),
 }
 DOF_TOLERANCE = 0.15
 

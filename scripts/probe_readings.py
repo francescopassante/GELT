@@ -52,6 +52,13 @@ READINGS = [
      "the thesis number; carries the transport confound, read through R-B"),
     ("R-D  M2 control", "lcnn_norm", "lcnn", ("T1", "T2"),
      "if bounding the offset weights closes a gap, the effect was M2"),
+    # Post-hoc (notes/m1_probe.md §8): added after the gate found the matched
+    # L-CNN beating GELT on T2. Softmax does two things at once; these split
+    # them. Identical parameter count to `gelt` in both cases.
+    ("R-G  sign constraint", "signed_bounded", "gelt", ("T2",),
+     "α signed but still bounded: does dropping non-negativity alone recover it"),
+    ("R-H  boundedness", "signed", "signed_bounded", ("T2",),
+     "α signed and unbounded vs signed and bounded: the M2 cost, inside GELT"),
 ]
 
 

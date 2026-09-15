@@ -292,6 +292,48 @@ This is a **post-hoc repair of a badly specified threshold**, made after seeing
 T0 and before the grid; it changes the instrument, not the direction of any
 test, and the original wording is left in §4 unedited so the change is visible.
 
+### 4.3 R-G and R-H — decomposing the softmax, added post-hoc
+
+**Not pre-registered.** Added 2026-09-15 after the gate found the matched L-CNN
+beating GELT on T2 by 0.12, half of it generic (§4.2). The hypothesis recorded
+at the time: **softmax does two things at once.** It makes α *input-dependent* —
+worth +0.21, which R-B/R-B′ establish — and it makes α a *convex combination*,
+non-negative and summing to one, so a GEMHSA layer can only take weighted
+averages over neighbours and can never form a signed difference between two
+offsets in a single aggregation. T2 is a shell-*ratio* test, i.e. exactly such a
+difference, and an L-Conv's signed unbounded ω builds one directly.
+
+Two arms keep the input-dependence and drop the convexity, at **identical
+parameter count to `gelt`** (15405 both) — one nonlinearity removed, not a
+different model, so no matched-parameter argument is needed for either:
+
+- `signed` — `α = score / n_offsets`. Signed and unbounded.
+- `signed_bounded` — `α = tanh(score) / n_offsets`. Signed, still bounded.
+
+The three modes separate the two constraints cleanly, because each step changes
+exactly one thing:
+
+| | non-negative | bounded | input-dependent |
+|---|---|---|---|
+| `softmax` | yes | yes | yes |
+| `signed_bounded` | **no** | yes | yes |
+| `signed` | no | **no** | yes |
+| `frozen` | yes | yes | **no** |
+
+- **R-G — the sign constraint.** ΔR²(`signed_bounded` − `gelt`) on T2. If
+  dropping non-negativity alone recovers most of the 0.12, the L-CNN's edge is
+  the convex constraint and not its transport or its bilinear stack.
+- **R-H — boundedness, inside GELT.** ΔR²(`signed` − `signed_bounded`) on T2,
+  *and* their R-F failure counts across the sweep. This is the M2 trade-off
+  measured inside one architecture rather than across two: if `signed` is more
+  accurate but fails more often, boundedness is a price paid for robustness, and
+  the thesis can say so with both halves measured on the same model.
+
+R-D was supposed to carry the M2 accuracy reading and cannot (§8: `lcnn_norm`
+barely learns, and bounding the L-Conv's offsets does not bound the L-CB stack's
+degree growth). **R-H is its replacement**, and a better one — it varies
+boundedness with everything else, transport included, held fixed.
+
 ### 4.1 R-F — divergence, added post-hoc
 
 **Not pre-registered.** It was added after part 1's sweep (§8) showed both
@@ -732,6 +774,13 @@ convolution and every ΔR² is a statement about optimisation.
   peaks are now recorded for every run.
 - **Next: the grid.** 90 runs, 40 epochs, ~15 h, at 1e−2 / 1e−2 / 1e−2 / 1e−3 /
   3e−4.
+- **2026-09-15, the signed arms built** (§4.3). `alpha_mode="signed"` and
+  `"signed_bounded"` in `GEMHSA`, both at exactly `gelt`'s 15405 DOFs; 13 new
+  tests (the oracle now runs over all three scored modes, equivariance in SU(2)
+  and Z₂, and the three properties the decomposition rests on — α takes both
+  signs, still reads the input, and is no longer a convex combination).
+  `probe_batch.sh` parts 6 and 7 are the sweep and the runs; they touch no cell
+  parts 2–4 produce, so they run on a second GPU alongside the grid.
 - Was next: **R-A before the grid** — T0 at 40 epochs for `gelt`, `frozen`, `lcnn`
   (real grid cells, so part 2 skips them afterwards) — plus `frozen_matched` on
   T2 for R-B′, and two tuning checks at the untested edges (`gelt` 3e−2,

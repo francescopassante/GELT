@@ -49,6 +49,8 @@
 #
 #   PROBE_PARTS=0,1              the gates and the sweep (the default)
 #   PROBE_PARTS=2,3,4            the grid, after the sweep has been read
+#   PROBE_PARTS=6 then 7         the signed-α side experiment (§8); independent
+#                                of 2-4, so it can share the night on a 2nd GPU
 #   PROBE_LR_GELT=… PROBE_LR_FROZEN=… PROBE_LR_LCNN=… PROBE_LR_LCNN_NORM=…
 #                                per-arm learning rates for parts 2+
 #   PROBE_ENSEMBLES="0 1"        which cached ensembles to use
@@ -83,6 +85,8 @@ LR_LCNN="${PROBE_LR_LCNN:-3e-3}"
 # giving the control arm the other arm's rate is exactly the handicap part 1
 # exists to remove. Defaults to LR_LCNN when unset.
 LR_LCNN_NORM="${PROBE_LR_LCNN_NORM:-${LR_LCNN}}"
+LR_SIGNED="${PROBE_LR_SIGNED:-1e-2}"
+LR_SIGNED_BOUNDED="${PROBE_LR_SIGNED_BOUNDED:-${LR_SIGNED}}"
 
 stamp() { date "+%F %T"; }
 wants() { case ",${PARTS}," in *",$1,"*) return 0;; *) return 1;; esac; }
@@ -93,6 +97,8 @@ arm_lr() {
     frozen|frozen_matched) echo "${LR_FROZEN}";;
     lcnn) echo "${LR_LCNN}";;
     lcnn_norm) echo "${LR_LCNN_NORM}";;
+    signed) echo "${LR_SIGNED}";;
+    signed_bounded) echo "${LR_SIGNED_BOUNDED}";;
     *) echo "${LR_GELT}";;
   esac
 }
@@ -229,6 +235,49 @@ if wants 5; then
     for SEED in ${SEEDS}; do
       for TGT in T2 T1; do
         train frozen_matched "${TGT}" "${ENS}" "${SEED}"
+      done
+    done
+  done
+fi
+
+# ── part 6: the signed arms' LR sweep, at the grid's own horizon ─────────────
+# The side experiment of notes/m1_probe.md §8: why does a matched L-CNN beat
+# GELT on a target built to favour attention? The standing hypothesis is that
+# softmax does two things — reads the input (worth +0.21, R-B) and forces a
+# convex combination (a layer can only average neighbours, never subtract one
+# from another, and T2 is a shell *difference*). `signed` and `signed_bounded`
+# keep the first and drop the second, at an identical parameter count.
+#
+# Sweeps at PROBE_EPOCHS, not at 6: a rate chosen on a short anneal does not
+# transfer to a long one, which is the lesson of §8's first budget gate.
+# Independent of parts 2-4, so it can run on a second GPU alongside them:
+#   CUDA_VISIBLE_DEVICES=1 PROBE_PARTS=6 PROBE_EPOCHS=40 bash scripts/probe_batch.sh
+if wants 6; then
+  echo "[$(stamp)] ══ part 6: LR sweep for the signed arms, ${EPOCHS} epochs"
+  for ARM in signed signed_bounded; do
+    for SLR in 3e-2 1e-2 3e-3 1e-3; do
+      TAG="_sweep40_lr${SLR}"
+      run_phase "probe_sweep40_${ARM}_lr${SLR}" \
+        "results/m1_probe/probe_${ARM}_T2_ens0_init0${TAG}_stats.pt" \
+        python -u scripts/train_probe.py --arm="${ARM}" --target=T2 \
+        --ensemble-seed=0 --init-seed=0 --epochs="${EPOCHS}" \
+        --lr="${SLR}" --run-tag="${TAG}"
+    done
+  done
+  echo "[$(stamp)]    grep -H 'best epoch\|R² =' logs/probe_sweep40_*.log"
+  echo "[$(stamp)]    winners must be interior, then run part 7 with"
+  echo "[$(stamp)]    PROBE_LR_SIGNED=… PROBE_LR_SIGNED_BOUNDED=…"
+fi
+
+# ── part 7: the signed arms proper ───────────────────────────────────────────
+# T2 is the reading and T0 is its calibration (§4.2), 3 seeds on ens0. The
+# comparisons are against `gelt`, whose cells parts 2-3 already produce.
+if wants 7; then
+  echo "[$(stamp)] ══ part 7: signed arms on T2 and T0, 3 seeds, ens0"
+  for TGT in T2 T0; do
+    for SEED in ${SEEDS}; do
+      for ARM in signed signed_bounded; do
+        train "${ARM}" "${TGT}" 0 "${SEED}"
       done
     done
   done
