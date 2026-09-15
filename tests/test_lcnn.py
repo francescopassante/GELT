@@ -21,7 +21,7 @@ import torch
 
 from gelt import SU, Z2, link_gauge_transformation, plaquette_tensor, random_links
 from gelt.blocks import GELT
-from gelt.lcnn import LCNN, build_axis_transports
+from gelt.lcnn import LCNN, LConv, build_axis_transports
 
 
 def _real_dofs(model):
@@ -304,3 +304,58 @@ def test_the_kernel_reaches_both_directions():
         Wp[0, :, 0, 0] += 1.0
         moved = (lc(Wp, T) - base).abs().amax(dim=(0, 1, -1, -2)) > 1e-12
         assert {tuple(ix) for ix in moved.nonzero().tolist()} == expected
+
+
+# ---------------------------------------------------------------------------
+# The bounded-offset L-Conv (the M2 control arm, notes/m1_probe.md)
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_shifts_bounds_the_offset_axis_and_preserves_init():
+    """``kernel()`` is the reference ω at init and L1-bounded over offsets after.
+
+    Two properties, both load-bearing for R-D. (i) The reparameterisation is the
+    identity at initialisation, so the arm starts from the reference
+    distribution and only its *trajectory* differs. (ii) After any weight
+    update ``Σ_s |ω̂[i,j,s]|`` is still ``|w_scale[i,j]|`` — the aggregation over
+    offsets is bounded, which is the property the unbounded reference lacks.
+    """
+    torch.manual_seed(4)
+    gg, dtype = SU(2), torch.complex128
+    lc = LConv(gg, c_in=3, c_out=5, D=3, K=2, dtype=dtype, normalize_shifts=True)
+
+    assert torch.allclose(lc.kernel(), lc.w, atol=1e-14)
+
+    with torch.no_grad():
+        lc.w.mul_(7.3)  # any update that changes the row norms
+    l1 = lc.kernel().abs().sum(dim=-1)
+    assert torch.allclose(l1, lc.w_scale.abs().to(l1.dtype), atol=1e-12)
+
+    ref = LConv(gg, c_in=3, c_out=5, D=3, K=2, dtype=dtype)
+    assert not hasattr(ref, "w_scale")
+    with torch.no_grad():
+        ref.w.mul_(7.3)
+    assert torch.allclose(ref.kernel(), ref.w, atol=1e-14)
+
+
+def test_normalized_lcnn_is_still_gauge_invariant():
+    """Bounding ω changes the weights, not the equivariance argument."""
+    torch.manual_seed(11)
+    L, D, K, nc, n_levels = 4, 3, 2, 2, 1
+    gg, dtype = SU(nc), torch.complex128
+
+    U = torch.stack(
+        [random_links(L=L, D=D, gaugegroup=gg, dtype=dtype) for _ in range(2)]
+    )
+    omega = _su2_omega(L, D, nc, seed=11)
+    U_g = torch.stack([link_gauge_transformation(u, omega, gg) for u in U])
+
+    model = LCNN(
+        gaugegroup=gg, L=L, D=D, K=K, c_hidden=5, n_layers=3, dtype=dtype,
+        reduction="none", in_channels=3 * n_levels, normalize_shifts=True,
+    )
+    out = model(_stacked_plaquettes(U, gg, n_levels), build_axis_transports(U, K, gg))
+    out_g = model(
+        _stacked_plaquettes(U_g, gg, n_levels), build_axis_transports(U_g, K, gg)
+    )
+    assert torch.allclose(out_g, out, atol=1e-11)

@@ -137,6 +137,15 @@ class LConv(nn.Module):
     (T·W·T†)†`` and ``T·1·T† = 1``. Transporting the augmented ``2C + 1``
     channels instead would repeat every product twice and transport the
     identity for nothing.
+
+    ``normalize_shifts`` is the **M2 control** of ``notes/m1_probe.md``: it
+    reparameterises ω as ``g[i,j] · ω̂[i,j,s]`` with ``Σ_s |ω̂[i,j,s]| = 1``, so
+    the aggregation *over offsets* is bounded exactly the way a softmax is,
+    while the per-channel magnitude ``g`` stays free — which is also what GELT
+    does (α sums to one over offsets; V and the channel mix carry the scale).
+    It is off by default: the reference L-Conv has unbounded offset weights, and
+    that is the property under test (``notes/where_attention_can_win.md`` §1,
+    M2).
     """
 
     def __init__(
@@ -148,6 +157,7 @@ class LConv(nn.Module):
         K: int,
         dtype: torch.dtype = torch.complex64,
         symmetric: bool = True,
+        normalize_shifts: bool = False,
     ):
         super().__init__()
         self.gaugegroup = gaugegroup
@@ -156,6 +166,7 @@ class LConv(nn.Module):
         self.c_in = c_in
         self.c_out = c_out
         self.symmetric = symmetric
+        self.normalize_shifts = normalize_shifts
         self.c_prime = 2 * c_in + 1  # augmented input width
         # 1 local term + K hops per axis, in one or both orientations.
         self.n_shifts = 1 + D * K * (2 if symmetric else 1)
@@ -164,9 +175,28 @@ class LConv(nn.Module):
         # starts at unit scale regardless of fan-in.
         n_terms = self.c_prime * self.n_shifts
         sigma = 1.0 / math.sqrt(n_terms)
-        self.w = nn.Parameter(
-            torch.randn(c_out, self.c_prime, self.n_shifts, dtype=dtype) * sigma
-        )
+        w = torch.randn(c_out, self.c_prime, self.n_shifts, dtype=dtype) * sigma
+        self.w = nn.Parameter(w)
+        if normalize_shifts:
+            # The free per-channel magnitude, initialised to the L1 norm the
+            # row already has, so the bounded arm's init distribution is the
+            # reference one and only the *reparameterisation* differs.
+            real_dtype = torch.empty(0, dtype=dtype).real.dtype
+            self.w_scale = nn.Parameter(
+                w.abs().sum(dim=-1).to(real_dtype)
+            )
+
+    def kernel(self):
+        """ω as the contraction below should see it.
+
+        The identity with ``self.w`` unless ``normalize_shifts`` is set, in
+        which case the offset axis is L1-normalised and rescaled by the free
+        per-channel magnitude ``w_scale`` — see the class docstring.
+        """
+        if not self.normalize_shifts:
+            return self.w
+        norm = self.w.abs().sum(dim=-1, keepdim=True).clamp_min(1e-12)
+        return self.w / norm * self.w_scale.unsqueeze(-1)
 
     def shifted_terms(self, W, U_transports):
         """The ``n_shifts`` transported copies of ``W``: ``(B, C, S, *Λ, nc, nc)``."""
@@ -210,15 +240,16 @@ class LConv(nn.Module):
         # so both halves are one GEMM and a single dagger of the *output* (c_out
         # channels) instead of one of the input (c_in · n_shifts channels).
         n = self.c_in * self.n_shifts
-        w_S = self.w[:, 1 : 1 + self.c_in].reshape(self.c_out, n)
-        w_Sd = self.w[:, 1 + self.c_in :].conj().reshape(self.c_out, n)
+        w = self.kernel()
+        w_S = w[:, 1 : 1 + self.c_in].reshape(self.c_out, n)
+        w_Sd = w[:, 1 + self.c_in :].conj().reshape(self.c_out, n)
         mixed = torch.matmul(torch.cat([w_S, w_Sd], dim=0), S_flat)
         mixed = mixed.reshape(B, 2 * self.c_out, *spatial, nc, nc)
         out = mixed[:, : self.c_out] + self.gaugegroup.dagger(mixed[:, self.c_out :])
 
         # The identity channel of the augmentation transports to itself, so it
         # contributes Σ_s ω[i, 0, s] · 1 — a per-channel bias matrix.
-        bias = self.w[:, 0].sum(dim=-1)  # (c_out,)
+        bias = w[:, 0].sum(dim=-1)  # (c_out,)
         identity = torch.eye(nc, dtype=W.dtype, device=W.device)
         return out + bias.view(1, -1, *([1] * len(spatial)), 1, 1) * identity
 
@@ -303,10 +334,12 @@ class LCB(nn.Module):
         K: int,
         dtype: torch.dtype = torch.complex64,
         symmetric: bool = True,
+        normalize_shifts: bool = False,
     ):
         super().__init__()
         self.lconv = LConv(
-            gaugegroup, c_in, c_out, D, K, dtype=dtype, symmetric=symmetric
+            gaugegroup, c_in, c_out, D, K, dtype=dtype, symmetric=symmetric,
+            normalize_shifts=normalize_shifts,
         )
         self.lbilin = LBilin(gaugegroup, c_in, c_out, c_out, dtype=dtype)
 
@@ -365,6 +398,9 @@ class LCNN(nn.Module):
       5. Optional spatial reduction (``"sum"`` / ``"mean"`` / ``"none"``)
          to match the GELT model's reduction modes.
 
+    ``normalize_shifts`` bounds every L-Conv's aggregation over offsets — the
+    M2 control arm of ``notes/m1_probe.md`` (see :class:`LConv`).
+
     ``in_channels``, ``init_scale`` and ``grad_checkpoint`` are the knobs the
     matched-parameter glueball shootout needs; all three default to the
     reference behaviour.
@@ -388,6 +424,7 @@ class LCNN(nn.Module):
         init_scale: float = 1.0,
         grad_checkpoint: bool = False,
         symmetric: bool = True,
+        normalize_shifts: bool = False,
     ):
         super().__init__()
         if reduction not in ("sum", "mean", "none"):
@@ -416,7 +453,7 @@ class LCNN(nn.Module):
             [
                 LCB(
                     gaugegroup, widths[i], widths[i + 1], D, K, dtype=dtype,
-                    symmetric=symmetric,
+                    symmetric=symmetric, normalize_shifts=normalize_shifts,
                 )
                 for i in range(n_layers)
             ]

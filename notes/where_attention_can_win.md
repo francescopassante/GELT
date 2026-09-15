@@ -1,10 +1,13 @@
 # Where attention can win — and two places it cannot
 
-**Status (2026-09-15): two attempts, both closed. One proposal.** This note
-replaces `notes/flow_free_topology.md` (the design record) and
+**Status (2026-09-15): two attempts closed, a third built and pre-flighted.**
+This note replaces `notes/flow_free_topology.md` (the design record) and
 `notes/topology_go_nogo.md` (the decision dossier), both deleted along with the
 study's code — see §10 for what went and where it lives. Everything below that
 is labelled *measured* was measured; the proposal in §8 is a proposal.
+
+**Attempt 3 is `notes/m1_probe.md`** — the ablation §1 below should have
+implied and did not: GELT against GELT with the softmax frozen. See §1.1.
 
 The question this note tracks: **is there a task where GELT's attention beats a
 matched-parameter L-CNN, and can it be run here?**
@@ -38,6 +41,27 @@ Two candidate mechanisms follow from that, and they are **not** the same bet:
 
 **M1 has now failed to find a task twice. M2 has already been observed three
 times.** §7 and §8 are about taking that seriously.
+
+### 1.1 …and the sentence above is wrong as stated (2026-09-15)
+
+"The only architectural difference is whether the weights over offsets are
+input-dependent" is true of the *mechanism*, false of the *comparison*. GELT and
+the matched L-CNN differ in **two** things: input-dependent offset weights and
+**transport geometry** — the shortest-path-averaged L1-ball against axis-aligned
+link products. Every GELT-vs-L-CNN number in this repo therefore confounds M1
+with geometry, §2's parity included: a tie is not evidence against M1 and a win
+would not have been evidence for it.
+
+The clean test is the ablation, not the baseline: **GELT against GELT with the
+softmax frozen**, same transport, same bilinear value path, same everything,
+α no longer reading the input. That is `notes/m1_probe.md`, built
+2026-09-15. It also keeps M2 fixed while M1 varies — the frozen weights are a
+softmax of free logits, so α stays a convex combination — which the L-CNN
+comparison cannot do either.
+
+This does not retract §2 or §4. It re-labels them: the 0⁺⁺ tie and the topology
+stop are facts about *the architectures*, and §3's selection rule stands. What
+they are not is a measurement of M1.
 
 ---
 
@@ -283,9 +307,12 @@ property across training runs.
 
 ## 8. Proposal — make M2 a designed experiment
 
-**Nothing below is implemented.** It is the one place GELT already demonstrably
-beats a matched L-CNN, and the observation is currently an anecdote salvaged from
-runs that went wrong rather than an experiment anyone designed.
+**Nothing below is implemented** — except the arm it needs, which now exists:
+`LConv(normalize_shifts=True)` bounds an L-Conv's aggregation over offsets the
+way a softmax does, and is `lcnn_norm` in `notes/m1_probe.md`'s reading R-D. It
+is the one place GELT already demonstrably beats a matched L-CNN, and the
+observation is currently an anecdote salvaged from runs that went wrong rather
+than an experiment anyone designed.
 
 **Claim to test.** Under input-distribution stress, a bounded convex aggregator
 degrades gracefully where an unbounded matrix polynomial fails outright — at

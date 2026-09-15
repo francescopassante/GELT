@@ -125,6 +125,26 @@ class GEMHSA(nn.Module):
     The transport T is precomputed by the dataset builder (it is a
     function of the link configuration only
     it's a tensor of shape (B, n_offsets, *Λ, nc, nc)
+
+    ``alpha_mode`` selects **how the offset weights are produced**, and nothing
+    else:
+
+    * ``"softmax"`` (default) — steps 3/4 above: α = softmax over the
+      input-dependent score.
+    * ``"frozen"`` — α = softmax over a learned ``(H, n_offsets)`` logit table,
+      recomputed from no input at all. Q_s, K and the RoPE frequencies are the
+      score path and are not allocated; the value path, the transport, the
+      channel mix, the L-Act gate and the residual are untouched, and
+      :meth:`value_path` is *literally the same method* in both modes.
+
+    That is the **M1 ablation** (``notes/m1_probe.md``): the GELT-vs-L-CNN
+    comparison confounds input-dependent offset weights with transport geometry
+    (L1-ball shortest-path-averaged vs axis-aligned), and this arm removes the
+    first with the second held fixed. The frozen weights are a *softmax* of free
+    logits rather than free weights on purpose — α must stay a convex
+    combination, or the ablation would remove boundedness (M2) at the same time
+    and re-confound the two candidate mechanisms
+    (``notes/where_attention_can_win.md`` §1).
     """
 
     def __init__(
@@ -140,8 +160,14 @@ class GEMHSA(nn.Module):
         dtype=torch.complex64,
         init_scale: float = 1.0,
         qk_init_scale: float = 1.0,
+        alpha_mode: str = "softmax",
     ):
         super(GEMHSA, self).__init__()
+        if alpha_mode not in ("softmax", "frozen"):
+            raise ValueError(
+                f"alpha_mode must be 'softmax' or 'frozen', got {alpha_mode!r}"
+            )
+        self.alpha_mode = alpha_mode
         self.gaugegroup = gaugegroup
         self.D = D
         self.R = R
@@ -243,7 +269,13 @@ class GEMHSA(nn.Module):
             freq = torch.logspace(0, -1, self.n_pairs)
         else:
             freq = torch.ones(1)
-        self.rope_freq = nn.Parameter(freq)
+        # RoPE only exists to make the *score* offset-selective, so the frozen-α
+        # arm has no use for it: its offset selectivity is the logit table. The
+        # geometry above (_rope_disp, n_pairs) is registered either way — it is a
+        # buffer, costs nothing, and keeps the two modes' shape bookkeeping the
+        # same.
+        if self.alpha_mode == "softmax":
+            self.rope_freq = nn.Parameter(freq)
 
         # Channel augmentation expands
         # C -> C' = 2C + 1 by appending the identity and daggers.
@@ -279,12 +311,34 @@ class GEMHSA(nn.Module):
         # Order along axis 0: [Q_s, K, V, Q_v].
         sigma_v = 0.02 * init_scale / math.sqrt(self.C_prime)
         sigma_qk = qk_init_scale / math.sqrt(self.C_prime)
-        w_qkv = torch.randn(4, self.H, self.d_qkv, self.C_prime, dtype=dtype)
-        w_qkv[0] *= sigma_qk  # Q_s (score query)
-        w_qkv[1] *= sigma_qk  # K
-        w_qkv[2] *= sigma_v  # V
-        w_qkv[3] *= sigma_qk  # Q_v (value query)
+        if self.alpha_mode == "frozen":
+            # No score ⇒ no Q_s and no K. Keeping them allocated-but-unused
+            # would inflate the arm's nominal parameter count with weights that
+            # receive exactly zero gradient, which is the opposite of what a
+            # matched-parameter ablation needs. Order along axis 0: [V, Q_v].
+            w_qkv = torch.randn(2, self.H, self.d_qkv, self.C_prime, dtype=dtype)
+            w_qkv[0] *= sigma_v  # V
+            w_qkv[1] *= sigma_qk  # Q_v (value query)
+        else:
+            w_qkv = torch.randn(4, self.H, self.d_qkv, self.C_prime, dtype=dtype)
+            w_qkv[0] *= sigma_qk  # Q_s (score query)
+            w_qkv[1] *= sigma_qk  # K
+            w_qkv[2] *= sigma_v  # V
+            w_qkv[3] *= sigma_qk  # Q_v (value query)
+        self.n_proj = w_qkv.shape[0]
         self.w_QKV = nn.Parameter(w_qkv)
+        # Frozen α: one learned logit per (head, offset). Initialised at unit
+        # scale rather than at zero so the arm *starts* where the softmax arm
+        # starts — with σ_QK = 1 the score is O(1) at init by design (see the
+        # σ_QK comment above), so a zero table would hand the frozen arm a
+        # uniform-over-the-ball initialisation the other arm does not get.
+        if self.alpha_mode == "frozen":
+            # In the *real* counterpart of the module dtype: α is a real
+            # probability vector, like the RoPE frequencies and the L-Act gate.
+            real_dtype = torch.empty(0, dtype=dtype).real.dtype
+            self.alpha_logits = nn.Parameter(
+                torch.randn(self.H, self.n_offsets, dtype=real_dtype)
+            )
         # channel mix back to C output channels.
         sigma_mix = 0.02 * init_scale / math.sqrt(self.H * self.d_qkv)
         self.w_mix = nn.Parameter(
@@ -502,8 +556,27 @@ class GEMHSA(nn.Module):
         # 5. Softmax over offsets.
         alpha = torch.softmax(score, dim=2)
 
-        # 6. Value path. Sum V' over n_off with α weights BEFORE the
-        # Q† matmul.
+        # 6. Value path.
+        bilin = self.value_path(alpha, V_tilde, Q_v)
+
+        self.stash(score, alpha, Q, Q_v, K_tilde, V_tilde, bilin)
+        return bilin
+        # return self.alpha_attn * V_weighted + self.alpha_bilin * bilin
+
+    def value_path(self, alpha, V_tilde, Q_v):
+        """Sum V' over n_off with α weights BEFORE the Q† matmul.
+
+        ``Σ_n α_n (Q_v† Ṽ_n) = Q_v† (Σ_n α_n Ṽ_n)``, for ``alpha`` of shape
+        ``(B, H, n_off, *Λ)`` and ``V_tilde`` of shape
+        ``(B, H, d_qkv, n_off, *Λ, nc, nc)``.
+
+        Split out of :meth:`attend` so the softmax and frozen-α modes share it
+        as *code*, not merely as equations: the M1 ablation is only a test of
+        input-dependent offset weighting if everything downstream of α is
+        identical (see the class docstring). ``alpha`` may be a stride-0
+        ``expand`` of a per-(head, offset) table — the product below never
+        materialises it.
+        """
         # alpha: (B, H, n_off, *Λ) → (B, H, 1, n_off, *Λ, 1, 1) to broadcast
         # over the d_qkv and the two color axes.
         alpha_b = alpha.unsqueeze(2).unsqueeze(-1).unsqueeze(-1)
@@ -517,33 +590,82 @@ class GEMHSA(nn.Module):
         # sum of transported V's; Q_v†·V_weighted multiplies on the left by Q_v†
         # which transforms with Ω_x on both sides). Q_v is a value-path query
         # projection independent of the score-path query Q.
-        bilin = torch.matmul(Q_v_dag, V_weighted)  # (B, H, d_qkv, *Λ, nc, nc)
+        return torch.matmul(Q_v_dag, V_weighted)  # (B, H, d_qkv, *Λ, nc, nc)
 
-        # Diagnostic intermediates — read by scripts/train_gelt_diagnosis.py
-        # to introspect per-layer attention state. Stored detached / no-grad so
-        # they don't retain the autograd graph. Scalars for activations, full
-        # tensors for score/alpha (cheap: (B, H, n_off, *Λ) reals).
-        # Both stashes are opt-in (see store_attention / diagnostics in
-        # __init__): the scalars each force a GPU sync and a reduction over an
-        # offset-expanded tensor, which is pure overhead on a training step.
+    def frozen_alpha(self, B, spatial, dtype):
+        """``softmax(alpha_logits)`` broadcast to the shape :meth:`attend` produces.
+
+        Returns ``(score, alpha)`` — the logits and their softmax — so
+        ``_last_score`` keeps meaning the thing ``_last_alpha`` is the softmax
+        of, whichever mode produced them.
+
+        ``expand`` makes the batch and lattice axes stride-0 views, so the
+        per-(head, offset) table is never materialised at
+        ``(B, H, n_off, *Λ)`` — it only *reads* as though it were, which is what
+        lets :meth:`value_path` and the introspection stashes stay shape-blind
+        to which mode produced α.
+        """
+        view = (1, self.H, self.n_offsets) + (1,) * len(spatial)
+        shape = (B, self.H, self.n_offsets) + tuple(spatial)
+        # .real fallback, as in rope_score: a module-wide ``.to(complex_dtype)``
+        # (the tests cast the whole block) would upcast this real tensor.
+        logits = self.alpha_logits
+        logits = (logits.real if logits.is_complex() else logits).to(dtype)
+        alpha = torch.softmax(logits, dim=1)  # (H, n_off)
+        return logits.view(view).expand(shape), alpha.view(view).expand(shape)
+
+    def stash(self, score, alpha, Q, Q_v, K_tilde, V_tilde, bilin):
+        """Diagnostic intermediates — read by scripts/train_gelt_diagnosis.py
+        to introspect per-layer attention state. Stored detached / no-grad so
+        they don't retain the autograd graph. Scalars for activations, full
+        tensors for score/alpha (cheap: (B, H, n_off, *Λ) reals).
+        Both stashes are opt-in (see store_attention / diagnostics in
+        __init__): the scalars each force a GPU sync and a reduction over an
+        offset-expanded tensor, which is pure overhead on a training step.
+
+        ``Q`` and ``K_tilde`` are ``None`` in the frozen-α mode, which has no
+        score path to report; their stashes are then left unset rather than
+        filled with a placeholder.
+        """
         if self.store_attention:
             with torch.no_grad():
                 self._last_score = score.detach()
                 self._last_alpha = alpha.detach()
         if self.diagnostics:
             with torch.no_grad():
-                self._last_Q_norm = Q.detach().abs().pow(2).mean().sqrt().item()
+                if Q is not None:
+                    self._last_Q_norm = Q.detach().abs().pow(2).mean().sqrt().item()
                 self._last_Q_v_norm = Q_v.detach().abs().pow(2).mean().sqrt().item()
-                self._last_K_tilde_norm = (
-                    K_tilde.detach().abs().pow(2).mean().sqrt().item()
-                )
+                if K_tilde is not None:
+                    self._last_K_tilde_norm = (
+                        K_tilde.detach().abs().pow(2).mean().sqrt().item()
+                    )
                 self._last_V_tilde_norm = (
                     V_tilde.detach().abs().pow(2).mean().sqrt().item()
                 )
                 self._last_bilin_norm = bilin.detach().abs().pow(2).mean().sqrt().item()
 
+    def attend_frozen(self, V, Q_v, T, T_dag):
+        """:meth:`attend` with the score path removed — the M1 ablation.
+
+        Steps 1 and 2 (gather, adjoint transport) and steps 5/6 (α-weighted sum,
+        ``Q_v†·Ṽ``) are the same operations on the same code; steps 3 and 4 (the
+        RoPE score and its softmax over offsets) are replaced by
+        :meth:`frozen_alpha`, which reads no input.
+
+        Only V is gathered and transported. With no score there is no K, so this
+        arm moves one offset-expanded tensor per layer where :meth:`attend`
+        moves two — the ablation is also the *cheaper* arm, which matters only
+        for wall-clock, never for the readings.
+        """
+        spatial = V.shape[3:-2]
+        V_nb = _OffsetGather.apply(V, self._nbr_idx, self._nbr_idx_inv)
+        V_tilde = self.transport(V_nb, T, T_dag)
+        del V_nb
+        score, alpha = self.frozen_alpha(V.shape[0], spatial, V.real.dtype)
+        bilin = self.value_path(alpha, V_tilde, Q_v)
+        self.stash(score, alpha, None, Q_v, None, V_tilde, bilin)
         return bilin
-        # return self.alpha_attn * V_weighted + self.alpha_bilin * bilin
 
     def prepend_self_offset(self, T, T_dag=None):
         """Prepend the Δx = 0 slot (transport = identity) to a transport table.
@@ -613,20 +735,29 @@ class GEMHSA(nn.Module):
         B = W_aug.shape[0]
         trailing = W_aug.shape[2:]  # (*Λ, nc, nc)
 
-        # Fused QKV: a single (4·H·d, C') @ (B, C', N) matmul, then split.
+        # Fused QKV: a single (n_proj·H·d, C') @ (B, C', N) matmul, then split.
+        # n_proj is 4 in the softmax mode ([Q_s, K, V, Q_v]) and 2 in the
+        # frozen-α mode ([V, Q_v]), which has no score path.
         W_aug_flat = W_aug.view(B, self.C_prime, -1)
-        w_QKV_flat = self.w_QKV.view(4 * self.H * self.d_qkv, self.C_prime)
-        QKV = torch.matmul(w_QKV_flat, W_aug_flat)  # (B, 4·H·d, N)
-        QKV = QKV.view(B, 4, self.H, self.d_qkv, *trailing)
-        Q, Q_v = QKV[:, 0], QKV[:, 3]
-        # K and V are adjacent along the fused axis and the (4, H) strides merge,
-        # so this is a view: attend() then gathers and transports the pair in one
-        # pass instead of two plus a concatenation.
-        KV = QKV[:, 1:3].reshape(B, 2 * self.H, self.d_qkv, *trailing)
+        w_QKV_flat = self.w_QKV.view(self.n_proj * self.H * self.d_qkv, self.C_prime)
+        QKV = torch.matmul(w_QKV_flat, W_aug_flat)  # (B, n_proj·H·d, N)
+        QKV = QKV.view(B, self.n_proj, self.H, self.d_qkv, *trailing)
 
-        # Transport, score, softmax, multiplicative value. Q is the score-path
-        # query (Re Tr[Q†·K̃]); Q_v is the independent value-path query (Q_v†·Ṽ).
-        out = self.attend(Q, KV, Q_v, T, T_dag)  # (B, H, d_qkv, *Λ, nc, nc)
+        if self.alpha_mode == "frozen":
+            # Transport and multiplicative value with input-independent α.
+            V, Q_v = QKV[:, 0], QKV[:, 1]
+            out = self.attend_frozen(V, Q_v, T, T_dag)
+        else:
+            Q, Q_v = QKV[:, 0], QKV[:, 3]
+            # K and V are adjacent along the fused axis and the (4, H) strides
+            # merge, so this is a view: attend() then gathers and transports the
+            # pair in one pass instead of two plus a concatenation.
+            KV = QKV[:, 1:3].reshape(B, 2 * self.H, self.d_qkv, *trailing)
+
+            # Transport, score, softmax, multiplicative value. Q is the
+            # score-path query (Re Tr[Q†·K̃]); Q_v is the independent value-path
+            # query (Q_v†·Ṽ).
+            out = self.attend(Q, KV, Q_v, T, T_dag)  # (B, H, d_qkv, *Λ, nc, nc)
 
         # Channel mix back to C output channels. Expressed as a single matmul
         # ``(C, H·d) @ (B, H·d, |Λ|·nc·nc) -> (B, C, |Λ|·nc·nc)``
@@ -753,6 +884,9 @@ class GELT(nn.Module):
          per-config targets like the Wilson action, ``"mean"`` for the
          average Wilson loop ⟨W⟩, ``"none"`` to keep the per-site readout
          ``(B, *Λ)`` for per-site supervision (e.g. ``Re Tr W(R,T,x)/nc``).
+
+    ``alpha_mode`` is threaded to every GEMHSA layer: ``"softmax"`` is the
+    architecture, ``"frozen"`` is the M1 ablation (see ``GEMHSA``).
     """
 
     def __init__(
@@ -776,6 +910,7 @@ class GELT(nn.Module):
         mlp_dropout: float = 0.0,
         grad_checkpoint: bool = False,
         in_channels: int | None = None,
+        alpha_mode: str = "softmax",
     ):
         # Plaquette input -> D(D-1)/2 plaquettes per site. Callers stacking
         # extra adjoint channels (e.g. plaquettes at several APE smearing
@@ -830,6 +965,7 @@ class GELT(nn.Module):
                     dtype,
                     init_scale=init_scale,
                     qk_init_scale=qk_init_scale,
+                    alpha_mode=alpha_mode,
                 )
                 for i in range(gemhsa_layers)
             ]

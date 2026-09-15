@@ -454,3 +454,244 @@ def test_gelt_z2_real_forward_backward():
         assert (
             p.grad is None or torch.isfinite(p.grad).all()
         ), f"non-finite grad on {name}"
+
+
+# ---------------------------------------------------------------------------
+# The frozen-α ablation (notes/m1_probe.md WP-A)
+# ---------------------------------------------------------------------------
+#
+# ``alpha_mode="frozen"`` replaces the input-dependent softmax over offsets with
+# a learned (H, n_offsets) logit table. Everything else — transport, value path,
+# channel mix, L-Act, residual — is the same code, so these cases pin exactly
+# the two properties the M1 reading rests on: the arm is still *equivariant*,
+# and its α is still a convex combination that *does not look at the input*.
+
+
+def _frozen_oracle_forward(blk, W, T):
+    """``attend_frozen`` written out: one gather, one transport, the α-weighted
+    sum and ``Q_v†·Ṽ``, with the identity slot prepended by hand. Mirrors
+    :func:`_oracle_forward` with steps 3/4 (RoPE score + softmax) deleted."""
+    B, nc = W.shape[0], W.shape[-1]
+    spatial = T.shape[2:-2]
+    ident = (
+        torch.eye(nc, dtype=T.dtype)
+        .view(1, 1, *([1] * blk.D), nc, nc)
+        .expand(B, 1, *spatial, nc, nc)
+    )
+    T_full = torch.cat([ident, T], dim=1)
+    T_dag_full = torch.cat([ident, blk.gaugegroup.dagger(T)], dim=1)
+
+    W_aug = blk.augment(W)
+    trailing = W_aug.shape[2:]
+    QKV = torch.matmul(
+        blk.w_QKV.view(2 * blk.H * blk.d_qkv, blk.C_prime),
+        W_aug.view(B, blk.C_prime, -1),
+    ).view(B, 2, blk.H, blk.d_qkv, *trailing)
+    V, Q_v = QKV.unbind(dim=1)
+
+    idx = tuple(blk._nbr_idx[k] for k in range(blk.D))
+    nb = (slice(None),) * 3 + idx + (slice(None), slice(None))
+    V_tilde = blk.transport(V[nb], T_full, T_dag_full)
+
+    alpha = torch.softmax(blk.alpha_logits, dim=1)  # (H, n_off)
+    alpha = alpha.view(1, blk.H, blk.n_offsets, *([1] * blk.D))
+    V_weighted = (
+        alpha.unsqueeze(2).unsqueeze(-1).unsqueeze(-1) * V_tilde
+    ).sum(dim=3)
+    out = torch.matmul(blk.gaugegroup.dagger(Q_v), V_weighted)
+
+    HD = blk.H * blk.d_qkv
+    W_mix = torch.matmul(blk.w_mix.view(blk.C, HD), out.reshape(B, HD, -1)).view(
+        B, blk.C, *trailing
+    )
+    tr = W_mix.diagonal(dim1=-2, dim2=-1).sum(-1).real / nc
+    g = (
+        torch.nn.functional.softplus(tr)
+        if blk.gate == "softplus"
+        else torch.nn.functional.relu(tr)
+    )
+    return W + g.unsqueeze(-1).unsqueeze(-1) * W_mix, alpha
+
+
+@pytest.mark.parametrize(
+    "group, dtype, D, R, d_qkv",
+    [
+        (SU(2), torch.complex128, 3, 2, 6),
+        (SU(3), torch.complex128, 2, 2, 4),
+        (Z2(), torch.float64, 2, 2, 2),
+    ],
+)
+def test_frozen_attend_matches_naive_oracle(group, dtype, D, R, d_qkv):
+    torch.manual_seed(0)
+    L, B, C, H = 4, 2, 6, 2
+    nc = group.nc
+    U = torch.stack([random_links(L, D, group, dtype=dtype) for _ in range(B)])
+    T = build_transport_average(U, R, group)
+    blk = GEMHSA(
+        group, L, D, R, d_input=C, nhead=H, d_qkv=d_qkv, dtype=dtype,
+        alpha_mode="frozen",
+    )
+    blk.store_attention = True
+
+    W_fast = torch.randn(B, C, *([L] * D), nc, nc, dtype=dtype, requires_grad=True)
+    W_ref = W_fast.detach().clone().requires_grad_(True)
+
+    fast = blk(W_fast, T)
+    ref, alpha_ref = _frozen_oracle_forward(blk, W_ref, T)
+
+    assert torch.allclose(fast, ref, atol=1e-12)
+    assert torch.allclose(blk._last_alpha, alpha_ref.expand_as(blk._last_alpha))
+
+    fast.abs().pow(2).sum().backward()
+    ref.abs().pow(2).sum().backward()
+    assert torch.allclose(W_fast.grad, W_ref.grad, atol=1e-11)
+
+
+@pytest.mark.parametrize("gate", ["relu", "softplus"])
+def test_frozen_gemhsa_gauge_equivariance_su2(gate):
+    torch.manual_seed(7)
+    L, D, R, C, H, nc = 4, 2, 2, 3, 2, 2
+    gg, dtype = SU(nc), torch.complex128
+
+    U = random_links(L=L, D=D, gaugegroup=gg, dtype=dtype)
+    W = torch.randn(1, C, *([L] * D), nc, nc, dtype=dtype)
+    omega = _unitary_omega(L, D, nc, seed=7)
+
+    T = build_transport_average(U.unsqueeze(0), R=R, gaugegroup=gg)
+    T_g = build_transport_average(
+        link_gauge_transformation(U, omega, gg).unsqueeze(0), R=R, gaugegroup=gg
+    )
+    block = GEMHSA(
+        gaugegroup=gg, L=L, D=D, R=R, d_input=C, nhead=H, d_qkv=4, gate=gate,
+        dtype=dtype, alpha_mode="frozen",
+    ).to(dtype)
+
+    out = block(W, T)
+    out_g = block(local_gauge_transformation(W, omega, gg), T_g)
+    expected = local_gauge_transformation(out, omega, gg)
+    assert torch.allclose(out_g, expected, atol=1e-10), (
+        (out_g - expected).abs().max().item()
+    )
+
+
+def test_frozen_gemhsa_gauge_equivariance_z2():
+    """Z₂ in float64: nc = 1 makes Ω a site-local sign, and the block is real."""
+    torch.manual_seed(3)
+    L, D, R, C, H = 4, 2, 1, 2, 2
+    gg, dtype = Z2(), torch.float64
+
+    U = random_links(L=L, D=D, gaugegroup=gg, dtype=dtype)
+    W = torch.randn(1, C, *([L] * D), 1, 1, dtype=dtype)
+    omega = torch.where(
+        torch.rand(*([L] * D), 1, 1) < 0.5,
+        torch.tensor(-1.0, dtype=dtype),
+        torch.tensor(1.0, dtype=dtype),
+    )
+
+    T = build_transport_average(U.unsqueeze(0), R=R, gaugegroup=gg)
+    T_g = build_transport_average(
+        link_gauge_transformation(U, omega, gg).unsqueeze(0), R=R, gaugegroup=gg
+    )
+    block = GEMHSA(
+        gaugegroup=gg, L=L, D=D, R=R, d_input=C, nhead=H, d_qkv=2, dtype=dtype,
+        alpha_mode="frozen",
+    )
+
+    out = block(W, T)
+    out_g = block(local_gauge_transformation(W, omega, gg), T_g)
+    expected = local_gauge_transformation(out, omega, gg)
+    assert torch.allclose(out_g, expected, atol=1e-12)
+
+
+def test_frozen_alpha_does_not_depend_on_the_input():
+    """The whole point of the arm: α is the same for two different fields on the
+    same links, is a probability distribution over the offset axis, and the
+    softmax arm — same weights, same data — is *not* input-independent.
+
+    The contrast is the test. Without it, a frozen arm that silently kept a
+    data path would still pass "α sums to one".
+    """
+    torch.manual_seed(21)
+    L, D, R, B, C, H, nc = 4, 3, 1, 2, 4, 2, 2
+    gg, dtype = SU(nc), torch.complex128
+
+    U = torch.stack([random_links(L, D, gg, dtype=dtype) for _ in range(B)])
+    T = build_transport_average(U, R, gg)
+    W1 = torch.randn(B, C, *([L] * D), nc, nc, dtype=dtype)
+    W2 = torch.randn(B, C, *([L] * D), nc, nc, dtype=dtype)
+
+    alphas = {}
+    for mode in ("frozen", "softmax"):
+        blk = GEMHSA(
+            gg, L, D, R, d_input=C, nhead=H, d_qkv=4, dtype=dtype, alpha_mode=mode
+        )
+        blk.store_attention = True
+        blk(W1, T)
+        a1 = blk._last_alpha.clone()
+        blk(W2, T)
+        alphas[mode] = (a1, blk._last_alpha.clone())
+
+    a1, a2 = alphas["frozen"]
+    assert torch.equal(a1, a2)
+    # …and still a convex combination over offsets — the ablation removes M1
+    # (input-dependence) without removing M2 (boundedness).
+    assert (a1 >= 0).all()
+    assert torch.allclose(a1.sum(dim=2), torch.ones_like(a1.sum(dim=2)))
+
+    s1, s2 = alphas["softmax"]
+    assert (s1 - s2).abs().max() > 1e-6
+
+
+def test_frozen_mode_allocates_no_score_path():
+    """No Q_s, no K, no RoPE frequency — and nothing left without a gradient.
+
+    A frozen arm that kept the score projections allocated-but-unused would
+    report a parameter count it does not use, which is exactly what a
+    matched-parameter ablation must not do.
+    """
+    torch.manual_seed(2)
+    L, D, R, B, C, H, nc = 4, 3, 1, 1, 3, 2, 2
+    gg, dtype = SU(nc), torch.complex64
+
+    U = torch.stack([random_links(L, D, gg, dtype=dtype) for _ in range(B)])
+    T = build_transport_average(U, R, gg)
+    W = torch.randn(B, C, *([L] * D), nc, nc, dtype=dtype)
+
+    blk = GEMHSA(gg, L, D, R, d_input=C, nhead=H, d_qkv=4, dtype=dtype,
+                 alpha_mode="frozen")
+    assert blk.n_proj == 2 and blk.w_QKV.shape[0] == 2
+    assert not hasattr(blk, "rope_freq")
+    assert blk.alpha_logits.shape == (H, blk.n_offsets)
+
+    blk(W, T).abs().pow(2).sum().backward()
+    dead = [n for n, p in blk.named_parameters() if p.grad is None]
+    assert dead == [], f"parameters with no gradient: {dead}"
+
+    ref = GEMHSA(gg, L, D, R, d_input=C, nhead=H, d_qkv=4, dtype=dtype)
+    assert ref.n_proj == 4 and hasattr(ref, "rope_freq")
+
+
+def test_gelt_frozen_alpha_gauge_invariant_readout():
+    """The full stack in the ablated mode: the per-site readout is invariant."""
+    torch.manual_seed(13)
+    L, D, R, nc = 4, 2, 2, 2
+    gg, dtype = SU(nc), torch.complex128
+
+    from gelt.lattice import plaquette_tensor
+
+    U = random_links(L=L, D=D, gaugegroup=gg, dtype=dtype)
+    X = plaquette_tensor(U.unsqueeze(0), gg)
+    P = build_transport_average(U.unsqueeze(0), R=R, gaugegroup=gg)
+
+    omega = _unitary_omega(L, D, nc, seed=13)
+    U_g = link_gauge_transformation(U, omega, gg)
+    X_g = plaquette_tensor(U_g.unsqueeze(0), gg)
+    P_g = build_transport_average(U_g.unsqueeze(0), R=R, gaugegroup=gg)
+
+    model = GELT(
+        gaugegroup=gg, L=L, D=D, R=R, nhead=2, gemhsa_layers=2, d_qkv=4,
+        dtype=dtype, d_model=8, reduction="none", mlp_zero_init=False,
+        alpha_mode="frozen",
+    )
+    y, y_g = model(X, P), model(X_g, P_g)
+    assert torch.allclose(y, y_g, atol=1e-9), (y - y_g).abs().max().item()

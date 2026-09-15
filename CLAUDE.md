@@ -52,6 +52,15 @@ or "removed in the 2026-09-09 cleanup", that is where it went.
   M2 directly. §5's pre-flight rule is the cheap gate that stopped topology for
   ~4 h instead of ~60–100: **measure the best classical method at the
   architecture's own reach before building any training code.**
+- `notes/m1_probe.md` — **attempt 3, built and pre-flighted 2026-09-15, not yet
+  run.** The confound `where_attention_can_win.md` §1 missed: GELT and the
+  matched L-CNN differ in *two* things (input-dependent offset weights **and**
+  transport geometry), so no GELT-vs-L-CNN number has ever measured M1. The
+  clean test is GELT against **GELT with the softmax frozen**, on three
+  constructed per-site targets. Holds the arm table, the four-criteria audit
+  (criterion 4 is knowingly violated — it is a mechanism assay, not a physics
+  result), the pre-registered readings R-A…R-E, and §3.1, where the pre-flight
+  **changed the design before any training code ran**.
 - `notes/attention_as_operator.md` — the design record for "the attention map is
   a lattice operator": why ℓ_att failed and the correlator of the attention field
   does not, the three arms, the Z₂ result (§6.1) and its transport to SU(2) (§9).
@@ -216,6 +225,12 @@ implementation (MIT, Favoni et al. 2012.12901), layer sources only, tracked so
   interpretability studies — **opt-in**, via
   `GELT.set_introspection(store_attention=True)`, along with the `_last_*_norm`
   scalars under `diagnostics=True`.
+  **`alpha_mode`** selects how the offset weights are produced and nothing else:
+  `"softmax"` is the architecture, `"frozen"` is the M1 ablation
+  (`notes/m1_probe.md`) — α becomes `softmax` of a learned `(H, n_offsets)`
+  table, Q_s/K/`rope_freq` are not allocated, and `value_path` is literally the
+  same method in both modes. Still a *softmax*, so the ablation removes
+  input-dependence (M1) without removing boundedness (M2).
 - **`glueball.py`** — classical 0⁺⁺ spectroscopy. Time is lattice axis 0.
   - `ape_smear(U, group, alpha=0.5, n_steps=1, directions=None)` — spatial-only
     APE smearing (time links untouched, so the transfer-matrix interpretation
@@ -237,6 +252,16 @@ implementation (MIT, Favoni et al. 2012.12901), layer sources only, tracked so
     `(m, A, χ²)` for `A·[e^(−mΔ) + e^(−m(Nt−Δ))]` (profiled-A grid scan +
     parabolic refine — dependency-free, safe inside every jackknife sample). The
     ground-state overlap fraction is `A₀ = A·(1+e^(−m·Nt))/C(0)`.
+- **`probe_targets.py`** — the M1 probe's supervision (`notes/m1_probe.md`).
+  `action_density` → `f(x) = 1 − Re Tr P̄(x)/nc`; `ball_reduce` → cumulative
+  shell sums and the running max over the L1-ball of `BALL_RADIUS = 4` in one
+  traversal; `build_targets` → **T0** (a radial convolution — the calibration
+  arm, exactly linear by construction), **T1** (the ball max — position), **T2**
+  (the θ = ½ enclosing radius of `f**SCALE_POWER`'s mass — position *and* scale,
+  and exactly invariant under `f → λf`). `ball_features` is the pre-flight's
+  design matrix. **`SCALE_POWER = 4` is a pre-flight finding**, not a taste: at
+  p = 1 the 66-site outer shell concentrates, the `min{r}` selection never
+  selects, and a linear filter reaches R² = 0.978.
 - **`lcnn.py`** — Favoni et al. L-CNN: `build_axis_transports` (axis-aligned link
   products — distinct from GELT's L1-ball `T`), `LConv`, `LBilin`, `LCB`,
   `LAct`, `Trace`, `LCNN`. Mirrors `GELT`'s I/O so the two are
@@ -256,6 +281,11 @@ implementation (MIT, Favoni et al. 2012.12901), layer sources only, tracked so
   design and pre-registered readings in `notes/lcnn_shootout.md`.
   `scripts/bench_lcnn_reference.py` times our block against
   `lge-cnn-master/`'s at the production shape.
+  **`normalize_shifts`** (off by default) reparameterises ω as
+  `g[i,j]·ω̂[i,j,s]` with `Σ_s |ω̂| = 1`, bounding the aggregation over offsets
+  the way a softmax does while the per-channel magnitude stays free — the M2
+  control arm of `notes/m1_probe.md` (R-D). It is the identity at
+  initialisation, so the arm starts from the reference distribution.
 - **`cnn_baseline.py`** — `LatticeCNN`: non-equivariant baseline; `Conv2d`/
   `Conv3d` for D=2/3 and a roll-based `_RollConvND` for D≥4.
 
@@ -331,6 +361,22 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   an untrained net, whose own cosh fit does not converge). All three are
   repeatable — one value, or one per dump — so both ensembles combine in one
   run; `--proj-eps` cuts the span's Gram, `--out-tag` names the artifacts.
+- **`probe_common.py` / `probe_preflight.py` / `train_probe.py` /
+  `probe_readings.py` / `probe_batch.sh`** — the M1 probe
+  (`notes/m1_probe.md`). `probe_common.py` holds ensemble, timeslice
+  extraction, splits, inputs, standardisation, the five `ARMS` and the R²
+  sufficient statistics, so the arms cannot drift — the same discipline that
+  makes the two attention scripts share one estimator. It **samples nothing**:
+  the ensembles are `train_glueball.py`'s cached ones, by the identical cache
+  key, and a missing cache is an error rather than a 24-hour sampling run.
+  `probe_preflight.py` is §5's gate — the best linear filter over the same
+  radius-4 ball, i.e. the best *M1-free* method at matched reach — and it is
+  what must be read before anything trains. `train_probe.py` runs one
+  (arm, target, seed); its dump is the six per-config sums an R² is made of, so
+  the correlated jackknife is exact offline and a run is kilobytes.
+  `probe_readings.py` prints R-A…R-E and a LaTeX fragment; it **skips
+  `run_tag`-carrying dumps**, so the LR sweep's 6-epoch runs cannot be read as
+  the 20-epoch result.
 - **`profile_glueball_step.py`** — where one optimizer step goes, per stage,
   forward **and backward** separately. It goes through
   `train_glueball.config_inputs`, i.e. the pipeline the training loop actually
@@ -354,7 +400,11 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   (outputs, `_last_score`, `_last_alpha` and input gradients to 1e-12 for
   SU(2)/SU(3)/Z₂), `_OffsetGather`'s hand-written backward against autograd's,
   the Δx = 0 prepend, introspection off by default, gradient checkpointing, plus
-  the four cases ported from the retired `blocks_bias` suite.
+  the four cases ported from the retired `blocks_bias` suite. The **frozen-α**
+  arm runs the same gauntlet (oracle, equivariance at both gates, full-stack
+  invariance) plus the two properties the M1 reading rests on: α is identical
+  for two different fields on the same links *and the softmax arm's is not*, and
+  no score path is allocated with nothing left ungradiented.
 - **`test_sampler.py`** — overrelaxation conserves the Wilson action to machine
   precision and stays on the group; heat-bath reproduces the exact 2D SU(2) mean
   plaquette `I₂(β)/I₁(β)`; anisotropic versions of both.
@@ -371,8 +421,18 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   gradient checkpointing bit-exact, `init_scale` linear in the output, the
   parameter match against both trained GELT nets (real DOFs within 15%), the
   optimised `LConv`/`LBilin` against the naive definitions they implement
-  (1e-12, complex128), and the **support of a layer** — that the kernel reaches
-  `x − k·μ̂` as well as `x + k·μ̂`.
+  (1e-12, complex128), the **support of a layer** — that the kernel reaches
+  `x − k·μ̂` as well as `x + k·μ̂` — and `normalize_shifts`: the identity at
+  init, L1-bounded over offsets after any update, equivariance untouched.
+- **`test_probe_targets.py`** — the M1 probe's premise: `f` is gauge invariant
+  (SU(2), Z₂) and non-negative; the shell sums and the ball max against a
+  brute-force enumeration of `[-R,R]^D` filtered by the L1 norm (independent of
+  `l1_ball_offsets`, so a bug there cannot hide behind itself); **T0 is exactly
+  a linear functional of the ball**; T2 recovers a hand-computed enclosing
+  radius on a uniform field and is invariant under `f → λf` while T0/T1 are
+  degree 1; the periodic-ball guard; and **both architectures reach the whole
+  radius-4 target ball** (GELT after 2 of 4 layers, the L-CNN after 3) as
+  integer set arithmetic — if that fails, R-C is measuring receptive field.
 - **`test_data_model.py`** — split validation and CNN-baseline shape guards.
 
 ## Conventions
@@ -516,6 +576,10 @@ python scripts/z2_beta_scan.py               # Z₂ classical mass vs β
 Z2G_R=6 Z2G_N_USE=800 python scripts/train_z2_glueball.py 0.756
 python scripts/z2_attention_correlator.py    # the Z₂ attention table
 python scripts/su2_attention_correlator.py   # the SU(2) row (~40 min)
+PROBE_DRY_RUN=1 bash scripts/probe_batch.sh   # the M1 probe: what would run
+python scripts/probe_preflight.py            # §5's gate (offline, seconds)
+PROBE_ARM=frozen PROBE_TARGET=T2 python scripts/train_probe.py
+python scripts/probe_readings.py             # R-A…R-E (offline, seconds)
 PROFILE_DIAGNOSTICS=1 python scripts/profile_glueball_step.py
 PROFILE_ROPE=1 python scripts/profile_glueball_step.py   # the rope_score bench
 pytest tests
@@ -555,6 +619,11 @@ Ranked in `notes/audit_2026-09-06.md` §4, and unchanged by the cleanup:
    proposes the one experiment aimed at the mechanism that *has* been observed
    (boundedness, 0-of-14 vs 3-of-9), which costs a dozen short runs on data
    already on disk.
+7. **Run the M1 probe** — `notes/m1_probe.md`. Built and pre-flighted
+   2026-09-15; §7 of that note is the command sequence. `probe_batch.sh` part 0
+   (the matched-DOF table + the pre-flight on both real ensembles, no GPU) is
+   the next thing to run, and **part 1 must not start until part 0's logs have
+   been read** — the pre-flight has already invalidated one target design once.
 
 ## Things to keep in mind
 

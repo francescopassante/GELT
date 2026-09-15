@@ -124,6 +124,15 @@ CLAUDE.md              module-by-module detail, conventions, status, caveats
 | `z2_attention_correlator.py` | ξ_A and A₀ of the attention field vs classical vs random |
 | `su2_attention_correlator.py` | the same measurement on anisotropic SU(2) |
 | `profile_glueball_step.py` | where one training step goes, per stage, fwd and bwd |
+| `probe_preflight.py` | the M1 probe's gate: the best linear filter at the architecture's own reach — offline |
+| `train_probe.py` | one (arm, target, seed) of the M1 probe; `PROBE_ARM` picks GELT, frozen-α, or the L-CNN arms |
+| `probe_batch.sh` | the V100 batch behind the M1 probe: gates, LR sweep, the grid, the null |
+| `probe_readings.py` | R-A…R-E, correlated ΔR², median over seeds — offline |
+
+The four `probe_*` scripts belong to a study that has **not been run yet** — the
+M1 ablation of `notes/m1_probe.md`, built and pre-flighted 2026-09-15. They
+produce nothing in `main.tex`; the readings they will produce are pre-registered
+in that note's §4.
 
 ---
 
