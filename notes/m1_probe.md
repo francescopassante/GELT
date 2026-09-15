@@ -300,7 +300,38 @@ counted per architecture family by `probe_readings.py`.
 
 It is confirmatory rather than exploratory only because
 `notes/lcnn_shootout.md` §9.2's **3-of-9 vs 0-of-14** is the prior and M2 is the
-mechanism that predicts it. It is a **count over a non-uniform mix of learning
+mechanism that predicts it.
+
+**Extended 2026-09-15, after the tuning checks, and also post-hoc.** `diverged`
+keys on the *best* validation loss, so it is blind to a run that learns, blows
+up, and settles back at the trivial predictor — the best value predates the
+catastrophe. Both tuning checks had that shape and neither was flagged:
+
+| run | peak train | best val | final val | old flag |
+|---|---|---|---|---|
+| `gelt` @ 3e−2 | 1.1e4 at epoch 1 | 0.721 | 0.721 | none |
+| `lcnn` @ 3e−3 | 1.5e4 at epoch 21 | 0.414 at epoch 19 | **0.995** | none |
+
+Two statistics are added, and the grid records them for all 90 runs:
+`collapsed` — ended no better than predicting the mean, having once done
+materially better — and the excursion peaks, with the count of excursions that
+the run **came back from**.
+
+The last is the one that matters, because it is a qualitative difference rather
+than a count. **GELT's excursion was survivable and the L-CNN's was not.**
+`gelt` at 3e−2 hit a training loss of 1.1e4 in its first epoch, recovered by
+epoch 4 and converged smoothly to a (poor, but honest) 0.266. `lcnn` at 3e−3 hit
+1.5e4 at epoch 21 and never came back, ending exactly at the trivial predictor.
+That refines M2: bounded aggregation does not prevent excursions — GELT is not
+immune — it makes them **recoverable**. A convex combination cannot amplify the
+next step without limit, so the state that follows an excursion is still in the
+basin; an unbounded matrix polynomial's is not.
+
+One more signal is already in the dumps and needs no new instrument: `lcnn` at
+3e−3 reports R² = 0.4988 ± **0.0815**, a jackknife error forty to a hundred
+times every other run's. A val-selected checkpoint whose test performance varies
+that much across configurations is §9.2's top-1-share pathology in another
+guise, and `probe_readings.py` surfaces the error column beside the mean. It is a **count over a non-uniform mix of learning
 rates, never a probability**, and it must not be quoted as one: the sweep
 deliberately visits rates chosen to fail. What it can say is whether the two
 families fail at the same places.
@@ -514,6 +545,15 @@ runs below:
   grows to 68% on T2, so roughly half of the T2 gap is generic and the rest is
   T2-specific. Any statement of the −0.12 must carry that split.
 
+#### The tuning checks — *measured 2026-09-15*. Both rates confirmed interior.
+
+`gelt` on T2 at 3e−2 → **0.2661 ± 0.0022** (against 0.8221 at 1e−2, 0.7116 at
+3e−3). `lcnn` on T2 at 3e−3 → **0.4988 ± 0.0815** (against 0.9425 at 1e−3,
+0.8931 at 3e−4). **Neither arm is under-tuned**, at the grid's own horizon, on
+both sides of its optimum — which is the claim that has to survive contact with
+a reader who does not want to believe R-C. Their failure *shapes* are §4.1's
+extension.
+
 #### R-B′ on T2 — *measured 2026-09-15*. **The +0.21 is the mechanism.**
 
 `frozen_matched`, 40 epochs, 1e−2, ens0, seed 0: **R² = 0.6336 ± 0.0025** at
@@ -681,6 +721,14 @@ convolution and every ΔR² is a statement about optimisation.
   removing the mechanism. `frozen_matched` is promoted out of the conditional
   part 5 into parts 2 and 3, and part 3 now runs T2 to completion before T1 so
   a truncated batch still leaves a complete primary reading.
+- **2026-09-15, the tuning checks — both rates confirmed interior on both
+  sides.** `gelt` 0.266 at 3e−2, `lcnn` 0.499 at 3e−3. Neither arm is
+  under-tuned. Their failure shapes extended R-F (§4.1): GELT's excursion to
+  1.1e4 was recovered from, the L-CNN's to 1.5e4 was not, and neither was
+  visible to a flag keyed on the *best* epoch. `collapsed` and the excursion
+  peaks are now recorded for every run.
+- **Next: the grid.** 90 runs, 40 epochs, ~15 h, at 1e−2 / 1e−2 / 1e−2 / 1e−3 /
+  3e−4.
 - Was next: **R-A before the grid** — T0 at 40 epochs for `gelt`, `frozen`, `lcnn`
   (real grid cells, so part 2 skips them afterwards) — plus `frozen_matched` on
   T2 for R-B′, and two tuning checks at the untested edges (`gelt` 3e−2,

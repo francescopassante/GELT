@@ -96,6 +96,17 @@ if RUN_TAG and not RUN_TAG.startswith("_"):
 # (notes/where_attention_can_win.md §7); reading R-F in notes/m1_probe.md.
 DIVERGENCE_VAL = env_float("PROBE_DIVERGENCE_VAL", 10.0)
 
+# …and the failure the threshold above cannot see. A run that learns, then blows
+# up, then settles back at the trivial predictor has a *best* val from before
+# the catastrophe, so `diverged` stays False while the run is plainly a failure.
+# Measured on the two tuning checks: lcnn at 3e-3 reached val 0.414 at epoch 19,
+# hit train 1.5e4 at epoch 21 and ended at 0.995 — worthless — with best_val
+# 0.414. `collapsed` catches that shape: it ended no better than predicting the
+# mean, having previously done materially better. The excursion peaks are kept
+# alongside because they separate the two families qualitatively — GELT recovers
+# from an excursion and the L-CNN does not (notes/m1_probe.md §4.1).
+COLLAPSE_VAL = env_float("PROBE_COLLAPSE_VAL", 1.0)  # the trivial predictor
+
 OUT_DIR = "results/m1_probe"
 # Every knob that changes the result is in the name, so no run can overwrite
 # another — the same rule train_glueball.py's artifact names follow.
@@ -227,10 +238,22 @@ def main():
     test_loss, stats = run_split(model, arch, U3, y, te, device, per_config=True)
     r2, err, _ = jackknife(stats, r2_from_stats)
     diverged = not (best_val < DIVERGENCE_VAL)  # not (<) also catches nan
+    final_val = history[-1][1]
+    max_train = max(h[0] for h in history)
+    max_val = max(h[1] for h in history)
+    collapsed = not (final_val < COLLAPSE_VAL) and best_val < 0.9 * COLLAPSE_VAL
     print(f"\nbest epoch {best_epoch + 1} of {len(history)} "
           f"(val {best_val:.5f}, last {history[-1][1]:.5f})"
           + (f"  ** DIVERGED (> {DIVERGENCE_VAL:g}, the trivial predictor scores "
-             f"1.0) **" if diverged else ""))
+             f"1.0) **" if diverged else "")
+          + (f"  ** COLLAPSED (ended at {final_val:.3f}, no better than the "
+             f"trivial predictor, after reaching {best_val:.3f}) **"
+             if collapsed else ""))
+    if max_train > DIVERGENCE_VAL:
+        print(f"  ** excursion: train peaked at {max_train:.4g}, val at "
+              f"{max_val:.4g}"
+              + ("  — and the run did not come back **" if collapsed else
+                 "  — and the run came back **"))
     print(f"test MSE {test_loss:.5f}   R² = {r2:+.4f} ± {err:.4f} "
           f"(blocked jackknife, block {JACK_BLOCK} configs)")
 
@@ -243,6 +266,8 @@ def main():
         "lr": LR, "weight_decay": WEIGHT_DECAY, "epochs_run": len(history),
         "best_epoch": best_epoch, "best_val": best_val, "history": history,
         "diverged": diverged, "divergence_val": DIVERGENCE_VAL,
+        "collapsed": collapsed, "collapse_val": COLLAPSE_VAL,
+        "final_val": final_val, "max_train": max_train, "max_val": max_val,
         "target_mu": mu, "target_sigma": sigma,
         "n_configs": N_CONFIGS, "n_slices": N_SLICES,
         "test_configs": te.tolist(), "jack_block": JACK_BLOCK,
@@ -251,7 +276,7 @@ def main():
     print(f"wrote {dump}")
     print(json.dumps({"arm": ARM, "target": TARGET, "init": INIT_SEED,
                       "null": NULL, "r2": round(r2, 5), "err": round(err, 5),
-                      "diverged": diverged}))
+                      "diverged": diverged, "collapsed": collapsed}))
 
 
 if __name__ == "__main__":

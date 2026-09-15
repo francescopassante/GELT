@@ -309,21 +309,37 @@ def divergence_report(directory):
     would throw away most of the evidence — at the cost that the rate is over a
     non-uniform mix of learning rates, so it is a count, never a probability.
     """
-    rows = {}
+    rows, excursions = {}, {}
     for path in sorted(glob.glob(os.path.join(directory, "probe_*_stats.pt"))):
         d = torch.load(path, map_location="cpu", weights_only=False)
         if "diverged" not in d:  # written before the flag existed
             continue
         fam = "GELT family" if d["arch"] == "gelt" else "L-CNN family"
-        hit, tot = rows.get(fam, (0, 0))
-        rows[fam] = (hit + bool(d["diverged"]), tot + 1)
+        div, col, tot = rows.get(fam, (0, 0, 0))
+        rows[fam] = (div + bool(d["diverged"]),
+                     col + bool(d.get("collapsed")), tot + 1)
+        # An excursion is a training loss that left the scale entirely. What
+        # separates the families is not whether it happens but whether the run
+        # comes back, so both are counted.
+        if d.get("max_train", 0) > d["divergence_val"]:
+            n_exc, n_back = excursions.get(fam, (0, 0))
+            came_back = not (d["diverged"] or d.get("collapsed"))
+            excursions[fam] = (n_exc + 1, n_back + bool(came_back))
     if not rows:
         return
-    print("\n── R-F  divergence (post-hoc): best val worse than 10× the trivial "
-          "predictor")
+    print("\n── R-F  training failure (post-hoc), per architecture family")
     print("   counts over every run on disk, sweep runs included — not a rate")
-    for fam, (hit, tot) in sorted(rows.items()):
-        print(f"   {fam:14s} {hit} of {tot}")
+    print(f"   {'family':14s} {'diverged':>9s} {'collapsed':>10s} "
+          f"{'excursions':>11s} {'recovered':>10s} {'runs':>6s}")
+    for fam, (div, col, tot) in sorted(rows.items()):
+        n_exc, n_back = excursions.get(fam, (0, 0))
+        print(f"   {fam:14s} {div:9d} {col:10d} {n_exc:11d} {n_back:10d} "
+              f"{tot:6d}")
+    print("   diverged  = best val never beat 10× the trivial predictor")
+    print("   collapsed = ended no better than the trivial predictor, having "
+          "once done better")
+    print("   excursion = training loss left the scale at some epoch; "
+          "'recovered' = and the run still finished usable")
 
 
 def write_tex(results, path):
