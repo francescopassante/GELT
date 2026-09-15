@@ -60,7 +60,11 @@ or "removed in the 2026-09-09 cleanup", that is where it went.
   constructed per-site targets. Holds the arm table, the four-criteria audit
   (criterion 4 is knowingly violated — it is a mechanism assay, not a physics
   result), the pre-registered readings R-A…R-E, and §3.1, where the pre-flight
-  **changed the design before any training code ran**.
+  **changed the design before any training code ran**. §3.2 is the production
+  pre-flight (2026-09-15, both ensembles, all gates pass): T0 exactly 1.0000,
+  T1 headroom 0.92, T2 0.38 — and the **radial linear filter equals the
+  full-ball one to four decimals**, so the M1-free ceiling is a five-parameter
+  object and nothing that separates the arms can be directional weighting.
 - `notes/attention_as_operator.md` — the design record for "the attention map is
   a lattice operator": why ℓ_att failed and the correlator of the attention field
   does not, the three arms, the Z₂ result (§6.1) and its transport to SU(2) (§9).

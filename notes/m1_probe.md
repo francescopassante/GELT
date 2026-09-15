@@ -1,6 +1,7 @@
 # The M1 probe — does input-dependent offset weighting pay?
 
-**Status (2026-09-15): built, pre-flighted, not yet run.** Everything below
+**Status (2026-09-15): built, pre-flight passed on both production ensembles,
+grid not yet run.** Everything below
 labelled *measured* was measured; §4's readings are pre-registered and §5's
 sentence is written before the first production run, on purpose.
 
@@ -178,27 +179,52 @@ so both architectures can build it and still have two layers to aggregate with.
 `f⁴` is still gauge invariant, still supported on the ball, and still exactly
 scale-free.
 
-Post-repair, all three targets clear their gates:
-
-| target | std/\|mean\| | best linear R² (full ball) | radial only | headroom |
-|---|---|---|---|---|
-| T0 | 1.9e−1 | **+1.0000** | +1.0000 | 0.0000 |
-| T1 | 4.6e−2 | +0.0384 | +0.0396 | **0.9616** |
-| T2 | 2.6e−2 | +0.7687 | +0.7691 | **0.2313** |
-
-T0 at exactly 1.0000 is the pipeline validation — it must be, or R-A is not a
-calibration and a linear R² < 1 on T0 would be a fact about the target.
-
-> **Caveat on these numbers.** They were measured locally on *hot random links*
-> (a synthetic cache under seed 99), not on the thermalised β = 2.4, ξ = 3.0
-> ensemble. The linearisation argument that forced `SCALE_POWER` is
-> ensemble-independent — it is about summing 66 sites — but the table is not the
-> production one. **`probe_batch.sh` part 0 re-runs the pre-flight on both real
-> ensembles and part 1 must not start until it has been read.** A target that
-> fails its gate there is dropped, whatever this table says.
-
 Gates, fixed in `probe_preflight.py`: a non-calibration target needs linear
 R² ≤ **0.90** and relative spread ≥ **1e−3**; T0 needs R² ≥ **0.999**.
+
+The table above was measured locally on *hot random links* (a synthetic cache
+under seed 99). The linearisation argument that forced `SCALE_POWER` is
+ensemble-independent — it is about summing 66 sites — but the numbers were not
+the production ones, so part 0 re-ran the gate on the real ensembles.
+
+### 3.2 The production pre-flight — *measured 2026-09-15, V100*
+
+β = 2.4, ξ = 3.0, L = 12, Lt = 24, 200 configs × 6 strided timeslices,
+140/20/40 contiguous chain-ordered.
+
+| target | std/\|mean\| | R² ball, ens0 | ens1 | radial only | headroom |
+|---|---|---|---|---|---|
+| T0 | 2.66e−1 | **+1.0000** | **+1.0000** | +1.0000 | 0.0000 |
+| T1 | 1.01e−1 | +0.0785 ± 0.0040 | +0.0888 ± 0.0052 | +0.0785 / +0.0887 | **0.92 / 0.91** |
+| T2 | 4.53e−2 | +0.6206 ± 0.0026 | +0.6200 ± 0.0019 | +0.6206 / +0.6200 | **0.379 / 0.380** |
+
+**All three clear, on both ensembles.** Three readings worth keeping:
+
+1. **T0 is exactly 1.0000 on real data**, which is the pipeline validation — it
+   must be, or R-A is not a calibration and a linear R² < 1 on T0 would be a
+   fact about the target rather than about the fit.
+2. **The radial filter equals the full-ball filter to four decimals**, on every
+   target and both ensembles. The 129-offset convolution gains *nothing* from
+   directional structure — the optimal linear filter over this ball is radially
+   symmetric, so the M1-free family is effectively five parameters, not 130.
+   That sharpens every downstream reading: **whatever separates the arms, it is
+   not which directions they weight.** It also means the linear ceiling is a
+   cheap and stable object, which the 0.0019–0.0052 errors and the ens0/ens1
+   agreement confirm.
+3. **T2's headroom is 0.38, not the 0.23 the synthetic estimate promised** —
+   the real ensemble is 0.15 *less* linear at p = 4 than hot links are.
+
+**`SCALE_POWER` stays at 4, and that is a decision, not an oversight.** Applied
+to this table, "the smallest p whose linear ceiling is below 0.80" would plausibly
+have selected a lower p — the production ceilings sit ~0.15 under the synthetic
+ones at matched p, so p = 2 may well clear 0.80 here. Re-deriving it now would be
+re-tuning the target after seeing the production data, which is the one thing
+pre-registration exists to prevent, and it would buy nothing: the gate that
+governs go/no-go is R² ≤ 0.90, T2 passes it with 0.38 of headroom against a ΔR²
+resolution of order 0.01, and both architectures reach degree 16. The cost of
+p = 4 over p = 2 is one bilinear layer of the four, paid symmetrically by every
+arm. The scan on production data is worth running *for the write-up*, after the
+readings are in; it must not move p before them.
 
 ---
 
@@ -325,7 +351,12 @@ T2 is the primary target and T1 is the position-only supporting reading.
   but the *spread* is the point: at a single learning rate the three arms are
   scattered across almost the whole range, and R-A would have "failed" for a
   reason with nothing to do with capacity. Read part 1's val curves.
-- Next: `probe_batch.sh` part 0 on the V100, against the real ensembles.
+- **2026-09-15, part 0 on the V100 — all gates pass on both ensembles** (§3.2).
+  T0 exactly 1.0000, T1 headroom 0.92/0.91, T2 headroom 0.379/0.380, ens0 and
+  ens1 agreeing inside their errors. The full-ball and radial linear filters are
+  indistinguishable, so the M1-free ceiling is a five-parameter object. Nothing
+  was retuned on the strength of it.
+- Next: `probe_batch.sh` part 1, the per-arm LR sweep.
 
 ### Reproducing the smoke test
 
