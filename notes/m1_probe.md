@@ -461,7 +461,56 @@ is not transferable to a 40-epoch one, and the sweep's short horizon biases it
 upward exactly as §8's second reading warned. The gate is what caught it; the
 fix is to re-gate `gelt` at 1e−2 and 3e−3 over the full 40-epoch schedule with
 early stopping off, and take the rate that ends lower, not the one that dips
-lowest. The tag matters: an untagged 40-epoch run
+lowest.
+
+#### The re-gate — *measured 2026-09-15*, and it moves the study
+
+Full 40-epoch cosine, no early stopping, T2 / ens0 / seed 0. **Single-seed,
+single-ensemble gate runs — not readings.** No correlated jackknife, no median
+over seeds, no second ensemble.
+
+| arm | rate | R² | | arm | rate | R² |
+|---|---|---|---|---|---|---|
+| `gelt` | **1e−2** | **0.8221 ± 0.0012** | | `gelt` | 3e−3 | 0.7116 ± 0.0013 |
+| `frozen` | **1e−2** | **0.6127 ± 0.0028** | | `frozen` | 3e−3 | 0.4398 ± 0.0028 |
+| `lcnn` | **1e−3** | **0.9425 ± 0.0008** | | `lcnn` | 3e−4 | 0.8931 ± 0.0009 |
+
+Every one of the six converged under its own anneal — the last three epochs move
+the val loss by < 3e−4 in all six — so **40 epochs is the budget** and no arm is
+truncated. The rates confirm: 1e−2 for the GELT family, 1e−3 for `lcnn`.
+
+Two numbers dominate everything else, and they point in opposite directions.
+
+**ΔR²(`gelt` − `frozen`) ≈ +0.21.** The primary reading's direction, at a
+magnitude twenty times the gate's own error bars. If it survives R-A and R-B′
+this is M1 paying, and paying enormously — the first time it has been observed
+to pay at all in three attempts.
+
+**ΔR²(`gelt` − `lcnn`) ≈ −0.12.** The matched-parameter L-CNN does not tie GELT
+here, it *beats* it, by a hundred times the error bars, on the target built to
+favour adaptive offset weighting. That is the opposite of what this study was set
+up to find and it is the more interesting of the two.
+
+**Neither means anything until R-A.** The pre-registered calibration is
+symmetric — both ΔR² on T0 must be within 1σ of zero — and T0 is a pure
+convolution on which input-dependent weighting is worth nothing. If `gelt` beats
+`frozen` on T0 too, the +0.21 is capacity, not mechanism. If `lcnn` beats `gelt`
+on T0 too, the −0.12 is capacity or optimisation, not architecture, and R-C is
+void by the rule written before any of this ran. **R-A is now the next thing to
+measure, ahead of the grid.**
+
+**A candidate explanation, written down before the controls run.** GELT's α is a
+convex combination: non-negative, summing to one over the ball. So a GEMHSA layer
+can only take weighted *averages* over offsets — it can never form a signed
+difference between two offsets in a single aggregation, only across channels or
+layers. An L-Conv's ω is signed and unbounded and forms such differences
+directly. T2 is a shell-*ratio* test, which is built from exactly those
+differences. If that is the mechanism, then **M2 is not free**: the same
+boundedness that gives GELT R-F's 0-of-15 against 4-of-10 costs it expressivity
+here, and the study would have measured both halves of a real trade-off in one
+experiment. `frozen` shares the convex constraint and loses to `gelt` anyway, so
+within the family input-dependence still pays — the two effects are separable and
+both appear live. The tag matters: an untagged 40-epoch run
 would occupy the `gelt`/T2/ens0/seed0 grid cell, which part 3 would then skip,
 leaving one cell at a different budget from the other 71 — a silent,
 uninterpretable inhomogeneity. `PROBE_EPOCHS` for the whole grid is set from
@@ -540,8 +589,17 @@ convolution and every ΔR² is a statement about optimisation.
   epochs patience deletes), and the rate re-gated at the grid's own horizon —
   part 1 swept at `T_max` = 6, which systematically favours rates too large for
   `T_max` = 40.
-- Next: re-gate `gelt` at 1e−2 and 3e−3 over the full 40 epochs, then `frozen`
-  and `lcnn` at the rate that survives, then parts 2–4.
+- **2026-09-15, the re-gate — 40 epochs is the budget, and the study has two
+  live findings before the grid runs.** All six gate runs converged under their
+  own anneal. ΔR²(`gelt` − `frozen`) ≈ +0.21 and ΔR²(`gelt` − `lcnn`) ≈ −0.12,
+  both at many times the gate's error bars, and both meaningless until R-A says
+  whether either is capacity. A candidate mechanism for the second is recorded
+  above before its controls run: α is a convex combination and cannot form
+  signed offset differences, which is what a shell-ratio target is made of.
+- Next: **R-A before the grid** — T0 at 40 epochs for `gelt`, `frozen`, `lcnn`
+  (real grid cells, so part 2 skips them afterwards) — plus `frozen_matched` on
+  T2 for R-B′, and two tuning checks at the untested edges (`gelt` 3e−2,
+  `lcnn` 3e−3). ~70 min against the grid's ~11 h.
 
 ### Reproducing the smoke test
 
