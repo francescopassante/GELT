@@ -986,9 +986,9 @@ def phase_arms(beta, L):
         "\n  The best linear filter is the number a network must clearly beat: "
         "the gap between it and the best net is the nonlinear content of the flow."
     )
-    out = _result_path("arms", beta, L)
+    out = _result_path(f"arms_R{FILTER_R}_t{T_PRIMARY:g}", beta, L)
     torch.save(
-        {"beta": beta, "L": L, "t": T_PRIMARY, "rows": rows,
+        {"beta": beta, "L": L, "t": T_PRIMARY, "rows": rows, "filter_R": FILTER_R,
          "n_offsets": len(offsets), "n_orbits": n_orbits, "Z": Z},
         out,
     )
