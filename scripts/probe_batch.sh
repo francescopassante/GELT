@@ -49,7 +49,8 @@
 #
 #   PROBE_PARTS=0,1              the gates and the sweep (the default)
 #   PROBE_PARTS=2,3,4            the grid, after the sweep has been read
-#   PROBE_LR_GELT=… PROBE_LR_FROZEN=… PROBE_LR_LCNN=…   per-arm LRs for part 2+
+#   PROBE_LR_GELT=… PROBE_LR_FROZEN=… PROBE_LR_LCNN=… PROBE_LR_LCNN_NORM=…
+#                                per-arm learning rates for parts 2+
 #   PROBE_ENSEMBLES="0 1"        which cached ensembles to use
 #   PROBE_SEEDS="0 1 2"          init seeds
 
@@ -77,6 +78,11 @@ SWEEP_ARMS="${PROBE_SWEEP_ARMS:-gelt frozen lcnn lcnn_norm frozen_matched}"
 LR_GELT="${PROBE_LR_GELT:-3e-3}"
 LR_FROZEN="${PROBE_LR_FROZEN:-3e-3}"
 LR_LCNN="${PROBE_LR_LCNN:-3e-3}"
+# lcnn_norm gets its own knob: bounding ω changes the optimisation enough that
+# its sweep optimum (3e-4) is a factor of three below plain lcnn's (1e-3), and
+# giving the control arm the other arm's rate is exactly the handicap part 1
+# exists to remove. Defaults to LR_LCNN when unset.
+LR_LCNN_NORM="${PROBE_LR_LCNN_NORM:-${LR_LCNN}}"
 
 stamp() { date "+%F %T"; }
 wants() { case ",${PARTS}," in *",$1,"*) return 0;; *) return 1;; esac; }
@@ -85,7 +91,8 @@ arm_lr() {
   case "$1" in
     gelt) echo "${LR_GELT}";;
     frozen|frozen_matched) echo "${LR_FROZEN}";;
-    lcnn|lcnn_norm) echo "${LR_LCNN}";;
+    lcnn) echo "${LR_LCNN}";;
+    lcnn_norm) echo "${LR_LCNN_NORM}";;
     *) echo "${LR_GELT}";;
   esac
 }
