@@ -42,18 +42,16 @@ or "removed in the 2026-09-09 cleanup", that is where it went.
   `train_glueball.py`, and the readings fixed in advance. **Run 2026-09-14:
   parity** — ΔA₀(GELT − L-CNN) = +0.007 ± 0.007 (1.1σ), same mass, same
   noise-to-signal (§9.3); the one asymmetry is robustness (§9.2).
-- `notes/topology_go_nogo.md` — **the decision dossier for the topology study**:
-  everything measured (2026-09-14), positive and negative, separating measured
-  from extrapolated from assumed, with the command that reproduces each number.
-  Read this before spending compute on it. Headline facts: infrastructure
-  verified to machine precision; no topological freezing; the primary rung had to
-  move to `t/a² = 4`; β = 2.3 dropped; the flow alone costs 17 GPU-hours against
-  the design's 1–2 h estimate; training cost unmeasured; the study's own stop
-  condition (the best linear filter) is obtainable for ~2 h at one row.
-- `notes/flow_free_topology.md` — the follow-on: *where can attention win, given
-  parity?* The selection rule read off the tie, and the design for the one task
-  that meets it — flow-free topological charge density. **Proposed, nothing
-  built.** Theory in `reports/topology/flow_free_topology.tex` (13 pp).
+- `notes/where_attention_can_win.md` — **the architecture question's running
+  record, and the first thing to read before proposing a GELT-vs-L-CNN task.**
+  Both attempts and why each closed: the 0⁺⁺ tie (structural) and the flow-free
+  topology study (**stopped 2026-09-15**, measured). It separates the two
+  candidate mechanisms — *relative weighting* (M1, never observed to pay) from
+  *boundedness* (M2, observed three times) — states the **four criteria** a
+  candidate task must now satisfy, and proposes the one experiment that targets
+  M2 directly. §5's pre-flight rule is the cheap gate that stopped topology for
+  ~4 h instead of ~60–100: **measure the best classical method at the
+  architecture's own reach before building any training code.**
 - `notes/attention_as_operator.md` — the design record for "the attention map is
   a lattice operator": why ℓ_att failed and the correlator of the attention field
   does not, the three arms, the Z₂ result (§6.1) and its transport to SU(2) (§9).
@@ -71,9 +69,8 @@ or "removed in the 2026-09-09 cleanup", that is where it went.
   Sections 0 (lattice primer) and 1 (L-CNN) are the architecture prerequisites.
 - `notes/resources.md` — textbooks and lecture notes, with a reading order.
 - `reports/` — the LaTeX write-ups and their PDFs: `paper/` (the full draft),
-  `glueball/` (spectroscopy), `attention/` (attention as operator),
-  `topology/` (the flow-free topology design document — a proposal, not a
-  result). They pull figures from `results/` via `\graphicspath`.
+  `glueball/` (spectroscopy), `attention/` (attention as operator). They pull
+  figures from `results/` via `\graphicspath`.
 
 ## Status
 
@@ -202,27 +199,6 @@ implementation (MIT, Favoni et al. 2012.12901), layer sources only, tracked so
   - **`integrated_autocorrelation_time(series, c=6, max_lag=None)`** → `(rho,
     tau_int, window)`, Madras–Sokal windowing. Samples `n_skip ≳ 2·τ_int` apart
     are effectively independent.
-- **`flow.py`** — Wilson (gradient) flow: the smoother that defines the
-  topology targets. `U_μ(x) ← exp(ε Z_μ(x)) · U_μ(x)` with
-  `Z_μ = −[U_μ(x) A_μ(x)]_TA`, the drift read straight off
-  `sampler.staple_sum(..., batched=True)`. **No β** — it cancels against the
-  `g₀²` of the flow equation, and that normalisation is what makes flow time the
-  lattice-unit `t/a²` with `r_sm/a = √(8 t/a²)`; pinned by a test that the
-  linearised flow decays a transverse plane wave as exactly `exp(−k̂² t)`,
-  `k̂² = 4 sin²(k/2)`, to 6 digits.
-  - `wilson_flow(U, group, t, eps=0.02, integrator="rk3", reunitarize_every=0)`
-    — `"rk3"` is Lüscher's third-order Runge–Kutta (three drift evaluations per
-    step, measured ratio 8.5 per halving), `"euler"` is the first-order
-    cross-check. The step is `t / ceil(t/eps)`, so a trajectory lands *exactly*
-    on `t` instead of overshooting: the ladder rungs must be comparable across β.
-  - `flow_trajectory(U, group, times, ...)` — one trajectory, a snapshot per
-    requested time, at the cost of the longest rung alone.
-  - `group_exp` is closed form at `nc = 2` (`X² = −det X·𝟙` ⇒
-    `cos θ·𝟙 + sinc(θ/π)·X`, no `linalg`, so it runs on MPS), `matrix_exp`
-    above; `traceless_antihermitian` is `[·]_TA`.
-  - **SU(N) only.** Z₂ raises: `[M]_TA` of a real 1×1 is identically zero, so
-    the flow would be a silent no-op rather than a smoother.
-
 - **`data.py`** — `build_plaquette_datasets(N, D, L, group, target, ...)`.
   `target` is a callable `target(configs, group) -> Tensor` (bind extras with
   `functools.partial`). `structured=True` keeps the `(N, n_pairs, *Λ, nc, nc)`
@@ -355,24 +331,6 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   an untrained net, whose own cosh fit does not converge). All three are
   repeatable — one value, or one per dump — so both ensembles combine in one
   run; `--proj-eps` cuts the span's Gram, `--out-tag` names the artifacts.
-- **`measure_topology.py`** — the classical half of the flow-free topology
-  study (WP2). Five phases via `TOPO_PHASE`, each caching its artifact:
-  `selftest` (the linear arm's estimator against the naive definition),
-  `chain` (τ_int of the **flowed Q**, not the plaquette — the topological modes
-  are the slow ones, and freezing at β = 2.5 is a live risk), `gate0` (**the
-  gate**: `Q(t)` to `t/a² = 16`, the primary rung must sit on a plateau near an
-  integer; the verdict is PASS / LOOK / **DEGENERATE**, the last when the volume
-  carries no topology at all and the integer test would pass trivially),
-  `ensemble`, `targets` (the five-rung ladder, one trajectory per config) and
-  `arms` (identity, identity×Z, and the **best linear filter** — the
-  least-squares-optimal convolution on the Manhattan-R ball, free and
-  hypercubic-symmetrised). The filter is fitted from FFT correlations (exact on a
-  periodic lattice: `G_ij = A(Δ_j − Δ_i)`, `h_i = C(Δ_i)`) and applied as an FFT
-  cross-correlation, both pinned to 1e-14 against roll-by-roll oracles by the
-  self-test that `arms` runs first. Offsets are de-duplicated modulo L — a
-  Manhattan-8 ball wraps an L=8 torus and the same site under two names makes the
-  normal equations singular. `TOPO_SMOKE=1` runs every phase at L=4 in ~30 s on
-  CPU. **Written and smoke-verified; not yet run at physics sizes.**
 - **`profile_glueball_step.py`** — where one optimizer step goes, per stage,
   forward **and backward** separately. It goes through
   `train_glueball.config_inputs`, i.e. the pipeline the training loop actually
@@ -389,12 +347,6 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   route), and **parity**: an exact lattice reflection (checked first to preserve
   the Wilson action to 1e-9) under which the clover density is odd site by site
   to 1.4e-17 and the plaquette density demonstrably is not.
-- **`test_flow.py`** — the Wilson flow: gauge covariance (1.7e-15), the group
-  preserved over a long trajectory with no reprojection, the action falling
-  monotonically, the drift in the algebra, the closed-form SU(2) exponential
-  against `matrix_exp` (θ = 0 included), RK3's third order against Euler's first
-  and the two agreeing in the limit, the ladder's rungs equal to standalone
-  flows, the `exp(−k̂²t)` normalisation, and the Z₂ guard.
 - **`test_transport.py`** — `l1_ball_offsets` counts, brute-force per-octant
   pattern, octant-relation consistency, gauge covariance for Z₂ and `nc = 2`.
 - **`test_blocks.py`** — gauge equivariance of `GEMHSA`/`GELT` (SU(2) complex128,
@@ -526,7 +478,7 @@ loop-vs-index question, and worth a look after §5.1.
 6. **Offset-chunked attention does not exist** — it is the memory gate on running
    the attention studies at physically large R.
 7. ~~**`topological_charge_density` is not parity-odd.**~~ **Fixed 2026-09-14**
-   (WP0 of `notes/flow_free_topology.md`): `definition="clover"` is now the
+   (`notes/where_attention_can_win.md` §4.1): `definition="clover"` is now the
    default and is parity-odd to 1.4e-17 site by site. `definition="plaquette"`
    keeps the old corner-based density, which is *not* — under the exact lattice
    reflection `x₁ → (−x₁) mod L` with `U'_1(y) = U_1(P(y+1̂))†` (which preserves
@@ -549,9 +501,6 @@ python scripts/train_cnn.py                  # CNN baseline, 1×2 Wilson loop
 python scripts/train_gelt.py                 # GELT, the same problem
 python scripts/train_lcnn.py                 # L-CNN baseline
 python scripts/check_glueball_autocorrelation.py   # τ_int → production n_skip
-python scripts/measure_topology.py           # topology pre-flight: τ_int(Q) + Gate 0
-TOPO_SMOKE=1 python scripts/measure_topology.py    # …all five phases, L=4, 30 s
-TOPO_PHASE=ensemble,targets,arms python scripts/measure_topology.py  # the night run
 python scripts/measure_glueball.py           # classical 0⁺⁺ baseline + ensemble
 python scripts/train_glueball.py             # GELT as a variational operator
 python scripts/fit_glueball_overlap.py [dump]      # cosh fits + A₀ (offline)
@@ -595,15 +544,17 @@ Ranked in `notes/audit_2026-09-06.md` §4, and unchanged by the cleanup:
    on the pre-registered **parity** (`notes/lcnn_shootout.md` §9). One arm is
    provisional: the ens0 60-epoch run is unusable and the row uses a sweep arm
    until a clean run exists (§9.1/§9.2).
-6. **Where attention can win, given parity.** The selection rule and a full
-   design for the one task that meets it — flow-free topological charge density,
-   4D SU(2) — are in `notes/flow_free_topology.md` and
-   `reports/topology/flow_free_topology.tex`. **WP0 (clover + parity test), WP1
-   (`gelt/flow.py`) and WP2 (`scripts/measure_topology.py`) landed
-   2026-09-14**; WP0/WP1 are gated by tests, WP2 is smoke-verified but **its
-   gate has not been read at physics sizes** — that is the next thing to run,
-   and it needs the V100. Nothing after it (WP3–WP5) is built. Odds on the architecture
-   half are honestly ~50–55%; the physics half is not conditional on them.
+6. **Where attention can win, given parity** — `notes/where_attention_can_win.md`.
+   The flow-free topology study that used to sit here was **stopped 2026-09-15**
+   on a measurement, and its code is deleted (§10 of that note). The lesson is
+   the durable part: the target was the output of a classical smoother, and 48
+   APE steps with one fitted scalar reproduce it at R² = 0.978 — free, untrained,
+   and with more reach than any bounded receptive field. **Before proposing the
+   next A/B, run it past the four criteria in §6 and then run §5's pre-flight:
+   measure the best classical method at the architecture's own reach.** §8
+   proposes the one experiment aimed at the mechanism that *has* been observed
+   (boundedness, 0-of-14 vs 3-of-9), which costs a dozen short runs on data
+   already on disk.
 
 ## Things to keep in mind
 

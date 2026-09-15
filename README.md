@@ -23,6 +23,12 @@ well-known observable in lattice QCD.
 > topological-localization readout, the ℓ_att attention-range statistic, the
 > rotation-irrep projection, the Z₂ fair fight — were **deleted**, not archived.
 > They are in the history at commit `cfa0a7e` and their design records with them.
+>
+> **2026-09-15:** the flow-free topology study went the same way — the Wilson
+> flow (`gelt/flow.py`), `scripts/measure_topology.py`, its design record and its
+> 13-page theory report. It was stopped on a measurement, not abandoned:
+> `notes/where_attention_can_win.md` keeps the numbers, the two generalised
+> lessons and the criteria any future GELT-vs-L-CNN task has to clear.
 
 ---
 
@@ -83,7 +89,7 @@ tests/                 pytest: gauge invariance/equivariance, sampler exactness,
                        transport, glueball arithmetic
 notes/                 design records and the run-by-run experimental log
 reports/               LaTeX write-ups and their PDFs (paper / glueball /
-                       attention / topology — the last a proposal, not a result)
+                       attention)
 dumps/                 the two test-split Ō dumps — tracked on purpose
 results/               generated figures, checkpoints, dumps (gitignored)
 datasets/              cached ensembles (gitignored)

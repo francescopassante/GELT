@@ -407,7 +407,7 @@ Consequences, in order:
 
 Two things needed pinning down before parity could be read correctly, and both
 came out of auditing the follow-on question (*given parity, where could attention
-ever win?* — `notes/flow_free_topology.md`).
+ever win?* — `notes/where_attention_can_win.md`).
 
 **Parity also holds in signal-to-noise.** The natural inference from §9.2 is that
 GELT's bounded aggregation should buy smaller error bars. It does not. Blocked
@@ -457,5 +457,8 @@ maximally symmetric channel. Under those three, softmax attention degenerates in
 a convolution with learned per-offset weights, which is L-Conv. §7's first reading
 was right for a stronger reason than it knew.
 
-The selection rule that follows, and the one task in reach that satisfies it, are
-in `notes/flow_free_topology.md`.
+The selection rule that follows is in `notes/where_attention_can_win.md` §3.
+The one task that appeared to satisfy it — flow-free topological charge density —
+was built, run and **stopped on a measurement** (§4 there), which added two
+criteria the rule was missing and turned the search toward §9.2's mechanism
+rather than this section's.

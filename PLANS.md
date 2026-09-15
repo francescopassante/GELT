@@ -47,8 +47,18 @@ ordine di preferenza.
 - **Domanda**: la stessa architettura, usata come mappa link→link invece che come osservabile, produce uno smearing con raggio *tunabile*, esattamente covariante e differenziabile?
 - **Perché conta**: lo smearing è ovunque (spettroscopia, topologia, azioni migliorate) ed è tutto a mano. Nagai–Tomiya hanno fatto la versione locale a cammino fisso; qui la novità è il pesaggio *appreso e dipendente dal contenuto* su tutti i cammini minimi.
 - **Meccanismo**: `U'_μ(x) = project[(1−α)U + Σ_paths w(attention) · staple]`; test di covarianza già esistenti in `test_glueball.py` riusabili verbatim.
-- **Rischio**: **basso**. È il progetto con il miglior rapporto risultato/rischio della lista.
+- **Rischio**: **basso** *come build*, ma vedi l'avvertenza qui sotto: il rapporto risultato/rischio non è più quello scritto qui.
 - **Bonus strategico**: se la mappa è resa invertibile con Jacobiano calcolabile, diventa una *field transformation* dentro HMC — e il piano 3 si fonde col piano 2 dal lato "trivializing map" di Lüscher.
+- > **Svalutato dalla misura del 2026-09-15** (`notes/where_attention_can_win.md`
+  > §4.5, §9). Se il bersaglio è riprodurre APE/HYP/gradient flow, questo piano è
+  > la lezione L1 in forma pura: **48 passi di APE con un solo scalare fittato
+  > riproducono la densità topologica flowed a R² = 0.978**, con zero parametri e
+  > zero training, e la corrispondenza `n·α/6 = t` è esatta a due cifre. Una mappa
+  > appresa giudicata contro uno smoother classico compete dentro un residuo del
+  > 2%. Sopravvive solo se ri-mirato su una metrica *a valle* che nessuno smoother
+  > classico ottimizza — e allora va ri-verificato il criterio 1 di §6, perché la
+  > metrica a valle ovvia è il correlatore di glueball a momento zero, che ha già
+  > pareggiato.
 
 ### 4. Fermioni: multigrid / precondizionatore appreso per l'operatore di Dirac
 
@@ -390,19 +400,22 @@ In the existing GELT results, it was discovered that the connected correlator of
 
 ### Plan 7: Flow-Free Topological Invariants & Non-Perturbative $\theta$-Vacuum Dynamics
 
-> **Status (2026-09-14): this plan now has an audited design document.** After
-> the L-CNN shootout closed on parity, Plan 7 was re-derived from a selection
-> rule for where attention *can* separate from convolution, audited against the
-> literature and against the code, and written up as
-> `notes/flow_free_topology.md` (build order, gates, pre-registered readings) and
-> `reports/topology/flow_free_topology.tex` (13 pp of theory and design). Three
-> things changed in the audit: the L-CNN paper's own topology result is the
-> *algebraic* task (regress the naive density of the configuration it is shown),
-> so the gap is real but narrower than this section assumes; the "save the flow
-> cost" motivation is partly taken by Matsumoto et al., PTEP 2021 023D01; and
-> `topological_charge_density` is not parity-odd as written (CLAUDE.md caveat 7),
-> so the clover definition this section already calls for is a prerequisite, not
-> a refinement. Odds on the architecture half: ~50–55%.
+> **Status (2026-09-15): built, run, and STOPPED on a measurement. Do not
+> restart this without reading `notes/where_attention_can_win.md` §4 first.**
+> The design, the theory report and all of the code (`gelt/flow.py`,
+> `scripts/measure_topology.py`) are deleted; §10 of that note says where they
+> live. What killed it was not attention and not the implementation — every
+> layer verified to machine precision, the charge renormalisation `Z(β)` came out
+> physically correct, and there was no topological freezing. It was the target:
+> **4D APE cooling at n = 48 with one fitted scalar reproduces the flowed
+> topological density at R² = 0.978**, free and untrained, using 48 sites of
+> reach where the network has 8. At matched reach (n = 8) the classical method
+> gets 0.149. The generalised lesson, which now governs every plan in this
+> document, is §5 of that note: **never define the target as the output of a
+> classical algorithm the baseline can also run**, and check for headroom over
+> the best classical method *at the architecture's own reach* before building
+> anything. The physics motivation below is still correct; the task built on it
+> was not.
 
 #### 1. Physics Motivation & The Open Problem
 The topological structure of non-Abelian gauge fields—characterized by the integer Pontryagin index $Q = \frac{1}{32\pi^2} \int d^4x \, \epsilon_{\mu\nu\rho\sigma} \Tr[F_{\mu\nu} F_{\rho\sigma}] \in \mathbb{Z}$—underpins crucial phenomena such as the axial $U(1)_A$ anomaly, the mass of the $\eta'$ meson (Witten–Veneziano formula), and the Strong CP problem. On a discrete lattice, the naive topological charge $Q_{\text{naive}} = \sum_x q(x)$ is not an integer and suffers from large multiplicative and additive renormalizations ($Z_Q < 1$) driven by short-distance UV fluctuations. Existing methods (cooling, gradient/Wilson flow, stout smearing) suppress UV noise by diffusing the gauge field over a flow time $t$. However, this diffusion inevitably distorts or annihilates small instanton-antiinstanton pairs, obscuring the true microscopic topological structure.

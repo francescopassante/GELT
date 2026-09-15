@@ -277,9 +277,11 @@ def test_reflection_preserves_wilson_action():
 def test_clover_charge_is_parity_odd():
     """q_clov(x) is exactly odd under reflection, site by site and summed.
 
-    The gate of ``notes/flow_free_topology.md`` WP0. Parity-oddness is the
-    property the naive density lacks (see the companion test), and it is what
-    makes the clover density usable as a regression target.
+    Parity-oddness is the property the naive density lacks (see the companion
+    test), and it is what makes the clover density a usable regression target.
+    The flow-free topology study this was built for is closed
+    (``notes/where_attention_can_win.md`` §4); the fix it forced is kept because
+    the naive density was simply wrong.
     """
     su2 = SU(2)
     torch.manual_seed(0)
