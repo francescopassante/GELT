@@ -30,9 +30,11 @@
 #   part 4  R-E, the null: the stack frozen at init, only the head trained.
 #           Not "no training" — every arm's head is zero-initialised, so an
 #           untrained net scores R² = 0 by construction and measures nothing.
-#   part 5  R-B', the matched-parameter frozen arm. **Conditional**: run it only
-#           if R-B favours GELT at > 2σ, when "capacity or mechanism?" becomes a
-#           real question. Not in the default parts for that reason.
+#   part 5  R-B', the matched-parameter frozen arm. It was conditional on R-B
+#           favouring GELT at > 2σ. **That condition fired on 2026-09-15** (the
+#           gate measured ~+0.21 at twenty times its error bars), so
+#           `frozen_matched` is now an arm of parts 2 and 3 like any other and
+#           this part is left only for re-running it alone.
 #
 # Everything downstream is offline: scripts/probe_readings.py turns the dumps
 # into the pre-registered table and a LaTeX fragment.
@@ -175,10 +177,10 @@ fi
 
 # ── part 2: T0, the calibration target ───────────────────────────────────────
 if wants 2; then
-  echo "[$(stamp)] ══ part 2: T0 (calibration) — gelt, frozen, lcnn"
+  echo "[$(stamp)] ══ part 2: T0 (calibration) — gelt, frozen, frozen_matched, lcnn"
   for ENS in ${ENSEMBLES}; do
     for SEED in ${SEEDS}; do
-      for ARM in gelt frozen lcnn; do
+      for ARM in gelt frozen frozen_matched lcnn; do
         train "${ARM}" T0 "${ENS}" "${SEED}"
       done
     done
@@ -188,11 +190,14 @@ fi
 
 # ── part 3: T1 and T2 — the primary grid ─────────────────────────────────────
 if wants 3; then
-  echo "[$(stamp)] ══ part 3: T1 and T2 — gelt, frozen, lcnn, lcnn_norm"
-  for ENS in ${ENSEMBLES}; do
-    for SEED in ${SEEDS}; do
-      for TGT in T2 T1; do
-        for ARM in gelt frozen lcnn lcnn_norm; do
+  echo "[$(stamp)] ══ part 3: T2 then T1 — gelt, frozen, frozen_matched, lcnn, lcnn_norm"
+  # Target outermost, so every T2 cell is finished before any T1 cell starts:
+  # T2 is the primary target and a batch that has to be cut short should leave
+  # a complete primary reading, not two half-finished ones.
+  for TGT in T2 T1; do
+    for ENS in ${ENSEMBLES}; do
+      for SEED in ${SEEDS}; do
+        for ARM in gelt frozen frozen_matched lcnn lcnn_norm; do
           train "${ARM}" "${TGT}" "${ENS}" "${SEED}"
         done
       done

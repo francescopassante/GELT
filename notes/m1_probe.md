@@ -514,6 +514,27 @@ runs below:
   grows to 68% on T2, so roughly half of the T2 gap is generic and the rest is
   T2-specific. Any statement of the −0.12 must carry that split.
 
+#### R-B′ on T2 — *measured 2026-09-15*. **The +0.21 is the mechanism.**
+
+`frozen_matched`, 40 epochs, 1e−2, ens0, seed 0: **R² = 0.6336 ± 0.0025** at
+14505 real DOFs, which is 94% of `gelt`'s 15405.
+
+| arm | α | real DOFs | R² | residual | ÷ `gelt` |
+|---|---|---|---|---|---|
+| `gelt` | softmax | 15405 | 0.8221 | 0.1779 | 1.00 |
+| `frozen_matched` | frozen | 14505 (94%) | **0.6336** | 0.3664 | **2.06** |
+| `frozen` | frozen | 9257 (60%) | 0.6127 | 0.3873 | 2.18 |
+
+Restoring the ablation's parameters — **+57%, from 9257 to 14505** — recovered
+**0.021 of the 0.209 gap, one tenth of it**. At 94% of GELT's budget the frozen
+arm still carries **2.06×** GELT's residual error. Capacity is not the
+explanation; nine tenths of the gap is input-dependent offset weighting.
+
+Combined with §4.2's calibration — deleting the score path costs ~10% of
+residual on a pure convolution and 118% here — **M1 pays, and this is the first
+time it has been observed to pay in three attempts.** Single seed, single
+ensemble, one target: the grid is what turns it into a reading.
+
 #### The re-gate — *measured 2026-09-15*, and it moves the study
 
 Full 40-epoch cosine, no early stopping, T2 / ens0 / seed 0. **Single-seed,
@@ -654,6 +675,12 @@ convolution and every ΔR² is a statement about optimisation.
   its T0-calibrated move, which is the scale-appropriate form and is what the
   original was reaching for. Read that way: R-B survives (×1.99), R-C is
   contaminated but not void (×0.45, on a generic 28% L-CNN advantage).
+- **2026-09-15, R-B′ — decisive.** `frozen_matched` at 94% of GELT's parameters
+  scores 0.6336 against `frozen`'s 0.6127 and `gelt`'s 0.8221: +57% parameters
+  buy one tenth of the gap. The ablation is not removing capacity, it is
+  removing the mechanism. `frozen_matched` is promoted out of the conditional
+  part 5 into parts 2 and 3, and part 3 now runs T2 to completion before T1 so
+  a truncated batch still leaves a complete primary reading.
 - Was next: **R-A before the grid** — T0 at 40 epochs for `gelt`, `frozen`, `lcnn`
   (real grid cells, so part 2 skips them afterwards) — plus `frozen_matched` on
   T2 for R-B′, and two tuning checks at the untested edges (`gelt` 3e−2,
