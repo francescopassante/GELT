@@ -56,8 +56,9 @@ Six independent runs per cell (3 seeds × 2 ensembles). Headlines first:
 
 - **Attention pays.** GELT beats the frozen-attention ablation in **all six**
   paired runs on T2, by 0.144 in the median. Restoring the ablation's missing
-  parameters does not close it (5 of 6, +0.162). This is the first time in three
-  attempts that the mechanism has been shown to pay.
+  parameters does not close it (5 of 6, +0.162 — same direction, larger gap, but
+  on its own not statistically significant at six runs). This is the first time
+  in three attempts that the mechanism has been shown to pay.
 - **GELT does *not* beat the L-CNN on accuracy** — 4 of 6, statistically
   nothing. The earlier single-seed result saying the L-CNN won by 0.12 was one
   lucky initialisation and is withdrawn.
@@ -65,8 +66,9 @@ Six independent runs per cell (3 seeds × 2 ensembles). Headlines first:
   0.93. The L-CNN's land between **0.007 and 0.965**. GELT's *worst* run beats
   the L-CNN's median, and the L-CNN's spread is eight times GELT's — same data,
   same budget, same tuned learning rate, only the starting weights differ.
-- **Bounding the L-CNN's weights halves its spread** (0.96 → 0.65) without
-  changing its median. That is the robustness mechanism showing up directly.
+- **Bounding the L-CNN's weights shrinks its spread** (0.96 → 0.65, worst run
+  0.007 → 0.235) without changing its median — consistent with the robustness
+  mechanism, but with six runs it is *suggestive only*, not established.
 - **T1 was a bad target and is withdrawn.** GELT scores 0.996 and everything
   else 0.02–0.06, but that is circular: softmax attention *is* a soft maximum,
   so "the max over the ball" is GELT's own operation restated as a task. All

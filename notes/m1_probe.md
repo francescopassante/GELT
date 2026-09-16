@@ -525,6 +525,11 @@ the one claim six samples can carry.
 
 ### The readings
 
+**R-A passes in its repaired form.** On T0, `gelt` − `lcnn` is 3/6 (median
++0.013, p = 1.0) and `gelt` − `frozen` is 3/6 (median +0.001, p = 1.0). No arm
+has a consistent advantage on a pure convolution, which is exactly what the
+calibration was for and what the 1σ wording could never have shown.
+
 | reading | median ΔR² on T2 | range | sign | p |
 |---|---|---|---|---|
 | **R-B** `gelt` − `frozen` | **+0.144** | [+0.038, +0.327] | **6/6** | **0.031** |
@@ -533,10 +538,16 @@ the one claim six samples can carry.
 | **R-D** `lcnn_norm` − `lcnn` | −0.001 | [−0.319, +0.820] | 3/6 | 1.000 |
 
 - **M1 pays.** R-B is positive in **every one of six paired cells**, median
-  +0.144, and R-B′ agrees in direction in five of six at a *larger* median. The
-  ablation is not removing capacity. This is the first time in three attempts
-  that input-dependent offset weighting has been observed to pay, and it is the
-  study's pre-registered primary reading.
+  +0.144, p = 0.031 — which is the *smallest p a sign test on six samples can
+  return*, so this is the strongest statement the pre-registered design is
+  capable of. Reading it requires only that the direction be consistent, which
+  it is.
+- **R-B′ agrees in direction but does not independently reach significance.**
+  5/6, p = 0.219, at a *larger* median (+0.162) than R-B itself. Capacity is
+  therefore not a plausible explanation — the arm with 94% of GELT's parameters
+  is no closer than the one with 60% — but the capacity-controlled comparison is
+  **suggestive, not significant, at n = 6**, and must be quoted that way. Six
+  seeds would settle it; three per ensemble cannot.
 - **R-C has no consistent winner.** 4 of 6, p = 0.69. **The single-seed gate's
   `lcnn` 0.9425 was a lucky initialisation** — over six cells the L-CNN scores
   0.9649, 0.9425, 0.7496, 0.2413, 0.2182, **0.0072**. Two of its runs beat every
@@ -561,15 +572,39 @@ initialisations on two ensembles — the only difference is which weights the
 model started from. The same ordering holds on T0, where the task is a pure
 convolution and every arm scores ~0.97: `gelt` range 0.010, `lcnn` 0.044.
 
-And **R-D lives here rather than in its ΔR²**: bounding the L-Conv's offset
-weights leaves the median untouched (3/6, p = 1.0) but **halves the dispersion,
-0.96 → 0.65, and lifts the worst run from 0.007 to 0.235**. That is exactly the
-shape `notes/where_attention_can_win.md` §7 predicted — "M2 is a **failure-rate**
-property, not a variance advantage" — and it is the first time it has been
-measured on accuracy rather than on divergence counts. R-F's divergence ledger
-(1/78 against 2/40) is by comparison almost empty, because every grid run used a
-tuned rate: **at a tuned rate the L-CNN does not diverge, it just sometimes
-fails to learn.**
+As variances, with `gelt` as the unit:
+
+| arm | sd over 6 runs | variance ratio | F(5,5) |
+|---|---|---|---|
+| `gelt` | 0.049 | 1.0× | — |
+| `frozen` / `frozen_matched` | 0.147 | 8.9× / 8.8× | p < 0.05 |
+| `lcnn_norm` | 0.283 | 32.9× | p < 0.01 |
+| `lcnn` | 0.415 | **70.6×** | **p < 0.001** |
+
+The F-test assumes normality and the L-CNN's sample is visibly bimodal, so the
+distribution-free statement is the one to quote: **all six GELT runs land above
+0.81, while three of six L-CNN runs land below 0.25.** The variance ratio is
+corroboration, not the claim.
+
+**R-D's signal is here rather than in its ΔR², but it is not significant.**
+Bounding the L-Conv's offset weights leaves the median untouched (3/6, p = 1.0)
+while the range falls 0.96 → 0.65 and the worst run rises 0.007 → 0.235. That is
+the shape `notes/where_attention_can_win.md` §7 predicts — "M2 is a
+**failure-rate** property, not a variance advantage" — but the variance ratio is
+only **2.15×**, F(5,5) ≈ 0.2, so at six runs it is *consistent with* M2 and does
+not establish it. An earlier draft of this note said "halves the dispersion" as
+though that were a result; it is a description of six numbers.
+
+R-F's divergence ledger (1/78 against 2/40) is by comparison almost empty,
+because every grid run used a tuned rate: **at a tuned rate the L-CNN does not
+diverge, it just sometimes fails to learn** — which is why dispersion, not a
+divergence count, is the instrument that sees M2 here.
+
+**The dispersion ordering is not universal.** On T0 it is `gelt` 0.010,
+`frozen` 0.011, `lcnn` 0.044 — but `frozen_matched` 0.471, because one of its
+six runs had a training excursion and finished at 0.517. Excursions occur in
+both families in the grid (GELT-family arms 5 of the 7, on 3× the runs). The
+T2 ordering is clean; the claim is about T2.
 
 ### T1 is circular and is withdrawn as a reading
 
