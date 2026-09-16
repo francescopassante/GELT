@@ -590,6 +590,25 @@ The threshold is fixed at **0.02** before the numbers exist. It runs on the CPU
 in minutes and also times the three DP branches, which is where R-I's cost
 reading comes from.
 
+#### What the gate returned — *measured 2026-09-16*. **Passed, by 30×.**
+
+8 configurations, one timeslice, ens0, CPU:
+
+| shell | offsets | multi-path | ‖ΔT‖/‖T‖ single | ‖ΔT‖/‖T‖ projected | \|TT†−𝟙\| avg |
+|---|---|---|---|---|---|
+| 1 | 6 | 0 | 0.0000 | 0.0000 | 0.0000 |
+| 2 | 18 | 12 | 0.4030 | 0.1356 | 0.1703 |
+
+Over the multi-path offsets alone, **‖T_avg − T_single‖/‖T_single‖ = 0.6045**
+against a threshold of 0.02. Shell 1 is bit-identical in all three modes, which
+is the check that the knob does what it says: every axis offset has exactly one
+shortest path, so there is nothing to average. The average's unitarity defect
+is 0.17 over shell 2 — the loop content, present as predicted.
+
+The cost reading is **not** settled by this run: 0.02 s against 0.01 s at 8
+configurations on the CPU is noise, and `projected` at 0.05 s is the only ratio
+large enough to survive it. `PROBE_GATE_CONFIGS=64` on the GPU is what to quote.
+
 #### Against §6's four criteria
 
 Criterion 4 is knowingly violated, as it is for the whole probe (§3) — these are
