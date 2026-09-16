@@ -158,31 +158,59 @@ def calibrated_ratio(a_t, b_t, a_0, b_0):
     return val, err
 
 
+# Two ensembles are only combinable if they agree. Beyond this many sigma they
+# are measuring different things (or the error is understated) and averaging
+# them manufactures a precision neither has.
+ENSEMBLE_CONSISTENCY_SIGMA = 3.0
+
+
 def combine_ensembles(per_ens):
-    """Inverse-variance mean of independent per-ensemble ``(value, error)``."""
+    """Inverse-variance mean of independent per-ensemble ``(value, error)``.
+
+    Returns ``(value, error, note)``. **Refuses to combine mutually
+    inconsistent ensembles**: inverse-variance weighting assumes the inputs are
+    repeated measurements of one quantity, and two values 60σ apart are not.
+    Quoting their weighted mean with the weighted error was producing
+    thousand-sigma significances out of a disagreement.
+    """
     per_ens = [(v, e) for v, e in per_ens if e > 0]
     if not per_ens:
-        return None, None
+        return None, None, ""
+    if len(per_ens) == 2:
+        (v0, e0), (v1, e1) = per_ens
+        gap = abs(v0 - v1) / max((e0**2 + e1**2) ** 0.5, 1e-12)
+        if gap > ENSEMBLE_CONSISTENCY_SIGMA:
+            # Spread-based error, and say so: this is a range, not a precision.
+            return (0.5 * (v0 + v1), 0.5 * abs(v0 - v1),
+                    f"  ** ensembles disagree at {gap:.0f}σ — "
+                    f"midpoint ± half-range, NOT a combined measurement **")
     w = [1.0 / e**2 for _, e in per_ens]
     val = sum(wi * v for wi, (v, _) in zip(w, per_ens)) / sum(w)
-    return val, (1.0 / sum(w)) ** 0.5
+    return val, (1.0 / sum(w)) ** 0.5, ""
 
 
 def median_over_seeds(pairs):
-    """Median point estimate over init seeds, with the median seed's error.
+    """Median over init seeds, with an error that **includes the seed spread**.
 
     Pre-registered (``notes/lcnn_shootout.md`` §9.2): a mean over seeds is not
     robust to one arm blowing up, and the point of a multi-seed protocol is to
-    survive exactly that. Also returns the full spread so a bimodal set of seeds
-    cannot hide behind its median.
+    survive exactly that.
+
+    The error is ``max(median seed's jackknife, half the seed range)``. The
+    jackknife alone counts only test-configuration noise — with 414k test sites
+    it is ~2e-4 — while the dominant variance here is *across initialisations*,
+    where one L-CNN seed reaches 0.94 on T2 and another 0.14. Quoting the
+    jackknife alone for a median over seeds was reporting 1500σ on quantities
+    whose seeds disagree by 0.9, and that was an artifact of the estimator, not
+    a measurement. Returns ``(median, error, (min, max), seed_dominated)``.
     """
     if not pairs:
-        return None, None, None
+        return None, None, None, False
     vals = [v for v, _ in pairs]
     med = statistics.median(vals)
-    # The error of the seed sitting at (or just below) the median.
-    err = min(pairs, key=lambda p: abs(p[0] - med))[1]
-    return med, err, (min(vals), max(vals))
+    jack = min(pairs, key=lambda p: abs(p[0] - med))[1]
+    spread = 0.5 * (max(vals) - min(vals))
+    return med, max(jack, spread), (min(vals), max(vals)), spread > jack
 
 
 def main():
@@ -196,6 +224,35 @@ def main():
     print(f"M1 probe readings — {len(runs)} runs from {DIR}/")
     print(f"arms {arms}\nensembles {ens}  init seeds {seeds}")
     print("=" * 78)
+
+    # ── Every run, so bimodality cannot hide behind a median ─────────────────
+    print("\nEvery trained run (R² on the held-out split)\n")
+    print(f"   {'arm':16s} {'tgt':4s} {'ens':>4s} {'seed':>5s} {'R²':>9s}  flags")
+    for k in sorted(runs):
+        if k[4]:
+            continue
+        d = runs[k]
+        flags = " ".join(f for f, on in (
+            ("DIVERGED", d.get("diverged")), ("COLLAPSED", d.get("collapsed")),
+            ("excursion", d.get("max_train", 0) > d.get("divergence_val", 1e9)),
+        ) if on)
+        print(f"   {k[0]:16s} {k[1]:4s} {k[2]:4d} {k[3]:5d} {d['r2']:+9.4f}  {flags}")
+
+    # ── Dispersion across initialisations — the robustness statistic ─────────
+    print("\nSpread across the 6 runs (2 ensembles × 3 seeds) of each cell")
+    print("   This is what a median protects against, and what a jackknife over")
+    print("   test configurations cannot see.\n")
+    print(f"   {'arm':16s} {'tgt':4s} {'min':>9s} {'median':>9s} {'max':>9s}"
+          f" {'range':>9s}")
+    for arm in arms:
+        for t in TARGETS:
+            vals = sorted(runs[k]["r2"] for k in runs
+                          if k[0] == arm and k[1] == t and not k[4])
+            if len(vals) < 2:
+                continue
+            print(f"   {arm:16s} {t:4s} {vals[0]:+9.4f} "
+                  f"{statistics.median(vals):+9.4f} {vals[-1]:+9.4f} "
+                  f"{vals[-1] - vals[0]:9.4f}")
 
     # ── Per-arm R², median over seeds ────────────────────────────────────────
     print("\nR² on the held-out split (median over init seeds, "
@@ -212,8 +269,8 @@ def main():
                     for k in runs
                     if k[0] == arm and k[1] == t and k[4] == null
                 ]
-                med, err, spread = median_over_seeds(pairs)
-                table[(arm, t, null)] = (med, err, spread, len(pairs))
+                med, err, spread, dom = median_over_seeds(pairs)
+                table[(arm, t, null)] = (med, err, spread, len(pairs), dom)
                 if med is None:
                     cells.append(f"{'—':>22s}")
                 else:
@@ -237,7 +294,7 @@ def main():
                     ka, kb = (a, t, e, s, False), (b, t, e, s, False)
                     if ka in runs and kb in runs:
                         pairs.append(delta_r2(runs[ka], runs[kb]))
-                med, err, spread = median_over_seeds(pairs)
+                med, err, spread, dom = median_over_seeds(pairs)
                 if med is None:
                     continue
                 per_seed_all += [v for v, _ in pairs]
@@ -245,7 +302,8 @@ def main():
                 print(f"   {t}  ens{e}: {med:+.4f} ± {err:.4f} "
                       f"({med / err if err else float('nan'):+.1f}σ, "
                       f"{len(pairs)} seeds, spread [{spread[0]:+.4f}, "
-                      f"{spread[1]:+.4f}])")
+                      f"{spread[1]:+.4f}])"
+                      + ("  [seed spread dominates]" if dom else ""))
             val, err = combine_ensembles(per_ens)
             if val is None:
                 print(f"   {t}  — no matched pairs")
@@ -274,10 +332,10 @@ def main():
                         if k0a in runs and k0b in runs:
                             cal.append(calibrated_ratio(
                                 runs[ka], runs[kb], runs[k0a], runs[k0b]))
-                med, err, _ = median_over_seeds(pairs)
+                med, err, _, _ = median_over_seeds(pairs)
                 if med is None:
                     continue
-                cmed, cerr, _ = median_over_seeds(cal)
+                cmed, cerr, _, _ = median_over_seeds(cal)
                 tail = ("" if cmed is None
                         else f"   calibrated ×{cmed:.3f} ± {cerr:.3f}")
                 print(f"   {a:>14s}/{b:<14s} {t} ens{e}: "
@@ -288,7 +346,7 @@ def main():
     for arm in arms:
         cells = []
         for t in TARGETS:
-            med, err, _, n = table.get((arm, t, True), (None, None, None, 0))
+            med, err, _, n, _ = table.get((arm, t, True), (None, None, None, 0, False))
             cells.append(f"{'—':>22s}" if med is None else f"{med:+13.4f} ± {err:.4f}")
         if any("—" not in c for c in cells):
             print(f"{arm:16s}" + "".join(cells))
