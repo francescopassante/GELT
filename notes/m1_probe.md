@@ -15,6 +15,52 @@ missing, aimed at the mechanism that has *never* been observed to pay.
 
 ---
 
+## 0. Final readout (2026-09-16)
+
+90 runs, none failed. 5 arms × 3 targets × 3 seeds × 2 ensembles + 6 nulls, 40
+epochs, per-arm rates tuned at that horizon. Every reading is a median over six
+paired `(ensemble, seed)` cells with an exact sign test — the only statistic six
+samples support. Detail and the two estimator repairs: §7.5.
+
+| reading | median ΔR² (T2) | sign | p |
+|---|---|---|---|
+| R-A `gelt`−`lcnn` **on T0** | +0.013 | 3/6 | 1.000 — **calibration passes** |
+| R-A `gelt`−`frozen` **on T0** | +0.001 | 3/6 | 1.000 — **calibration passes** |
+| **R-B** `gelt`−`frozen` | **+0.144** | **6/6** | **0.031** |
+| R-B′ `gelt`−`frozen_matched` | +0.162 | 5/6 | 0.219 |
+| R-C `gelt`−`lcnn` | +0.348 | 4/6 | 0.688 |
+| R-D `lcnn_norm`−`lcnn` | −0.001 | 3/6 | 1.000 |
+
+1. **M1 pays.** R-B positive in all six cells; p = 0.031 is the smallest a sign
+   test on six samples returns. R-B′ agrees in direction at a larger median with
+   94% of GELT's parameters, so capacity is not the explanation — but it is
+   suggestive, not significant, on its own.
+2. **R-C has no consistent winner.** The L-CNN's six T2 runs are 0.9649, 0.9425,
+   0.7496, 0.2413, 0.2182, 0.0072.
+3. **Dispersion is the unplanned result.** sd over six T2 runs: `gelt` 0.049,
+   `frozen`/`frozen_matched` 0.147, `lcnn_norm` 0.283, `lcnn` 0.415 — a 70.6×
+   variance ratio. Distribution-free: **all six GELT runs exceed 0.81; three of
+   six L-CNN runs fall below 0.25.** R-D's dispersion improvement (0.96 → 0.65)
+   points the same way but is only 2.15× and not significant at n = 6.
+4. **R-E null:** 0.005–0.017. Every trained arm is far above its floor.
+
+**Withdrawn during the study**, each with its reason recorded in place rather
+than edited away:
+
+- **T1**, circular — softmax *is* a soft argmax, so "max over the ball" is
+  GELT's own primitive restated as a target (§7.5).
+- **"the matched L-CNN beats GELT by 0.12"** and the residual-ratio analysis
+  built on it — one lucky seed of six (§7.5).
+- **the signed-α hypothesis**, falsified (§4.3) — and it produced the study's
+  largest single number on the way: removing the softmax's *normalisation*
+  costs ≈ 0.50 of R² at matched parameters.
+
+**Limits.** Constructed targets, not physics — a mechanism assay (§3, criterion
+4). n = 6, so p = 0.031 is the ceiling on significance and six seeds per
+ensemble would settle R-B′. One β, one volume, one training budget.
+
+---
+
 ## 1. Why the existing comparisons cannot answer the question
 
 `notes/where_attention_can_win.md` §1 isolates the one architectural difference

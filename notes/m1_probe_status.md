@@ -74,8 +74,9 @@ Six independent runs per cell (3 seeds × 2 ensembles). Headlines first:
   so "the max over the ball" is GELT's own operation restated as a task. All
   claims rest on T2.
 
-Detail, with error bars and the two estimator repairs that were needed before
-any of it could be quoted, is in `notes/m1_probe.md` §7.5.
+The one-page version with every number and p-value is `notes/m1_probe.md` §0;
+the full working, error bars and the two estimator repairs needed before any of
+it was quotable are in §7.5 of the same file.
 
 ## 4b. The earlier single-seed numbers (superseded)
 
