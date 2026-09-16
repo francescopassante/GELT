@@ -50,9 +50,35 @@ inside a ball of radius 4 around each site, which both networks can see.
 
 The last three were added late, to answer section 4's last bullet. See 5b.
 
-## 4. What we have found so far
+## 4. What we have found  — **the 90-run grid finished 2026-09-16**
 
-**All of section 4 is one seed on one ensemble.** It is what the grid is for.
+Six independent runs per cell (3 seeds × 2 ensembles). Headlines first:
+
+- **Attention pays.** GELT beats the frozen-attention ablation in **all six**
+  paired runs on T2, by 0.144 in the median. Restoring the ablation's missing
+  parameters does not close it (5 of 6, +0.162). This is the first time in three
+  attempts that the mechanism has been shown to pay.
+- **GELT does *not* beat the L-CNN on accuracy** — 4 of 6, statistically
+  nothing. The earlier single-seed result saying the L-CNN won by 0.12 was one
+  lucky initialisation and is withdrawn.
+- **What GELT wins on is consistency.** Its six T2 runs land between 0.81 and
+  0.93. The L-CNN's land between **0.007 and 0.965**. GELT's *worst* run beats
+  the L-CNN's median, and the L-CNN's spread is eight times GELT's — same data,
+  same budget, same tuned learning rate, only the starting weights differ.
+- **Bounding the L-CNN's weights halves its spread** (0.96 → 0.65) without
+  changing its median. That is the robustness mechanism showing up directly.
+- **T1 was a bad target and is withdrawn.** GELT scores 0.996 and everything
+  else 0.02–0.06, but that is circular: softmax attention *is* a soft maximum,
+  so "the max over the ball" is GELT's own operation restated as a task. All
+  claims rest on T2.
+
+Detail, with error bars and the two estimator repairs that were needed before
+any of it could be quoted, is in `notes/m1_probe.md` §7.5.
+
+## 4b. The earlier single-seed numbers (superseded)
+
+**This section was written before the grid and is kept only so the change is
+visible.** It is one seed on one ensemble.
 
 - **The attention pays, a lot.** On T2: `gelt` 0.822, `frozen` 0.613 (R², higher
   is better). Gap **+0.21**.

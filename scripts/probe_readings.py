@@ -18,6 +18,7 @@ inverse-variance weighting, which is what two independent ensembles allow.
 """
 
 import glob
+import math
 import os
 import statistics
 import sys
@@ -164,6 +165,29 @@ def calibrated_ratio(a_t, b_t, a_0, b_0):
 ENSEMBLE_CONSISTENCY_SIGMA = 3.0
 
 
+def pooled_pairs(diffs):
+    """``(median, min, max, k_positive, n, sign-test p)`` over paired diffs.
+
+    Each ``(ensemble, seed)`` cell gives one difference between two arms trained
+    on identical data from identical splits, so the cells are the independent
+    units and there are six of them. With n = 6 a median plus a sign test is
+    what the data supports; a mean with a jackknife error is not, and the two
+    disagree badly when one arm is bimodal — which the per-run table shows the
+    L-CNN is on T2.
+
+    The sign test is two-sided and exact: it asks only whether the *direction*
+    is consistent, which is the one claim six samples can carry. 6/6 gives
+    p = 0.031, 5/6 gives 0.219, 4/6 gives 0.688.
+    """
+    n = len(diffs)
+    if n == 0:
+        return float("nan"), float("nan"), float("nan"), 0, 0, float("nan")
+    k = sum(1 for d in diffs if d > 0)
+    tail = max(k, n - k)
+    p = 2.0 * sum(math.comb(n, i) for i in range(tail, n + 1)) / 2**n
+    return (statistics.median(diffs), min(diffs), max(diffs), k, n, min(p, 1.0))
+
+
 def combine_ensembles(per_ens):
     """Inverse-variance mean of independent per-ensemble ``(value, error)``.
 
@@ -304,13 +328,23 @@ def main():
                       f"{len(pairs)} seeds, spread [{spread[0]:+.4f}, "
                       f"{spread[1]:+.4f}])"
                       + ("  [seed spread dominates]" if dom else ""))
-            val, err = combine_ensembles(per_ens)
+            val, err, note = combine_ensembles(per_ens)
             if val is None:
                 print(f"   {t}  — no matched pairs")
                 continue
             sig = val / err if err else float("nan")
-            print(f"   {t}  combined: {val:+.4f} ± {err:.4f}  ({sig:+.1f}σ)")
-            results[(label, t)] = (val, err, sig, per_seed_all)
+            print(f"   {t}  combined: {val:+.4f} ± {err:.4f}  ({sig:+.1f}σ){note}")
+            # The statistic to actually quote: all six paired differences
+            # pooled. Each (ensemble, seed) cell gives one difference between
+            # two arms that saw identical data, so with n = 6 the median and a
+            # sign test say more than a weighted mean of two disagreeing
+            # ensemble medians — and they are robust to the bimodality the
+            # per-run table exposes.
+            med6, lo, hi, k, n, pv = pooled_pairs(per_seed_all)
+            print(f"   {t}  POOLED over {n} (ensemble, seed) cells: "
+                  f"median {med6:+.4f}, range [{lo:+.4f}, {hi:+.4f}], "
+                  f"{k}/{n} favour {a}, sign test p = {pv:.3f}")
+            results[(label, t)] = (val, err, sig, per_seed_all, med6, k, n, pv)
 
     # ── The residual-ratio view, and R-A's repaired form ─────────────────────
     print("\n── residual ratios  (1−R²_a)/(1−R²_b), and the T0-calibrated move")
@@ -411,12 +445,12 @@ def write_tex(results, path):
     """The ΔR² table as a LaTeX fragment, for reports/."""
     lines = [
         r"\begin{tabular}{llrr}", r"\toprule",
-        r"reading & target & $\Delta R^2$ & significance \\", r"\midrule",
+        r"reading & target & median $\Delta R^2$ & sign test \\", r"\midrule",
     ]
-    for (label, t), (val, err, sig, _) in results.items():
+    for (label, t), row in results.items():
         name = label.split("  ", 1)[0]
-        lines.append(f"{name} & {t} & ${val:+.4f} \\pm {err:.4f}$ & "
-                     f"${sig:+.1f}\\sigma$ \\\\")
+        med6, k, n, pv = row[4], row[5], row[6], row[7]
+        lines.append(f"{name} & {t} & ${med6:+.4f}$ & ${k}/{n}$, $p={pv:.3f}$ \\\\")
     lines += [r"\bottomrule", r"\end{tabular}"]
     with open(path, "w") as fh:
         fh.write("\n".join(lines) + "\n")

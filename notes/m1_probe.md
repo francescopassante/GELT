@@ -500,6 +500,97 @@ T2 is the primary target and T1 is the position-only supporting reading.
 
 ---
 
+## 7.5 The grid — *measured 2026-09-16*. What it says, and what it does not.
+
+90 runs, 40 epochs, 5 arms × 3 targets × 3 seeds × 2 ensembles + 6 nulls.
+Nothing failed.
+
+### The estimator had to be repaired twice before the numbers meant anything
+
+The first reading printed `+0.9773 ± 0.0006 (+1539σ)` for a quantity whose seeds
+span `[−0.034, +1.749]`. The blocked jackknife runs over test *configurations* —
+414 000 sites — so it converges to ~2e−4 and only ever measured
+ensemble-sampling noise. **The dominant variance in this study is across
+initialisations**, and no reported error saw it. Two fixes, both in
+`probe_readings.py`: the error on a median over seeds is now
+`max(jackknife, half the seed range)`, and `combine_ensembles` refuses to
+inverse-variance-combine ensembles more than 3σ apart instead of manufacturing a
+precision neither has.
+
+Even that is not the right statistic. Each `(ensemble, seed)` cell gives one
+paired difference between two arms trained on identical data with identical
+splits, so **the six cells are the independent units**. With n = 6 the honest
+statement is a median plus an exact two-sided sign test on the *direction* —
+the one claim six samples can carry.
+
+### The readings
+
+| reading | median ΔR² on T2 | range | sign | p |
+|---|---|---|---|---|
+| **R-B** `gelt` − `frozen` | **+0.144** | [+0.038, +0.327] | **6/6** | **0.031** |
+| **R-B′** `gelt` − `frozen_matched` | +0.162 | [−0.049, +0.245] | 5/6 | 0.219 |
+| **R-C** `gelt` − `lcnn` | +0.348 | [−0.138, +0.895] | 4/6 | 0.688 |
+| **R-D** `lcnn_norm` − `lcnn` | −0.001 | [−0.319, +0.820] | 3/6 | 1.000 |
+
+- **M1 pays.** R-B is positive in **every one of six paired cells**, median
+  +0.144, and R-B′ agrees in direction in five of six at a *larger* median. The
+  ablation is not removing capacity. This is the first time in three attempts
+  that input-dependent offset weighting has been observed to pay, and it is the
+  study's pre-registered primary reading.
+- **R-C has no consistent winner.** 4 of 6, p = 0.69. **The single-seed gate's
+  `lcnn` 0.9425 was a lucky initialisation** — over six cells the L-CNN scores
+  0.9649, 0.9425, 0.7496, 0.2413, 0.2182, **0.0072**. Two of its runs beat every
+  GELT run; three are nearly worthless. Nothing in §4.2's residual-ratio
+  analysis of the gate survives, and the "the L-CNN beats GELT" reading of
+  2026-09-15 is **withdrawn**: it was one seed.
+- **R-D is null on accuracy** and that is not the end of it — see below.
+
+### The result the study was not designed to find
+
+| arm | T2 min | median | max | **range over 6 runs** |
+|---|---|---|---|---|
+| `gelt` | +0.8118 | +0.8509 | +0.9333 | **0.12** |
+| `frozen_matched` | +0.5818 | +0.6830 | +0.9245 | 0.34 |
+| `frozen` | +0.5484 | +0.6733 | +0.8953 | 0.35 |
+| `lcnn_norm` | +0.2353 | +0.6768 | +0.8880 | 0.65 |
+| `lcnn` | **+0.0072** | +0.4954 | **+0.9649** | **0.96** |
+
+**GELT's worst run beats the L-CNN's median. The L-CNN's range is eight times
+GELT's.** Same data, same splits, same budget, same tuned learning rate, three
+initialisations on two ensembles — the only difference is which weights the
+model started from. The same ordering holds on T0, where the task is a pure
+convolution and every arm scores ~0.97: `gelt` range 0.010, `lcnn` 0.044.
+
+And **R-D lives here rather than in its ΔR²**: bounding the L-Conv's offset
+weights leaves the median untouched (3/6, p = 1.0) but **halves the dispersion,
+0.96 → 0.65, and lifts the worst run from 0.007 to 0.235**. That is exactly the
+shape `notes/where_attention_can_win.md` §7 predicted — "M2 is a **failure-rate**
+property, not a variance advantage" — and it is the first time it has been
+measured on accuracy rather than on divergence counts. R-F's divergence ledger
+(1/78 against 2/40) is by comparison almost empty, because every grid run used a
+tuned rate: **at a tuned rate the L-CNN does not diverge, it just sometimes
+fails to learn.**
+
+### T1 is circular and is withdrawn as a reading
+
+`gelt` 0.9963, every other arm 0.02–0.06. That is not a mechanism gap, it is a
+tautology: **softmax attention is a soft argmax**, so "the max of `f` over the
+ball" is GELT's own primitive written down as a target — one layer with a large
+enough score scale computes it exactly, and no fixed kernel can. §5's L1 warns
+against defining a target as a classical algorithm the baseline can also run;
+this is the mirror failure, and `gelt/probe_targets.py`'s own docstring promised
+targets "defined in physics terms, never in terms of GELT's score primitive".
+T1 breaks that promise. It was in the original plan and was not caught before it
+ran. **T1 is reported and not used**; T2 carries every claim above.
+
+### R-E, the null
+
+`gelt` +0.0162, `frozen` +0.0169, `lcnn` +0.0049 on T2 with the stack frozen at
+initialisation. Every trained arm is two orders of magnitude above its own
+random-feature floor, so nothing above is a readout artifact.
+
+---
+
 ## 8. Build log
 
 ### The part-1 sweep — *measured 2026-09-15, V100*
@@ -829,6 +920,15 @@ convolution and every ΔR² is a statement about optimisation.
   signs, still reads the input, and is no longer a convex combination).
   `probe_batch.sh` parts 6 and 7 are the sweep and the runs; they touch no cell
   parts 2–4 produce, so they run on a second GPU alongside the grid.
+- **2026-09-16, the grid — 90 runs, nothing failed, and §7.5 is the result.**
+  M1 pays (R-B 6/6, p = 0.031, median +0.144; R-B′ 5/6 at +0.162). R-C has no
+  consistent winner and **the 2026-09-15 "L-CNN beats GELT" reading is
+  withdrawn — it was one lucky seed of six.** T1 is withdrawn as circular. The
+  finding the design did not anticipate is dispersion: GELT's six T2 runs span
+  0.12 where the L-CNN's span 0.96, GELT's worst beats the L-CNN's median, and
+  bounding the L-Conv's offsets halves the L-CNN's spread without moving its
+  median — M2 measured on accuracy for the first time. The estimator needed two
+  repairs first; both are recorded in §7.5 and neither changed a direction.
 - **2026-09-16, the signed sweep — hypothesis falsified, and usefully.** Both
   signed arms land at 0.23–0.32 against `gelt`'s 0.822, and `signed` diverges at
   3e−2. Dropping the convex constraint does not recover the L-CNN's edge, it
