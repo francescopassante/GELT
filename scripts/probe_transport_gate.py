@@ -127,13 +127,24 @@ def main():
         print(f"{shell:>5} {len(idx):>8} {n_multi:>6} "
               f"{rel_s:>16.4f} {rel_p:>14.4f} {def_a:>12.4f} {def_p:>13.2e}")
 
-    rel_multi, def_multi = shell_stats(T["average"], T["single"], offsets, True)
+    # `shell_stats` reports the defect of its *second* argument, so the average's
+    # own defect is the (average, average) call — the one number that says how
+    # far off the group the averaging takes T, and the reason the difference
+    # above is loop content rather than a rounding detail.
+    rel_multi, def_single = shell_stats(T["average"], T["single"], offsets, True)
+    _, def_multi = shell_stats(T["average"], T["average"], offsets, True)
     print(f"\nOver the multi-path offsets only: ‖T_avg − T_single‖/‖T_single‖ = "
-          f"{rel_multi:.4f}, mean |T_avg T_avg† − 𝟙| = {def_multi:.4f}")
+          f"{rel_multi:.4f}, mean |T_avg T_avg† − 𝟙| = {def_multi:.4f}"
+          f"  (single: {def_single:.1e}, a link product — it never left)")
+    total = sum(secs.values())
     print(f"Build cost at this shape ({tuple(U.shape)}, {DEVICE}): "
-          + ", ".join(f"{m} {secs[m]:.2f}s" for m in modes)
+          + ", ".join(f"{m} {secs[m]:.3f}s" for m in modes)
           + f"  →  single is {secs['average'] / secs['single']:.2f}× cheaper "
             f"than average")
+    if total < 1.0:
+        print("  ** those timings are too small to trust — for the cost reading "
+              "use PROBE_GATE_CONFIGS=64\n     on the GPU, at the shape a "
+              "training step actually builds.")
 
     print()
     if rel_multi < MIN_RELATIVE_DIFFERENCE:
