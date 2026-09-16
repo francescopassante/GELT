@@ -53,13 +53,30 @@ READINGS = [
      "the thesis number; carries the transport confound, read through R-B"),
     ("R-D  M2 control", "lcnn_norm", "lcnn", ("T1", "T2"),
      "if bounding the offset weights closes a gap, the effect was M2"),
-    # Post-hoc (notes/m1_probe.md §8): added after the gate found the matched
-    # L-CNN beating GELT on T2. Softmax does two things at once; these split
-    # them. Identical parameter count to `gelt` in both cases.
-    ("R-G  sign constraint", "signed_bounded", "gelt", ("T2",),
-     "α signed but still bounded: does dropping non-negativity alone recover it"),
-    ("R-H  boundedness", "signed", "signed_bounded", ("T2",),
-     "α signed and unbounded vs signed and bounded: the M2 cost, inside GELT"),
+    # Post-hoc (notes/m1_probe.md §4.3): added after the gate found the matched
+    # L-CNN beating GELT on T2. Softmax does three things at once — it reads the
+    # input, it normalises, and it forces non-negativity — and the three signed
+    # arms peel them off one at a time. Identical parameter count to `gelt` in
+    # all three cases, so no matched-parameter argument is needed for any of
+    # them. R-G was originally posed on `signed_bounded`; the 2026-09-16 sweep
+    # showed that arm varies sign *and* normalisation at once, so it is re-posed
+    # on `signed_l1` (Σ|α| = 1, the softmax's unit gain kept), and T0 rides
+    # along because an arm that is simply harder to train shows it there too.
+    ("R-G  sign constraint", "signed_l1", "gelt", ("T2", "T0"),
+     "α signed at unit L1 gain: does dropping non-negativity alone recover it"),
+    ("R-H  normalisation", "signed_l1", "signed_bounded", ("T2", "T0"),
+     "Σ|α| = 1 vs a free gain, sign held: what the softmax's normalising buys"),
+    ("R-H  boundedness", "signed_bounded", "signed", ("T2",),
+     "bounded vs unbounded α, both unnormalised: the M2 cost, inside GELT"),
+    # The transport arms (notes/m1_probe.md §4.4). R-C confounds M1 with
+    # transport geometry; R-B removed M1 from the comparison, and these remove
+    # the *path averaging* half of the geometry — inside GELT, at identical
+    # parameters, with the offset set untouched. They are read against `gelt`
+    # and never against `lcnn`: a "single" arm is not the L-CNN's transport.
+    ("R-I  path averaging", "gelt", "gelt_single", ("T2", "T0"),
+     "averaged shortest paths vs one canonical path: what the DP average buys"),
+    ("R-I' averaging, on-group", "gelt", "gelt_projected", ("T2", "T0"),
+     "same average projected back onto the group: content, or leaving it"),
 ]
 
 

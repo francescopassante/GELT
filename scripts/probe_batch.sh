@@ -49,6 +49,7 @@
 #
 #   PROBE_PARTS=0,1              the gates and the sweep (the default)
 #   PROBE_PARTS=2,3,4            the grid, after the sweep has been read
+#   PROBE_PARTS=8,9              the transport arms (§4.4), after the CPU gate
 #   PROBE_PARTS=6 then 7         the signed-α side experiment (§8); independent
 #                                of 2-4, so it can share the night on a 2nd GPU
 #   PROBE_LR_GELT=… PROBE_LR_FROZEN=… PROBE_LR_LCNN=… PROBE_LR_LCNN_NORM=…
@@ -91,6 +92,14 @@ SIGNED_ARMS="${PROBE_SIGNED_ARMS:-signed signed_bounded signed_l1}"
 SIGNED_LRS="${PROBE_SIGNED_LRS:-3e-2 1e-2 3e-3 1e-3}"
 LR_SIGNED_BOUNDED="${PROBE_LR_SIGNED_BOUNDED:-${LR_SIGNED}}"
 LR_SIGNED_L1="${PROBE_LR_SIGNED_L1:-${LR_SIGNED}}"
+# Parts 8/9, the transport arms. They are the `gelt` network to the byte fed a
+# different T, so `gelt`'s rate is the honest default — but "same parameters"
+# does not imply "same optimisation", which is what part 8 checks before part 9
+# spends six cells on it.
+TRANSPORT_ARMS="${PROBE_TRANSPORT_ARMS:-gelt_single gelt_projected}"
+TRANSPORT_LRS="${PROBE_TRANSPORT_LRS:-1e-2 3e-3}"
+LR_GELT_SINGLE="${PROBE_LR_GELT_SINGLE:-${LR_GELT}}"
+LR_GELT_PROJECTED="${PROBE_LR_GELT_PROJECTED:-${LR_GELT}}"
 
 stamp() { date "+%F %T"; }
 wants() { case ",${PARTS}," in *",$1,"*) return 0;; *) return 1;; esac; }
@@ -104,6 +113,8 @@ arm_lr() {
     signed) echo "${LR_SIGNED}";;
     signed_bounded) echo "${LR_SIGNED_BOUNDED}";;
     signed_l1) echo "${LR_SIGNED_L1}";;
+    gelt_single) echo "${LR_GELT_SINGLE}";;
+    gelt_projected) echo "${LR_GELT_PROJECTED}";;
     *) echo "${LR_GELT}";;
   esac
 }
@@ -283,6 +294,46 @@ if wants 7; then
     for SEED in ${SEEDS}; do
       for ARM in ${SIGNED_ARMS}; do
         train "${ARM}" "${TGT}" 0 "${SEED}"
+      done
+    done
+  done
+fi
+
+# ── part 8: the transport arms' rate check ───────────────────────────────────
+# `gelt_single` and `gelt_projected` are `gelt` with a different T (§4.4), so
+# `gelt`'s 1e−2 is the default — but the transport is what the score path reads,
+# and an arm fed an on-group T has different score statistics from one fed a
+# sub-unitary T. Two rates, not four: this is a confirmation that 1e−2 is not
+# wrong, not a search. **Run scripts/probe_transport_gate.py first** — if the
+# two transports agree on production configurations, nothing below is worth a
+# GPU-hour, and that is a CPU measurement of a couple of minutes.
+if wants 8; then
+  echo "[$(stamp)] ══ part 8: rate check for the transport arms, ${EPOCHS} epochs"
+  for ARM in ${TRANSPORT_ARMS}; do
+    for SLR in ${TRANSPORT_LRS}; do
+      TAG="_sweep40_lr${SLR}"
+      run_phase "probe_sweep40_${ARM}_lr${SLR}" \
+        "results/m1_probe/probe_${ARM}_T2_ens0_init0${TAG}_stats.pt" \
+        python -u scripts/train_probe.py --arm="${ARM}" --target=T2 \
+        --ensemble-seed=0 --init-seed=0 --epochs="${EPOCHS}" \
+        --lr="${SLR}" --run-tag="${TAG}"
+    done
+  done
+  echo "[$(stamp)]    grep -H 'R² =' logs/probe_sweep40_gelt_*.log"
+fi
+
+# ── part 9: the transport arms proper ────────────────────────────────────────
+# T2 is the reading and T0 the calibration, the full 3 seeds × 2 ensembles so
+# R-I is read on the same six paired cells as R-B and R-C. `gelt`'s own cells
+# are what they are differenced against, and parts 2-3 already produced those.
+if wants 9; then
+  echo "[$(stamp)] ══ part 9: transport arms on T2 and T0, 3 seeds, 2 ensembles"
+  for ENS in ${ENSEMBLES}; do
+    for TGT in T2 T0; do
+      for SEED in ${SEEDS}; do
+        for ARM in ${TRANSPORT_ARMS}; do
+          train "${ARM}" "${TGT}" "${ENS}" "${SEED}"
+        done
       done
     done
   done

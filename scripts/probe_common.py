@@ -194,7 +194,7 @@ def standardize(y, train_idx):
 
 
 # ── Inputs ───────────────────────────────────────────────────────────────────
-def probe_inputs(U3_batch, arch, device):
+def probe_inputs(U3_batch, arch, device, transport="average"):
     """``(W, T)`` for one batch of 3D slices, ``(b, 3, L,L,L, nc,nc)`` in.
 
     W is the *thin* spatial plaquette field — three channels, no smearing. The
@@ -207,13 +207,19 @@ def probe_inputs(U3_batch, arch, device):
     T is the architecture's own transport, which is the confound R-B removes and
     R-C carries: GELT's shortest-path-averaged L1-ball against the L-CNN's
     axis-aligned link products.
+
+    ``transport`` selects which GELT transport is built and is ignored by the
+    L-CNN, whose ``build_axis_transports`` has no such knob. It is a property of
+    the *inputs*, not of the model — every GELT-family arm is the same network
+    whatever it is set to, so the transport arms are matched in parameters by
+    arithmetic rather than by argument (``notes/m1_probe.md`` §4.4).
     """
     U = U3_batch.to(device)
     W = plaquette_tensor(U, gaugegroup)  # (b, 3, L,L,L, nc,nc)
     if arch == "lcnn":
         T = build_axis_transports(U, LCNN_K, gaugegroup)
     else:
-        T = build_transport_average(U, R, gaugegroup)
+        T = build_transport_average(U, R, gaugegroup, mode=transport)
     return W, T
 
 
@@ -237,6 +243,17 @@ ARMS = {
         arch="gelt", alpha_mode="signed_bounded", d_model=16, d_qkv=6
     ),
     "signed_l1": dict(arch="gelt", alpha_mode="signed_l1", d_model=16, d_qkv=6),
+    # The transport arms (notes/m1_probe.md §4.4). `transport` is not a model
+    # keyword — `build_arm` pops it and `probe_inputs` builds T with it — so
+    # these are the `gelt` network to the byte, fed a different transport. The
+    # confound R-C carries has two halves and this varies the first one alone:
+    # path averaging. The *offset set* is untouched — a "single" arm still
+    # reaches every L1-ball offset, diagonals included, along one canonical
+    # path — so neither arm is "GELT with the L-CNN's transport".
+    "gelt_single": dict(arch="gelt", alpha_mode="softmax", d_model=16, d_qkv=6,
+                        transport="single"),
+    "gelt_projected": dict(arch="gelt", alpha_mode="softmax", d_model=16,
+                           d_qkv=6, transport="projected"),
 }
 DOF_TOLERANCE = 0.15
 
@@ -260,6 +277,7 @@ def build_arm(name, seed=0, grad_checkpoint=True):
         raise SystemExit(f"unknown arm {name!r}; expected one of {sorted(ARMS)}")
     spec = dict(ARMS[name])
     arch = spec.pop("arch")
+    spec.pop("transport", None)  # an input property; see `arm_transport`
     torch.manual_seed(seed)
     common = dict(
         gaugegroup=gaugegroup, L=L, D=D3, dtype=MODEL_DTYPE, mlp_hidden=MLP_HIDDEN,
@@ -275,6 +293,18 @@ def build_arm(name, seed=0, grad_checkpoint=True):
             R=R, nhead=2, gemhsa_layers=LAYERS, mlp_zero_init=True, **spec, **common
         )
     return model, arch
+
+
+def arm_transport(name):
+    """Which ``build_transport_average`` mode this arm's inputs are built with.
+
+    Split out of the model spec because it is data, not architecture: two arms
+    that differ only here share every parameter, and `train_probe.py` has to
+    reach it without constructing the model.
+    """
+    if name not in ARMS:
+        raise SystemExit(f"unknown arm {name!r}; expected one of {sorted(ARMS)}")
+    return ARMS[name].get("transport", "average")
 
 
 def dof_table():

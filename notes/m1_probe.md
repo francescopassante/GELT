@@ -52,8 +52,11 @@ than edited away:
 - **"the matched L-CNN beats GELT by 0.12"** and the residual-ratio analysis
   built on it — one lucky seed of six (§7.5).
 - **the signed-α hypothesis**, falsified (§4.3) — and it produced the study's
-  largest single number on the way: removing the softmax's *normalisation*
-  costs ≈ 0.50 of R² at matched parameters.
+  largest single number on the way: at matched parameters, removing the
+  softmax's **non-negativity** costs **0.440** of R² (`signed_l1`, the arm that
+  varies only that), with a further 0.061 for its normalisation and 0.089 for
+  its boundedness. One cell, not the six-cell median the table above reports;
+  part 7 is what promotes it.
 
 **Limits.** Constructed targets, not physics — a mechanism assay (§3, criterion
 4). n = 6, so p = 0.031 is the ceiling on significance and six seeds per
@@ -427,6 +430,173 @@ normalisation, which is now a measured number worth having on its own:
 **≈ 0.50 of R² at matched parameters.** That is a larger effect than anything
 else in this study, including M1's +0.21, and it says the softmax earns its
 place in GELT twice over.
+
+> **Superseded the next day by the arm it proposed.** `signed_l1` restores the
+> normalisation and recovers 0.06 of that 0.50, not most of it, so "the cost of
+> removing the normalisation" is the wrong name for the number. What the
+> ≈ 0.50 measures is *non-negativity*, and the paragraph below is the
+> decomposition that says so. It is left standing because the re-posing of R-G
+> rests on the reasoning above and that reasoning is unaffected.
+
+#### `signed_l1` measured — R-G answered, and the ≈ 0.50 renamed
+
+*Measured 2026-09-16, V100.* The same cell as the table above — T2 / ens0 /
+seed 0, 40 epochs, a complete cosine schedule at each rate — and the same four
+rates. Test R² with the blocked jackknife (block 5 configurations):
+
+| arm | 3e−2 | 1e−2 | 3e−3 | 1e−3 | best |
+|---|---|---|---|---|---|
+| `signed_l1` | 0.0283 | 0.2687 | **0.3819** | 0.3061 | **3e−3**, interior |
+
+**R-G, on the arm that isolates the sign: ΔR²(`signed_l1` − `gelt`) =
+0.3819 − 0.8221 = −0.440.** Freeing the weights to be negative while keeping
+everything else — unit gain, degree, parameter count, transport, value path,
+schedule — costs nearly half the target. **The answer to "is the convex
+constraint what the L-CNN's edge is made of" is no, on the arm that asks it
+cleanly**, and the direction is the same one the two confounded arms already
+pointed. R-G is closed.
+
+The three signed arms now form a ladder in which each step removes exactly one
+property, so the ≈ 0.50 can be split rather than named after its last step:
+
+| arm | Σα = 1 | Σ\|α\| = 1 | α ≥ 0 | R² | step | what the step removes |
+|---|---|---|---|---|---|---|
+| `gelt` | yes | yes | yes | **0.8221** | — | — |
+| `signed_l1` | no | yes | **no** | 0.3819 | **−0.440** | non-negativity |
+| `signed_bounded` | no | **no** | no | 0.3207 | −0.061 | normalisation (gain) |
+| `signed` | no | no | no | 0.2319 | −0.089 | boundedness (degree 2 → 4) |
+
+**75% of the drop is non-negativity alone**; normalisation is 10% and the order
+growth 15%. So the sentence this study takes away is *"removing the softmax's
+non-negativity costs ≈ 0.44 of R² at matched parameters"*, not the
+normalisation sentence written above — the same number, correctly attributed
+only once the third arm existed.
+
+Two things make that reading stronger than a bare accuracy gap:
+
+1. **It cannot be capacity.** For any score the shared score path can produce,
+   softmax's reachable α — positive, summing to one — is a *subset* of
+   `signed_l1`'s unit-L1 sphere: set `score = α` and `α = score/Σ|score|`
+   returns it. The arm that loses 0.44 is the one whose weight set strictly
+   contains the winner's. What the convex constraint buys is therefore
+   optimisation, not expressiveness, which is the same thing the grid's
+   dispersion result says in another currency (§0.3).
+2. **A convex α stack can already build signed radial kernels.** T0's target
+   kernel is `c_r = (−1)^r e^{−r/decay}`, deliberately alternating
+   (`gelt/probe_targets.py`), and `gelt` scores 0.980 on it. Signed combinations
+   are available in the channel mix, the L-Act and the residual stream; what the
+   softmax forbids is only forming one *inside a single aggregation over
+   offsets*. The hypothesis of §4.3 assumed that restriction was binding for a
+   shell-difference target. It is not, and it costs 0.44 to lift it.
+
+**What is not yet established.** One cell, one seed, one ensemble, against
+`gelt`'s 0.8221 on the same cell. The jackknife errors above (±0.002) are the
+*within-run* error and are not the relevant one; the grid's seed-to-seed sd for
+`gelt` on T2 is 0.049 (§0.3), against which 0.440 is nine standard deviations
+and 0.061 is one. So the headline survives a seed at a glance and **both R-H
+increments do not** — part 7's three seeds are what decide those. Part 7 also
+runs T0 for every signed arm, which is the control this section needs and does
+not have: if `signed_l1` is down on the *calibration* target too, then what the
+ladder measures is trainability rather than the constraint, and the split above
+has to be read as residual ratios the way §4.2 read R-C's.
+
+**One rate is still unbracketed.** `signed_bounded`'s optimum sits at the top of
+the grid (3e−2, monotone), so its 0.3207 is a lower bound and the −0.061
+normalisation step is the increment most likely to move. One run at 1e−1 closes
+it, and should be taken before either R-H increment is quoted.
+
+### 4.4 R-I — the transport half of R-C's confound, added post-hoc
+
+**Not pre-registered.** Added 2026-09-16, after §7.5 left R-C with no consistent
+winner and §1's confound unresolved. §1 says GELT and the matched L-CNN differ
+in *two* things: input-dependent offset weights and transport geometry. R-B
+removed the first from the comparison by ablating it inside GELT. This removes
+part of the second, the same way.
+
+`build_transport_average` has carried a `mode` argument since the architecture
+was built, and `mode="single"` takes **one canonical shortest path** — at each
+DP step the lowest-index nonzero direction — instead of averaging over all of
+them. Two arms, `gelt_single` and `gelt_projected`, are the `gelt` network *to
+the byte* (15405 real DOFs, verified by `dof_table`) fed a different `T`. The
+mode lives in the arm spec but is popped before the model is constructed
+(`probe_common.arm_transport`), because it is a property of the inputs.
+
+**What it is not: "GELT with the L-CNN's transport."** The confound has two
+halves and this varies only the first:
+
+- **path averaging** — averaged over all shortest paths, or one path. *Varied.*
+- **the offset set** — GELT's full signed L1-ball, diagonals included, against
+  the L-CNN's axis-aligned link products out to K. **Unchanged**: a `single`
+  arm still reaches every L1-ball offset, it just gets there along one path.
+
+The value path (matrix-bilinear against the L-CB stack) and RoPE also still
+differ. So R-I is read against `gelt` and **never** against `lcnn`; it narrows
+what R-C's remainder can be, and does not turn R-C into a clean comparison.
+
+#### The three modes, and what separates them
+
+| mode | 90° rotation | on the group | multi-path content |
+|---|---|---|---|
+| `average` | yes | **no** | yes |
+| `projected` | yes | yes | yes, deformed |
+| `single` | **no** | yes | **no** |
+
+The middle row is why there are two arms and not one. Averaging leaves the
+group — for a two-path offset `T T† = (𝟙 + Re W)/2` with `W` the Wilson loop the
+two paths enclose — so `average` differs from `single` in *three* properties at
+once, and §4.3 is the cautionary tale about an arm that varies two. `projected`
+holds the rotation symmetry and the multi-path content and puts the result back
+on the group, which splits the gap:
+
+- **ΔR²(`average` − `projected`)** — leaving the group, content held fixed.
+- **ΔR²(`projected` − `single`)** — multi-path content *and* rotation symmetry,
+  which this design cannot separate further.
+
+At the probe's geometry (D = 3, R = 2) the L1-ball has **24 offsets, 12 of them
+multi-path**, each averaging exactly two paths. So the ablation touches half the
+offsets, and `T T† = (𝟙 + Re W)/2` says by how much: the ensemble is the
+anisotropic one, where the *spatial* coupling is `β_s = β/ξ = 0.8`, rough enough
+that `Re W` is far from 1 and the average is far from the single path.
+
+**The pre-registered readings**, on the same six paired cells as R-B and R-C,
+with T0 alongside T2 for the calibration §4.2 established the need for:
+
+- **R-I — path averaging.** ΔR²(`gelt` − `gelt_single`) on T2. Positive means
+  the architecture's averaged transport is load-bearing and part of what R-C
+  cannot attribute is geometry rather than attention. **Zero is a real result
+  too**, and a useful one: the transport is 62.8% of a GELT step
+  (`notes/performance_audit.md` §5.0(v)) and the single-path DP is the cheaper
+  branch, so a tie makes the 3.9× step-cost gap against the L-CNN a choice
+  rather than a cost of the architecture.
+- **R-I′ — on-group averaging.** ΔR²(`gelt` − `gelt_projected`) on T2.
+
+**One confound inside R-I, stated before the run.** `single` breaks 90°-rotation
+equivariance, and T0/T2 are built from *radial* shells of the L1-ball — so a
+loss could be the broken symmetry rather than the missing loop content. R-I′ is
+the arm that sees the difference (`projected` keeps the symmetry), and the T0
+column is the second check: a rotation-symmetric convolution is exactly what T0
+is, so an arm that pays for broken symmetry should pay there too.
+
+#### The gate, before any of it runs
+
+`notes/where_attention_can_win.md` §5 requires a measurement first.
+`probe_preflight.py`'s ceiling does not apply here — it measures the target's
+reachability, which is unchanged — so the gate is a different and weaker shape,
+a **necessary condition**: `scripts/probe_transport_gate.py` measures
+`‖T_avg − T_single‖/‖T_single‖` and `|T T† − 𝟙|` per L1 shell on the production
+ensemble. The two arms are the same network fed the same shape, so if the
+tensors agree numerically they must tie and the six cells would buy a tautology.
+The threshold is fixed at **0.02** before the numbers exist. It runs on the CPU
+in minutes and also times the three DP branches, which is where R-I's cost
+reading comes from.
+
+#### Against §6's four criteria
+
+Criterion 4 is knowingly violated, as it is for the whole probe (§3) — these are
+constructed targets, a mechanism assay and not a physics result. Criterion 3 is
+inherited unchanged: `probe_preflight.py`'s linear ceiling on T2 is 0.6206 and
+`gelt` reaches 0.82, so the headroom the arms fight over is real. Criteria 1 and
+2 are the probe's own design and are untouched by which transport is fed in.
 
 ### 4.1 R-F — divergence, added post-hoc
 
@@ -1020,6 +1190,31 @@ convolution and every ΔR² is a statement about optimisation.
   re-posed on it, and the original two are demoted to measuring what they
   actually measure: **removing the softmax's normalisation costs ≈ 0.50 of R² at
   matched parameters**, the largest single effect in the study.
+- **2026-09-16, `signed_l1` swept — R-G closed, and the 0.50 re-attributed.**
+  0.0283 / 0.2687 / **0.3819** / 0.3061 over 3e−2 … 1e−3, best interior at
+  3e−3, against `gelt`'s 0.8221 on the same cell. ΔR²(`signed_l1` − `gelt`) =
+  **−0.440**: allowing negative weights at the softmax's own unit gain does not
+  recover the L-CNN's edge either, so the sign constraint is not what that edge
+  was made of and R-G is answered on the arm that asks it cleanly. With the
+  three arms as a ladder, 75% of the ≈ 0.50 is **non-negativity**, 10% the
+  normalisation and 15% the degree growth — so the previous entry's headline
+  number keeps its size and changes its name. It cannot be capacity: the
+  softmax's reachable α are a subset of `signed_l1`'s. `probe_readings.py`
+  re-poses R-G on `signed_l1` and splits R-H into its two increments, both
+  carrying T0 alongside T2.
+- **2026-09-16, the transport arms built** (§4.4). `mode="single"` has been in
+  `build_transport_average` since the architecture was; what was missing was a
+  way to feed it to one arm. `probe_common.arm_transport` + `probe_inputs`'s new
+  `transport=` do that, `gelt_single` and `gelt_projected` are `gelt` at 15405
+  DOFs by arithmetic, and `probe_batch.sh` parts 8/9 are the rate check and the
+  six cells. R-I and R-I′ are registered in `probe_readings.py` against `gelt`
+  and never against `lcnn` — a single-path arm is *not* the L-CNN's transport,
+  because the offset set is untouched. `scripts/probe_transport_gate.py` is the
+  §5 gate and its threshold (0.02) is fixed before the number exists.
+- **Next: part 7** at `PROBE_LR_SIGNED=3e-3 PROBE_LR_SIGNED_BOUNDED=3e-2
+  PROBE_LR_SIGNED_L1=3e-3`, plus one bracketing run of `signed_bounded` at 1e−1
+  — its optimum is at the grid's top edge, which makes the −0.061 increment a
+  lower bound. Then the transport gate, and parts 8/9 only if it passes.
 - Was next: **R-A before the grid** — T0 at 40 epochs for `gelt`, `frozen`, `lcnn`
   (real grid cells, so part 2 skips them afterwards) — plus `frozen_matched` on
   T2 for R-B′, and two tuning checks at the untested edges (`gelt` 3e−2,

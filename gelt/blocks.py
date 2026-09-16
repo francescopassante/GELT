@@ -183,6 +183,18 @@ class GEMHSA(nn.Module):
     *below* the softmax arm rather than above it. ``"signed_l1"`` keeps the unit
     gain and the degree while allowing negative weights, and is the GELT analogue
     of ``LConv(normalize_shifts=True)``.
+
+    **What the three measured** (2026-09-16, T2 / ens0 / seed 0, each at its own
+    tuned rate): ``softmax`` 0.822, ``signed_l1`` 0.382, ``signed_bounded``
+    0.321, ``signed`` 0.232. Each step removes one property, so the drop splits
+    as non-negativity 0.440, normalisation 0.061, boundedness 0.089 — the
+    convex constraint is three quarters of it. It is not a capacity effect: for
+    any score the shared score path can produce, the softmax's reachable α are a
+    *subset* of ``"signed_l1"``'s unit-L1 sphere. The hypothesis that motivated
+    the arms — that a shell-difference target needs a signed aggregation over
+    offsets — is falsified; signed combinations are still available in the
+    channel mix and the residual stream, and forbidding them *inside one
+    aggregation* is worth 0.44 of R².
     """
 
     def __init__(

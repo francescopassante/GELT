@@ -46,6 +46,7 @@ from probe_common import (  # noqa: E402
     TARGETS,
     accumulate_stats,
     build_all_targets,
+    arm_transport,
     build_arm,
     env_flag,
     env_float,
@@ -123,7 +124,8 @@ def batches(idx, size):
         yield idx[lo : lo + size]
 
 
-def run_split(model, arch, U3, y, idx, device, optimizer=None, per_config=False):
+def run_split(model, arch, U3, y, idx, device, optimizer=None, per_config=False,
+              transport="average"):
     """One pass over ``idx``. Trains when ``optimizer`` is given, else evaluates.
 
     With ``per_config`` every configuration is scored on its own so the R²
@@ -138,7 +140,7 @@ def run_split(model, arch, U3, y, idx, device, optimizer=None, per_config=False)
         U = U3[chunk].reshape(-1, *U3.shape[2:])  # (b·slices, 3, L,L,L, nc,nc)
         t = y[chunk].reshape(-1, *y.shape[2:]).to(device, torch.float32)
         with torch.set_grad_enabled(train):
-            W, T = probe_inputs(U, arch, device)
+            W, T = probe_inputs(U, arch, device, transport=transport)
             pred = model(W, T)
             loss = torch.nn.functional.mse_loss(pred, t)
         if train:
@@ -178,6 +180,7 @@ def main():
           f"× {N_SLICES} timeslices")
 
     model, arch = build_arm(ARM, seed=INIT_SEED, grad_checkpoint=GRAD_CHECKPOINT)
+    transport = arm_transport(ARM)
     model = model.to(device)
     dofs = real_dofs(model)
     print(f"arm {ARM}: {arch}, {dofs} real DOFs, {ARMS[ARM]}")
@@ -204,9 +207,11 @@ def main():
     t_start = time.time()
     for epoch in range(EPOCHS):
         t0 = time.time()
-        train_loss, _ = run_split(model, arch, U3, y, tr, device, optimizer)
+        train_loss, _ = run_split(model, arch, U3, y, tr, device, optimizer,
+                                  transport=transport)
         scheduler.step()
-        val_loss, _ = run_split(model, arch, U3, y, va, device)
+        val_loss, _ = run_split(model, arch, U3, y, va, device,
+                                transport=transport)
         history.append((train_loss, val_loss))
         mark = ""
         if val_loss < best_val:
@@ -235,7 +240,8 @@ def main():
               "diverged")
     else:
         model.load_state_dict(torch.load(checkpoint, map_location=device))
-    test_loss, stats = run_split(model, arch, U3, y, te, device, per_config=True)
+    test_loss, stats = run_split(model, arch, U3, y, te, device, per_config=True,
+                                 transport=transport)
     r2, err, _ = jackknife(stats, r2_from_stats)
     diverged = not (best_val < DIVERGENCE_VAL)  # not (<) also catches nan
     final_val = history[-1][1]
@@ -261,6 +267,7 @@ def main():
     torch.save({
         "stats": stats, "r2": r2, "r2_err": err, "test_mse": test_loss,
         "arm": ARM, "arch": arch, "target": TARGET, "spec": ARMS[ARM],
+        "transport": transport,
         "real_dofs": dofs, "null": NULL,
         "ensemble_seed": ENSEMBLE_SEED, "init_seed": INIT_SEED, "run_tag": RUN_TAG,
         "lr": LR, "weight_decay": WEIGHT_DECAY, "epochs_run": len(history),

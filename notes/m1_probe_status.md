@@ -46,9 +46,12 @@ inside a ball of radius 4 around each site, which both networks can see.
 | `lcnn_norm` | L-CNN with bounded offset weights | 15077 | 3e−4 |
 | `signed` | GELT, softmax dropped entirely | 15405 | 3e−3 |
 | `signed_bounded` | softmax → tanh (bounded, not normalised) | 15405 | 3e−2 |
-| `signed_l1` | softmax → signed weights that still sum to 1 in size | 15405 | sweeping |
+| `signed_l1` | softmax → signed weights that still sum to 1 in size | 15405 | 3e−3 |
+| `gelt_single` | GELT fed one-path transport | 15405 | 1e−2 |
+| `gelt_projected` | GELT fed the averaged transport, put back on the group | 15405 | 1e−2 |
 
-The last three were added late, to answer section 4's last bullet. See 5b.
+Arms 6–8 were added late, to answer section 4's last bullet (see 5b); the last
+two later still, for the transport half of the R-C confound (see 5c).
 
 ## 4. What we have found  — **the 90-run grid finished 2026-09-16**
 
@@ -126,26 +129,88 @@ same parameter count as `gelt`**, so there is no capacity argument to make.
 CUDA_VISIBLE_DEVICES=1 PROBE_PARTS=6 PROBE_EPOCHS=40 bash scripts/probe_batch.sh
 grep -H "best epoch\|R² =" logs/probe_sweep40_*.log     # pick the rates
 CUDA_VISIBLE_DEVICES=1 PROBE_PARTS=7 PROBE_EPOCHS=40 \
-  PROBE_LR_SIGNED=… PROBE_LR_SIGNED_BOUNDED=… bash scripts/probe_batch.sh
+  PROBE_LR_SIGNED=3e-3 PROBE_LR_SIGNED_BOUNDED=3e-2 PROBE_LR_SIGNED_L1=3e-3 \
+  bash scripts/probe_batch.sh
 ```
 
 It shares no output files with the main grid, so the two can run at once.
 
-**Result so far (2026-09-16): the first guess was wrong, and informatively.**
+**Result (2026-09-16): the first guess was wrong, and informatively.**
 `signed` scores 0.23 and `signed_bounded` 0.32, against `gelt`'s 0.82. Removing
-the softmax does not recover the L-CNN's edge — it wrecks GELT. The reason is
-that the softmax was doing a second job nobody had counted: it **normalises**.
-Its weights always sum to 1, so each layer has a fixed "gain" no matter how big
-the raw scores are. Drop it and either the numbers explode (`signed` diverges at
-the highest rate) or the layer quietly contributes nothing (`signed_bounded`
-trains smoothly to a bad answer).
+the softmax does not recover the L-CNN's edge — it wrecks GELT. The reason
+looked at first like a second job nobody had counted: the softmax **normalises**
+— its weights always sum to 1, so each layer has a fixed "gain" no matter how
+big the raw scores are — and dropping it makes the numbers explode (`signed`
+diverges at the highest rate) or makes the layer quietly contribute nothing
+(`signed_bounded` trains smoothly to a bad answer). Neither arm tested *sign*
+alone; both tested "sign **and** no normalisation" at once.
 
-So neither arm actually tested *sign*; both tested "sign **and** no
-normalisation" at once. `signed_l1` is the repair — negative weights allowed,
-but they still sum to 1 in absolute size — and it is what now answers the
-question. The two original arms keep a result of their own: **removing the
-softmax's normalisation costs about 0.50 of R²**, the biggest single effect
-measured in this study.
+**`signed_l1` is the repair, and it has now run: 0.38.** Negative weights
+allowed, but still summing to 1 in absolute size — the softmax's own gain, with
+only the sign freed. It scores **0.3819** against `gelt`'s **0.8221** on the
+same cell. Two things follow.
+
+- **The sign question is answered, and the answer is no.** Letting the weights
+  go negative does not recover the L-CNN's edge; it costs **0.44 of R²**. The
+  hypothesis that started this side experiment is dead.
+- **The 0.50 was misattributed.** Putting the normalisation back recovers only
+  0.06 of it. Laying the three arms out as a ladder — each step removing exactly
+  one property — gives **non-negativity 0.440, normalisation 0.061,
+  boundedness 0.089**. So the study's largest single number keeps its size and
+  changes its name: it is what **non-negativity** is worth, not normalisation.
+
+And it is not a capacity argument, which is what makes it interesting: the
+weights a softmax can produce are a *subset* of the ones `signed_l1` can. The
+arm with the strictly larger repertoire loses by 0.44. What the constraint buys
+is not what the network *can* express but how easily it finds it — the same
+message as the main grid's dispersion result, in another currency.
+
+**Not yet established:** this is one seed on one ensemble. Against the grid's
+seed-to-seed spread for `gelt` (sd 0.049) the 0.44 is nine standard deviations
+and the two smaller steps are one — so the headline stands a seed and the
+ladder's lower rungs do not. Part 7 (three seeds, plus T0 as the calibration
+control) is what promotes them, and `signed_bounded` needs one extra run at
+1e−1 first: its best rate is at the top edge of the sweep grid, so its 0.32 is
+a lower bound.
+
+## 5c. The transport side experiment (built 2026-09-16, not yet run)
+
+R-C — GELT against the matched L-CNN — has never been a clean comparison,
+because the two differ in *two* things: the attention (which R-B isolated) and
+the **parallel transport**. GELT averages over every shortest path in a diamond
+of radius 2; the L-CNN walks along axes. The averaging has been optional in the
+code since the architecture was built (`mode="single"` takes one path), and
+nobody had ever fed it to an arm.
+
+Two new arms do, at **exactly `gelt`'s parameter count** — they are the same
+network fed a different transport:
+
+| arm | transport | keeps rotation symmetry | stays in the group |
+|---|---|---|---|
+| `gelt` | averaged over all shortest paths | yes | **no** |
+| `gelt_projected` | the average, mapped back onto SU(2) | yes | yes |
+| `gelt_single` | one canonical path | **no** | yes |
+
+**What this can and cannot say.** It measures the *path averaging*, which is
+half the transport difference. It does **not** make GELT's transport into the
+L-CNN's: a single-path arm still reaches every diagonal offset, just along one
+route. So the reading is against `gelt`, never against the L-CNN — it narrows
+what the unexplained part of R-C can be, and does not resolve R-C.
+
+Either answer is worth having. If the averaging pays, part of what looked like
+"attention" in R-C is geometry. If it does not, the cheaper single-path DP is
+available, and the transport is 63% of a GELT step — the 3.9× cost against the
+L-CNN becomes a choice rather than a fact about the architecture.
+
+**Run the CPU gate first**, before any GPU time — the arms are the same network
+fed the same shape, so if the two transports turn out to be numerically close
+the six cells would buy a tautology:
+
+```bash
+python scripts/probe_transport_gate.py          # minutes, no GPU, no sampling
+PROBE_PARTS=8 PROBE_EPOCHS=40 PROBE_LR_GELT=1e-2 bash scripts/probe_batch.sh
+PROBE_PARTS=9 PROBE_EPOCHS=40 PROBE_LR_GELT=1e-2 bash scripts/probe_batch.sh
+```
 
 ## 6. When it finishes
 
@@ -162,9 +227,12 @@ Offline, seconds, no GPU. Prints every reading with proper error bars. The names
 - **R-B′** — `gelt` vs `frozen_matched`. Is R-B just parameters?
 - **R-C** — `gelt` vs `lcnn`. The thesis-relevant number, but confounded.
 - **R-D / R-F** — the two M2 readings: accuracy, and failure rate.
-- **R-G / R-H** — the side experiment: is the L-CNN's win the sign constraint,
-  and what does boundedness cost inside GELT.
+- **R-G / R-H** — the side experiment: is the L-CNN's win the sign constraint
+  (**no** — R-G is −0.44), and what the softmax's normalising and boundedness
+  are worth on top of that, measured inside one architecture.
 - **R-E** — the untrained-network floor.
+- **R-I / R-I′** — the transport arms: does averaging over shortest paths pay,
+  and is it the averaging or the fact that the average is not a group element.
 
 ## 7. Things fixed along the way — do not re-break them
 

@@ -369,8 +369,8 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   an untrained net, whose own cosh fit does not converge). All three are
   repeatable — one value, or one per dump — so both ensembles combine in one
   run; `--proj-eps` cuts the span's Gram, `--out-tag` names the artifacts.
-- **`probe_common.py` / `probe_preflight.py` / `train_probe.py` /
-  `probe_readings.py` / `probe_batch.sh`** — the M1 probe
+- **`probe_common.py` / `probe_preflight.py` / `probe_transport_gate.py` /
+  `train_probe.py` / `probe_readings.py` / `probe_batch.sh`** — the M1 probe
   (`notes/m1_probe.md`). `probe_common.py` holds ensemble, timeslice
   extraction, splits, inputs, standardisation, the five `ARMS` and the R²
   sufficient statistics, so the arms cannot drift — the same discipline that
@@ -384,7 +384,14 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   the correlated jackknife is exact offline and a run is kilobytes.
   `probe_readings.py` prints R-A…R-E and a LaTeX fragment; it **skips
   `run_tag`-carrying dumps**, so the LR sweep's 6-epoch runs cannot be read as
-  the 20-epoch result.
+  the 20-epoch result. An arm's `transport` key is popped before the model is
+  built (`arm_transport`) and fed to `probe_inputs` instead — `gelt_single` and
+  `gelt_projected` are `gelt` to the byte with a different `T`
+  (`notes/m1_probe.md` §4.4), which is why they are read against `gelt` and
+  never against `lcnn`: the offset set is unchanged, so a single-path arm is
+  not the L-CNN's transport. `probe_transport_gate.py` is their own pre-flight,
+  a necessary-condition gate (do the two transports differ on production
+  configurations at all?) rather than a ceiling.
 - **`profile_glueball_step.py`** — where one optimizer step goes, per stage,
   forward **and backward** separately. It goes through
   `train_glueball.config_inputs`, i.e. the pipeline the training loop actually
@@ -586,6 +593,7 @@ python scripts/z2_attention_correlator.py    # the Z₂ attention table
 python scripts/su2_attention_correlator.py   # the SU(2) row (~40 min)
 PROBE_DRY_RUN=1 bash scripts/probe_batch.sh   # the M1 probe: what would run
 python scripts/probe_preflight.py            # §5's gate (offline, seconds)
+python scripts/probe_transport_gate.py       # the transport arms' gate (CPU, minutes)
 PROBE_ARM=frozen PROBE_TARGET=T2 python scripts/train_probe.py
 python scripts/probe_readings.py             # R-A…R-E (offline, seconds)
 PROFILE_DIAGNOSTICS=1 python scripts/profile_glueball_step.py
