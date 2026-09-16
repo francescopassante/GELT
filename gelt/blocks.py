@@ -155,17 +155,34 @@ class GEMHSA(nn.Module):
     on a shell-*ratio* target (``notes/m1_probe.md`` §8).
 
     * ``"signed"`` — ``α = score / n_offsets``: the same input-dependent score,
-      with the softmax removed. Signed and unbounded, i.e. L-Conv-like
-      aggregation that still reads the input. **Identical parameter count to
-      ``"softmax"``** — it is one nonlinearity, not a different model.
-    * ``"signed_bounded"`` — ``α = tanh(score) / n_offsets``: signed but bounded.
+      with the softmax removed. Signed, unbounded, and **not normalised**.
+    * ``"signed_bounded"`` — ``α = tanh(score) / n_offsets``: signed, bounded by
+      ``1/n_offsets`` per offset, still not normalised.
+    * ``"signed_l1"`` — ``α = score / Σ_m |score_m|``: signed, and normalised so
+      that ``Σ_n |α_n| = 1`` at every site. **This is the arm that isolates the
+      sign constraint**; the two above do not, and measurement is why (below).
 
-    The three together separate the two constraints: ``softmax`` → ``signed``
-    changes sign *and* boundedness, ``softmax`` → ``signed_bounded`` changes only
-    the sign, and ``signed_bounded`` → ``signed`` only the boundedness. The
-    ``1/n_offsets`` is a fixed rescale so all three start at the same output
-    magnitude (softmax weights average ``1/n_offsets``); it is absorbable by the
-    channel mix and changes nothing an optimiser cannot undo.
+    All are identical in parameter count to ``"softmax"`` — one nonlinearity
+    replaced, not a different model.
+
+    **Why three and not one** (measured 2026-09-15, ``notes/m1_probe.md`` §4.3).
+    The softmax is not only a weighting rule, it is a *per-site normaliser*:
+    ``Σ_n α_n = 1`` whatever the score magnitude, so the aggregation has unit
+    gain and α contributes degree 0 to the layer's polynomial order. Dropping it
+    naively costs both properties at once:
+
+    - ``"signed"`` has no gain control **and** raises the order — α ∝ score ∝
+      ``Q·K`` is degree 2 in W, so the block goes from degree 2 to degree 4 per
+      layer, i.e. 256 rather than 16 over a four-layer stack.
+    - ``"signed_bounded"`` fixes the order (tanh is O(1)) but not the gain: when
+      the scores are small every α is small and the layer contributes nothing to
+      the residual stream, where a softmax would still pass a full weighted
+      average through.
+
+    Both therefore confound "signed" with "unnormalised", and both measured far
+    *below* the softmax arm rather than above it. ``"signed_l1"`` keeps the unit
+    gain and the degree while allowing negative weights, and is the GELT analogue
+    of ``LConv(normalize_shifts=True)``.
     """
 
     def __init__(
@@ -184,11 +201,9 @@ class GEMHSA(nn.Module):
         alpha_mode: str = "softmax",
     ):
         super(GEMHSA, self).__init__()
-        if alpha_mode not in ("softmax", "frozen", "signed", "signed_bounded"):
-            raise ValueError(
-                f"alpha_mode must be 'softmax', 'frozen', 'signed' or "
-                f"'signed_bounded', got {alpha_mode!r}"
-            )
+        _modes = ("softmax", "frozen", "signed", "signed_bounded", "signed_l1")
+        if alpha_mode not in _modes:
+            raise ValueError(f"alpha_mode must be one of {_modes}, got {alpha_mode!r}")
         self.alpha_mode = alpha_mode
         self.gaugegroup = gaugegroup
         self.D = D
@@ -597,6 +612,11 @@ class GEMHSA(nn.Module):
             return torch.softmax(score, dim=2)
         if self.alpha_mode == "signed_bounded":
             return torch.tanh(score) / self.n_offsets
+        if self.alpha_mode == "signed_l1":
+            # Σ_n |α_n| = 1 per (batch, head, site): the softmax's unit gain,
+            # kept, with the sign freed. clamp_min guards the all-zero score.
+            denom = score.abs().sum(dim=2, keepdim=True).clamp_min(1e-12)
+            return score / denom
         return score / self.n_offsets  # "signed"
 
     def value_path(self, alpha, V_tilde, Q_v):

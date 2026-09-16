@@ -44,10 +44,11 @@ inside a ball of radius 4 around each site, which both networks can see.
 | `frozen_matched` | same, widened back to GELT's budget | 14505 | 1e−2 |
 | `lcnn` | matched-parameter L-CNN | 14801 | 1e−3 |
 | `lcnn_norm` | L-CNN with bounded offset weights | 15077 | 3e−4 |
-| `signed` | GELT, softmax dropped — weights may go negative | 15405 | sweeping |
-| `signed_bounded` | same but bounded (tanh instead of softmax) | 15405 | sweeping |
+| `signed` | GELT, softmax dropped entirely | 15405 | 3e−3 |
+| `signed_bounded` | softmax → tanh (bounded, not normalised) | 15405 | 3e−2 |
+| `signed_l1` | softmax → signed weights that still sum to 1 in size | 15405 | sweeping |
 
-The last two were added late, to answer section 4's last bullet. See section 5b.
+The last three were added late, to answer section 4's last bullet. See 5b.
 
 ## 4. What we have found so far
 
@@ -99,14 +100,23 @@ CUDA_VISIBLE_DEVICES=1 PROBE_PARTS=7 PROBE_EPOCHS=40 \
   PROBE_LR_SIGNED=… PROBE_LR_SIGNED_BOUNDED=… bash scripts/probe_batch.sh
 ```
 
-It shares no output files with the main grid, so the two can run at once. What
-it answers:
+It shares no output files with the main grid, so the two can run at once.
 
-- if `signed_bounded` ≈ `lcnn` (0.94), the L-CNN's win was the *sign* constraint
-  and nothing else — a one-line change to GELT closes it;
-- if `signed` is better than `signed_bounded` but fails more often at high
-  learning rates, then boundedness is a price GELT pays for robustness, measured
-  inside one architecture instead of across two.
+**Result so far (2026-09-16): the first guess was wrong, and informatively.**
+`signed` scores 0.23 and `signed_bounded` 0.32, against `gelt`'s 0.82. Removing
+the softmax does not recover the L-CNN's edge — it wrecks GELT. The reason is
+that the softmax was doing a second job nobody had counted: it **normalises**.
+Its weights always sum to 1, so each layer has a fixed "gain" no matter how big
+the raw scores are. Drop it and either the numbers explode (`signed` diverges at
+the highest rate) or the layer quietly contributes nothing (`signed_bounded`
+trains smoothly to a bad answer).
+
+So neither arm actually tested *sign*; both tested "sign **and** no
+normalisation" at once. `signed_l1` is the repair — negative weights allowed,
+but they still sum to 1 in absolute size — and it is what now answers the
+question. The two original arms keep a result of their own: **removing the
+softmax's normalisation costs about 0.50 of R²**, the biggest single effect
+measured in this study.
 
 ## 6. When it finishes
 

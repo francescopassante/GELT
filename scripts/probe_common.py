@@ -236,6 +236,7 @@ ARMS = {
     "signed_bounded": dict(
         arch="gelt", alpha_mode="signed_bounded", d_model=16, d_qkv=6
     ),
+    "signed_l1": dict(arch="gelt", alpha_mode="signed_l1", d_model=16, d_qkv=6),
 }
 DOF_TOLERANCE = 0.15
 

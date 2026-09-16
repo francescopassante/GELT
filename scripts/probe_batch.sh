@@ -86,7 +86,11 @@ LR_LCNN="${PROBE_LR_LCNN:-3e-3}"
 # exists to remove. Defaults to LR_LCNN when unset.
 LR_LCNN_NORM="${PROBE_LR_LCNN_NORM:-${LR_LCNN}}"
 LR_SIGNED="${PROBE_LR_SIGNED:-1e-2}"
+# Which signed arms parts 6/7 cover, and over which rates.
+SIGNED_ARMS="${PROBE_SIGNED_ARMS:-signed signed_bounded signed_l1}"
+SIGNED_LRS="${PROBE_SIGNED_LRS:-3e-2 1e-2 3e-3 1e-3}"
 LR_SIGNED_BOUNDED="${PROBE_LR_SIGNED_BOUNDED:-${LR_SIGNED}}"
+LR_SIGNED_L1="${PROBE_LR_SIGNED_L1:-${LR_SIGNED}}"
 
 stamp() { date "+%F %T"; }
 wants() { case ",${PARTS}," in *",$1,"*) return 0;; *) return 1;; esac; }
@@ -99,6 +103,7 @@ arm_lr() {
     lcnn_norm) echo "${LR_LCNN_NORM}";;
     signed) echo "${LR_SIGNED}";;
     signed_bounded) echo "${LR_SIGNED_BOUNDED}";;
+    signed_l1) echo "${LR_SIGNED_L1}";;
     *) echo "${LR_GELT}";;
   esac
 }
@@ -254,8 +259,8 @@ fi
 #   CUDA_VISIBLE_DEVICES=1 PROBE_PARTS=6 PROBE_EPOCHS=40 bash scripts/probe_batch.sh
 if wants 6; then
   echo "[$(stamp)] ══ part 6: LR sweep for the signed arms, ${EPOCHS} epochs"
-  for ARM in signed signed_bounded; do
-    for SLR in 3e-2 1e-2 3e-3 1e-3; do
+  for ARM in ${SIGNED_ARMS}; do
+    for SLR in ${SIGNED_LRS}; do
       TAG="_sweep40_lr${SLR}"
       run_phase "probe_sweep40_${ARM}_lr${SLR}" \
         "results/m1_probe/probe_${ARM}_T2_ens0_init0${TAG}_stats.pt" \
@@ -276,7 +281,7 @@ if wants 7; then
   echo "[$(stamp)] ══ part 7: signed arms on T2 and T0, 3 seeds, ens0"
   for TGT in T2 T0; do
     for SEED in ${SEEDS}; do
-      for ARM in signed signed_bounded; do
+      for ARM in ${SIGNED_ARMS}; do
         train "${ARM}" "${TGT}" 0 "${SEED}"
       done
     done

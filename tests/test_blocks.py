@@ -145,6 +145,8 @@ def _oracle_forward(blk, W, T):
         alpha = torch.softmax(score, dim=2)
     elif blk.alpha_mode == "signed_bounded":
         alpha = torch.tanh(score) / blk.n_offsets
+    elif blk.alpha_mode == "signed_l1":
+        alpha = score / score.abs().sum(dim=2, keepdim=True).clamp_min(1e-12)
     else:
         alpha = score / blk.n_offsets
     V_weighted = (
@@ -165,7 +167,9 @@ def _oracle_forward(blk, W, T):
     return W + g.unsqueeze(-1).unsqueeze(-1) * W_mix, score, alpha
 
 
-@pytest.mark.parametrize("alpha_mode", ["softmax", "signed", "signed_bounded"])
+@pytest.mark.parametrize(
+    "alpha_mode", ["softmax", "signed", "signed_bounded", "signed_l1"]
+)
 @pytest.mark.parametrize(
     "group, dtype, D, R, d_qkv",
     [
@@ -711,7 +715,7 @@ def test_gelt_frozen_alpha_gauge_invariant_readout():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("alpha_mode", ["signed", "signed_bounded"])
+@pytest.mark.parametrize("alpha_mode", ["signed", "signed_bounded", "signed_l1"])
 @pytest.mark.parametrize("gate", ["relu", "softplus"])
 def test_signed_modes_are_gauge_equivariant_su2(alpha_mode, gate):
     """Dropping the softmax changes the weights, not the equivariance argument:
@@ -742,7 +746,7 @@ def test_signed_modes_are_gauge_equivariant_su2(alpha_mode, gate):
     )
 
 
-@pytest.mark.parametrize("alpha_mode", ["signed", "signed_bounded"])
+@pytest.mark.parametrize("alpha_mode", ["signed", "signed_bounded", "signed_l1"])
 def test_signed_modes_are_gauge_equivariant_z2(alpha_mode):
     torch.manual_seed(3)
     L, D, R, C, H = 4, 2, 1, 2, 2
@@ -792,7 +796,7 @@ def test_signed_modes_drop_convexity_but_keep_the_input_and_the_budget():
         return sum(p.numel() * (2 if p.is_complex() else 1) for p in m.parameters())
 
     ref = GEMHSA(gg, L, D, R, d_input=C, nhead=H, d_qkv=4, dtype=dtype)
-    for mode in ("signed", "signed_bounded"):
+    for mode in ("signed", "signed_bounded", "signed_l1"):
         blk = GEMHSA(gg, L, D, R, d_input=C, nhead=H, d_qkv=4, dtype=dtype,
                      alpha_mode=mode)
         blk.store_attention = True
@@ -814,3 +818,27 @@ def test_signed_modes_drop_convexity_but_keep_the_input_and_the_budget():
     blk.store_attention = True
     blk(W1, T)
     assert blk._last_alpha.abs().max() <= 1.0 / blk.n_offsets + 1e-12
+
+
+def test_signed_l1_keeps_the_softmax_unit_gain():
+    """``Σ_n |α_n| = 1`` per site, which is what separates it from the other two
+    signed modes: the softmax's gain, with the sign freed. Without it, "signed"
+    means "signed *and* unnormalised" and the comparison confounds them."""
+    torch.manual_seed(5)
+    L, D, R, B, C, H, nc = 4, 3, 1, 2, 4, 2, 2
+    gg, dtype = SU(nc), torch.complex128
+    U = torch.stack([random_links(L, D, gg, dtype=dtype) for _ in range(B)])
+    T = build_transport_average(U, R, gg)
+    W = torch.randn(B, C, *([L] * D), nc, nc, dtype=dtype)
+
+    blk = GEMHSA(gg, L, D, R, d_input=C, nhead=H, d_qkv=4, dtype=dtype,
+                 alpha_mode="signed_l1")
+    blk.store_attention = True
+    blk(W, T)
+    a = blk._last_alpha
+    assert torch.allclose(a.abs().sum(dim=2), torch.ones_like(a.sum(dim=2)),
+                          atol=1e-10)
+    assert (a < 0).any()
+    # The softmax arm has Σ α = 1 with α ≥ 0; this one has Σ|α| = 1 and both
+    # signs. The two coincide only if no weight is ever negative.
+    assert (a.sum(dim=2) - 1.0).abs().max() > 1e-3

@@ -320,10 +320,13 @@ exactly one thing:
 | `signed` | no | **no** | yes |
 | `frozen` | yes | yes | **no** |
 
-- **R-G — the sign constraint.** ΔR²(`signed_bounded` − `gelt`) on T2. If
-  dropping non-negativity alone recovers most of the 0.12, the L-CNN's edge is
-  the convex constraint and not its transport or its bilinear stack.
-- **R-H — boundedness, inside GELT.** ΔR²(`signed` − `signed_bounded`) on T2,
+- **R-G — the sign constraint.** ΔR²(`signed_l1` − `gelt`) on T2. If dropping
+  non-negativity *alone* recovers most of the 0.12, the L-CNN's edge is the
+  convex constraint and not its transport or its bilinear stack. (Originally
+  posed on `signed_bounded`; see below — that arm turned out to vary two things
+  at once, and the re-posing is recorded rather than quietly substituted.)
+- **R-H — normalisation and boundedness, inside GELT.** ΔR²(`signed` −
+  `signed_bounded`) and ΔR²(`signed_bounded` − `signed_l1`) on T2,
   *and* their R-F failure counts across the sweep. This is the M2 trade-off
   measured inside one architecture rather than across two: if `signed` is more
   accurate but fails more often, boundedness is a price paid for robustness, and
@@ -333,6 +336,51 @@ R-D was supposed to carry the M2 accuracy reading and cannot (§8: `lcnn_norm`
 barely learns, and bounding the L-Conv's offsets does not bound the L-CB stack's
 degree growth). **R-H is its replacement**, and a better one — it varies
 boundedness with everything else, transport included, held fixed.
+
+#### The sweep falsified the design, and the failure was the informative part
+
+*Measured 2026-09-16.* Four rates each at 40 epochs, T2 / ens0 / seed 0:
+
+| arm | 3e−2 | 1e−2 | 3e−3 | 1e−3 |
+|---|---|---|---|---|
+| `signed_bounded` | **0.3207** | 0.2923 | 0.2527 | 0.2310 |
+| `signed` | **diverged** (nan) | 0.0498 | **0.2319** | 0.1956 |
+
+`gelt` scores **0.8221** on the same cell. Both signed arms are not slightly
+worse, they are *catastrophically* worse — 0.32 and 0.23 against 0.82 — and
+`signed`'s best rate is interior while `signed_bounded`'s is monotone to the top
+of the grid. **The hypothesis as stated is falsified: dropping the convex
+constraint does not recover the L-CNN's edge, it destroys GELT.**
+
+The *shape* of the failure says why, and it is the reason two arms were not
+enough. **The softmax is not only a weighting rule, it is a per-site
+normaliser.** `Σ_n α_n = 1` holds whatever the score magnitude, so the
+aggregation has unit gain and α contributes degree 0 to the layer's polynomial
+order. Dropping it naively costs both properties at once:
+
+- **`signed` loses gain control *and* raises the order.** α ∝ score ∝ `Q·K` is
+  degree 2 in W, so the block goes from degree 2 to degree 4 per layer — 256
+  rather than 16 over four layers. Hence the nan at 3e−2, and hence its optimum
+  sitting two steps below `gelt`'s.
+- **`signed_bounded` fixes the order and not the gain.** `tanh` is O(1), so the
+  degree is back to 2, which is why it never diverges — but `Σ|α_n|` is free to
+  be anything up to 1, and when the scores are small the layer contributes
+  nothing to the residual stream where a softmax would still pass a full
+  weighted average through. It trains smoothly and converges to a bad place,
+  which is exactly what a gain-starved layer looks like.
+
+So **neither arm isolates the sign**: both confound it with "unnormalised", and
+R-G as posed above cannot be read off either. The arm that does isolate it is
+`signed_l1`, `α = score / Σ_m |score_m|` — unit gain (`Σ|α| = 1`), degree 2,
+signed, identical parameter count. It is the GELT analogue of
+`LConv(normalize_shifts=True)`, which makes the pairing with R-D exact.
+
+**R-G is therefore re-posed on `signed_l1` and the two original arms are
+demoted** to what they actually measure — the cost of removing the softmax's
+normalisation, which is now a measured number worth having on its own:
+**≈ 0.50 of R² at matched parameters.** That is a larger effect than anything
+else in this study, including M1's +0.21, and it says the softmax earns its
+place in GELT twice over.
 
 ### 4.1 R-F — divergence, added post-hoc
 
@@ -781,6 +829,16 @@ convolution and every ΔR² is a statement about optimisation.
   signs, still reads the input, and is no longer a convex combination).
   `probe_batch.sh` parts 6 and 7 are the sweep and the runs; they touch no cell
   parts 2–4 produce, so they run on a second GPU alongside the grid.
+- **2026-09-16, the signed sweep — hypothesis falsified, and usefully.** Both
+  signed arms land at 0.23–0.32 against `gelt`'s 0.822, and `signed` diverges at
+  3e−2. Dropping the convex constraint does not recover the L-CNN's edge, it
+  destroys GELT. The failure shape identifies the softmax as a **per-site
+  normaliser** (unit gain, degree 0 in α) and not merely a weighting rule, so
+  neither arm isolates the sign — both confound it with "unnormalised".
+  `signed_l1` (`α = score / Σ|score|`) is added to do that properly, R-G is
+  re-posed on it, and the original two are demoted to measuring what they
+  actually measure: **removing the softmax's normalisation costs ≈ 0.50 of R² at
+  matched parameters**, the largest single effect in the study.
 - Was next: **R-A before the grid** — T0 at 40 epochs for `gelt`, `frozen`, `lcnn`
   (real grid cells, so part 2 skips them afterwards) — plus `frozen_matched` on
   T2 for R-B′, and two tuning checks at the untested edges (`gelt` 3e−2,
