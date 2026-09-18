@@ -137,6 +137,11 @@ Z2_ARMS="${PROBE_Z2_ARMS:-gelt frozen frozen_matched gelt_single frozen_single l
 # Half-decade steps. An arm whose optimum sits at an edge is not bracketed and
 # the grid must not be run on it — extend and re-run z-sweep, finished points
 # are skipped.
+#
+# **The sweep tag carries the epoch count.** Without it, re-running at a longer
+# horizon would skip every finished run and change nothing, silently — the same
+# class of defect as the _n<N> suffix below, and worse, because the thing being
+# varied is exactly the thing the skip rule would hide.
 Z2_SWEEP_LRS="${PROBE_Z2_SWEEP_LRS:-1e-2 3e-3 1e-3 3e-4}"
 # …and the L-CNN arms also over init scale, because 0.2 is a gate verdict and
 # not an optimum. Only scales the gate passed belong here.
@@ -452,13 +457,13 @@ if wants z-sweep; then
                 z2_train "${ARM}" "${TGT}" "${BETA}" 0 \
                   --epochs="${Z2_SWEEP_EPOCHS}" --lr="${SLR}" \
                   --z2-lcnn-conv-init="${CI}" \
-                  --run-tag="_sweep_lr${SLR}_ci${CI}"
+                  --run-tag="_sweep_e${Z2_SWEEP_EPOCHS}_lr${SLR}_ci${CI}"
               done
               ;;
             *)
               z2_train "${ARM}" "${TGT}" "${BETA}" 0 \
                 --epochs="${Z2_SWEEP_EPOCHS}" --lr="${SLR}" \
-                --run-tag="_sweep_lr${SLR}"
+                --run-tag="_sweep_e${Z2_SWEEP_EPOCHS}_lr${SLR}"
               ;;
           esac
         done

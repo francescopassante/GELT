@@ -132,8 +132,15 @@ def main():
         print(f"** {len(cut)} of {len(paths)} runs ended at their best epoch and were")
         print(f"   still improving by more than {STILL_IMPROVING:.0%} over the last")
         print("   quarter. The epoch budget is the binding constraint, not the rate:")
-        print("   re-run the sweep at a longer horizon before fixing any rate.")
-        print("     PROBE_PARTS=z-sweep PROBE_Z2_SWEEP_EPOCHS=40 bash scripts/probe_batch.sh")
+        print("   the horizon has to be settled before any rate is fixed.")
+        horizon = max((r[4] for r in rows if r[8]), default=0)
+        print(f"   These runs were cut off at {horizon} epochs. Do **not** guess the")
+        print("   next horizon and re-sweep everything — measure it with a few long")
+        print("   runs at the rates currently in contention, see where the curve")
+        print(f"   flattens, then sweep there:")
+        print(f"     python -u scripts/train_probe.py --group=z2 --arm=gelt "
+              f"--target=V1 \\\n       --z2-beta=0.752 --epochs={horizon * 3} "
+              f"--lr=<best so far> --run-tag=_horizon{horizon * 3}")
         for name in cut[:10]:
             print(f"     {name}")
         if len(cut) > 10:
