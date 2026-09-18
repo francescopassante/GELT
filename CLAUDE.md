@@ -56,13 +56,17 @@ or "removed in the 2026-09-09 cleanup", that is where it went.
   architecture's own reach before building any training code.**
   **§9 (2026-09-18) is attempt 4, proposed and pre-flighted, not built**: vortex-
   cluster geometry in 3D Z₂ on the cached ensembles, the first candidate that is
-  a physics observable and clears all four criteria. **The pre-flight is built
-  and passes all five gates** (`scripts/z2_vortex_preflight.py`,
-  `gelt/vortex_targets.py`, `tests/test_vortex_targets.py`): on the production
-  geometry it measures R² = 0.186 ± 0.037 for the best linear filter at
-  Manhattan 8 against 0.736 ± 0.033 for the best *local* classical algorithm and
-  1.0 for the target, so the task's difficulty is concentrated in routing
-  (connectivity is worth +0.550 over density at the same reach). It also records a measured identity that changed the
+  a physics observable and clears all four criteria. **The pre-flight passes all
+  five gates on all four cached ensembles** (2026-09-18;
+  `scripts/z2_vortex_preflight.py`, `gelt/vortex_targets.py`,
+  `tests/test_vortex_targets.py`). At the chosen primary coupling β = 0.7520 the
+  best linear filter at Manhattan 8 reaches R² = 0.152 against 0.671 for the
+  best *local* classical algorithm and 1.0 for the target, so the difficulty is
+  routing, not density. **The β ladder is fixed in §9.6: primary 0.7520,
+  replication 0.7450** — the two that rank first and second on headroom, on a
+  low linear ceiling and on a balanced cluster competition. Note the tension
+  §9.4 records: the linear ceiling *rises* towards β_c (0.106 → 0.280), so the
+  architecture question is cleanest where the physics is least critical. It also records a measured identity that changed the
   design: **in Z₂ GELT's path-averaged transport is a hard vortex mask**
   (`T_Δ² = (1 + P_enclosed)/2 ∈ {0,1}`) while the L-CNN's axis transport acts as
   the identity, which is a *third* input-dependent weighting (M3) and forces a

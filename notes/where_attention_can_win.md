@@ -432,9 +432,10 @@ no fermions and no U(1) sampler entry. It is a second thesis, not a chapter.
 
 ## 9. Proposal 2 — vortex-cluster geometry in 3D Z₂ (2026-09-18)
 
-**Status: proposed, pre-flighted, no training code.** The supervision, the
-gate and their tests are built (§9.5); nothing has been trained and no arm has
-been run. Everything labelled *measured* below was measured on 2026-09-18 on
+**Status: proposed, pre-flight passed on all four cached ensembles
+(2026-09-18), no training code.** The supervision, the gate and their tests are
+built (§9.5), the gate has been run in production and **the β ladder is now
+fixed in §9.6**; nothing has been trained and no arm has been run. Everything labelled *measured* below was measured on 2026-09-18 on
 freshly sampled Z₂ configurations at production geometry. The pre-flight is §5's gate run before any training code exists,
 and it did its job twice — once on the task (§9.4) and once on the design
 (§9.3), which it changed.
@@ -579,19 +580,47 @@ rest have V1 exactly 0 and a linear filter predicts them from the local count.
 An all-sites R² therefore mostly scores *"is there a vortex here"*, which is not
 the question. Every number below restricts to vortex-carrying sites, and the
 linear arms are refitted there so the comparison is a ceiling and not a
-transplanted predictor. This was not obvious before the code ran — the all-sites
-column reads 0.65 where the masked one reads 0.19.
+transplanted predictor. This was not obvious before the code ran — on the first
+pass the all-sites column read 0.65 where the masked one read 0.19.
 
-Measured at β = 0.7585 on the **production geometry** (48 × 24 × 24, 40
-configurations, reach Manhattan 8 = 4 layers × R 2 = 4 layers × K 2, blocked
-jackknife over configurations):
+**Measured on the four cached ensembles** (48 × 24 × 24, N = 2000, the same
+caches `train_z2_glueball.py` uses; 100 configurations each, reach Manhattan 8 =
+4 layers × R 2 = 4 layers × K 2, blocked jackknife over configurations). All
+four clear every gate:
 
-| method at Manhattan 8 | R² (vortex sites) | AUC for "in the largest cluster" |
-|---|---|---|
-| linear filter on the radial shells — the **M1-free ceiling** | **+0.186 ± 0.037** | 0.701 |
-| the full ball at radius 4 (direction adds almost nothing) | +0.217 ± 0.044 | 0.718 |
-| **+ local component size** (BFS truncated at reach 8) | **+0.736 ± 0.033** | 0.885 |
-| the target itself | 1.000 | 1.000 |
+| β | β_c − β | p_neg | largest-cluster share | R² linear (**M1-free ceiling**) | R² + local connectivity | headroom | routing |
+|---|---|---|---|---|---|---|---|
+| 0.7450 | 0.0164 | 0.0544 | 0.587 | +0.106 | +0.747 | **+0.253** | +0.641 |
+| **0.7520** | 0.0094 | 0.0440 | 0.428 | +0.152 | +0.671 | **+0.329** | +0.519 |
+| 0.7560 | 0.0054 | 0.0364 | 0.314 | +0.156 | +0.806 | +0.194 | +0.650 |
+| 0.7585 | 0.0029 | 0.0324 | 0.212 | +0.280 | +0.762 | +0.239 | +0.482 |
+
+*headroom* is `1 − R²(local)`, the room any architecture has over the strongest
+classical method at its own reach; *routing* is `R²(local) − R²(linear)`, how
+much of the task is connectivity rather than density. Per-β error bars, the AUC
+columns and the all-sites readings are in `results/z2_vortex/preflight_b<β>.pt`.
+
+**Three things the ladder says**, and the third is the one that decides §9.6:
+
+1. **Everything is monotone in β except the thing that matters.** The gas thins
+   (`p_neg` 0.054 → 0.032) and the percolating cluster's share falls (0.587 →
+   0.212) as β → β_c, both as expected. `R²(local)` does **not** follow: 0.747,
+   0.671, 0.806, 0.762. That is not a trend, and whether it is noise is a
+   question for the error bars in the dumps — flagged here rather than smoothed
+   over, because a non-monotone ceiling would change which coupling is hardest.
+2. **The M1-free linear ceiling rises towards criticality**, 0.106 → 0.280. A
+   thinner gas means fewer and smaller clusters, so local *density* predicts
+   cluster size better. That is a 2.6× swing in the quantity the whole
+   "criterion 4" argument rests on.
+3. **So the two interests pull apart.** The physics is most interesting near
+   β_c; the *architecture question* is cleanest away from it, where density
+   explains almost nothing and the task is almost entirely routing. This is a
+   real tension in the candidate and it is why §9.6 fixes the couplings it does.
+
+The first pass, on 40 configurations of a short freshly sampled chain at
+β = 0.7585, read +0.186 ± 0.037 and +0.736 ± 0.033 for the same two rows — the
+right shape, and 0.09 off the production linear ceiling, which is about what a
+200 + 20 sweep chain against 500 + 200 should cost.
 
 and the five gates it runs, all of which pass:
 
@@ -698,22 +727,45 @@ not resolve.
   of §9.4 (`gelt.vortex_targets.local_component_size`), re-measured on the same
   configurations. An arm below it has not beaten the classical local method and
   should not be reported as an architecture result whatever W-D says. As of the
-  pre-flight that bar is **R² = 0.736 ± 0.033** on vortex-carrying sites.
+  production pre-flight that bar is **R² = 0.671 at β = 0.7520** and **0.747 at
+  β = 0.7450**, on vortex-carrying sites.
 - **W-F — null.** Both architectures frozen at initialisation, as R-E.
 - **Dispersion**, as a count and not a test: the spread over the six cells per
   arm. §1.2 point 7 is the reason it is listed separately from accuracy.
 
-A **β ladder** is the one free axis, and it moves the task. At production
-geometry the pre-flight reads, at the two couplings run so far:
+**The β ladder, fixed 2026-09-18 from §9.4's production run, before any
+training:**
 
-| β | p_neg | largest-cluster share | R² linear | R² local | headroom |
-|---|---|---|---|---|---|
-| 0.7450 | 0.053 | 0.511 | +0.107 | +0.723 | +0.277 |
-| 0.7585 | 0.039 | 0.384 | +0.186 | +0.736 | +0.264 |
+> **Primary β = 0.7520. Second β = 0.7450.** Both readings W-A…W-F are taken at
+> 0.7520; 0.7450 is the replication, and a reading that does not survive it is
+> reported as not replicated.
 
-so the gas thins and the percolating cluster's share falls as β → β_c, while the
-headroom barely moves. Run the pre-flight on all four cached ensembles and fix
-the two couplings in writing before any training.
+Why those two, against the three quantities that matter:
+
+| β | headroom | M1-free linear ceiling | base-rate imbalance (distance from an even split) |
+|---|---|---|---|
+| **0.7520** | **0.329** (best) | 0.152 (2nd lowest) | **0.072** (best) |
+| **0.7450** | 0.253 (2nd) | **0.106** (lowest) | 0.087 (2nd) |
+| 0.7560 | 0.194 (worst) | 0.156 | 0.186 |
+| 0.7585 | 0.239 | **0.280** (worst) | 0.288 (worst) |
+
+The two chosen couplings rank first and second on *all three*. They leave the
+most room over the classical arm, they are where local density explains least —
+so a win cannot be re-described as directional weighting — and their cluster
+competition is the most balanced, which is the structure the candidate is about.
+
+0.7560 is dropped for the thinnest headroom (0.194, against a ΔR² resolution
+that the M1 probe's six-cell medians put around 0.14 — too little room to read
+a difference). 0.7585 is dropped because it is worst on two of the three: its
+linear ceiling is 2.6× 0.7450's, and its largest cluster holds only 21% of the
+vortices, so "which one is biggest" is closer to a lookup than a competition.
+
+**The cost of that choice, stated plainly**: both chosen couplings sit at the
+far end of the ladder from β_c, so this is deliberately *not* a critical-point
+measurement. §9.4 point 3 is why — the architecture question is cleanest where
+the physics is least critical. If the result comes out positive, the honest
+follow-up is to re-run it at 0.7585 and say whether it survives approaching
+β_c, rather than to claim it there.
 
 ### 9.7 The four criteria, and the fifth
 
@@ -721,16 +773,18 @@ Against §6, and against the criterion T1's withdrawal added:
 
 1. **Per-site target** — yes, V1 is per site by construction.
 2. **Sparse structures at configuration-dependent positions and scales** — yes,
-   measured: `p_neg ≈ 0.03 … 0.04`, and cluster size *is* the scale. V1 is invariant
+   measured across the ladder: `p_neg = 0.032 … 0.054`, and cluster size *is*
+   the scale. V1 is invariant
    under `f → λf` trivially, because the plaquette signs are already ±1; the
    amplitude-invariance clause is satisfied in a degenerate way rather than an
    interesting one, which is worth saying plainly.
-3. **Headroom at the architecture's own reach** — yes, measured on the
-   production geometry: 0.264 of R² over the strongest local classical method,
-   0.814 over the M1-free linear one.
+3. **Headroom at the architecture's own reach** — yes, measured on the cached
+   ensembles at the chosen primary coupling β = 0.7520: **0.329** of R² over the
+   strongest local classical method, 0.848 over the M1-free linear one. The
+   whole ladder is 0.194 … 0.329 (§9.4).
 4. **Not the output of a classical local algorithm** — yes. Connected-component
-   membership is global; the best local version of it reaches R² = 0.736, and
-   that is the arm to beat, not the target.
+   membership is global; the best local version of it reaches R² = 0.671 at the
+   primary coupling, and that is the arm to beat, not the target.
 5. **Not GELT's own primitive restated.** This is the criterion T1 failed
    (`notes/m1_probe.md` §7.5: softmax *is* a soft argmax, so "max over the ball"
    was a tautology) and it is the one this candidate has to answer most
@@ -771,9 +825,9 @@ Three ways this fails, each of which the design surfaces rather than hides:
 **The prior, stated without a number.** M1 has paid exactly once, on a
 constructed target, and the argument that it should pay here rests on an analogy
 with T1 — *which was withdrawn as circular*. What is new and load-bearing is not
-that analogy: it is §9.4's measured +0.550 gap between local density and local
-connectivity at the architecture's own reach, which says the task's difficulty
-is concentrated in routing, and
+that analogy: it is §9.4's measured routing gap between local density and local
+connectivity at the architecture's own reach — +0.48 … +0.65 across the four
+couplings — which says the task's difficulty is concentrated in routing, and
 §9.3's measured fact that GELT carries a vortex gate in Z₂ that the L-CNN does
 not. One caution against the session transcript this proposal came from
 (`2026-09-18-fable_audit.txt`, tracked at the repo root): its argument was that

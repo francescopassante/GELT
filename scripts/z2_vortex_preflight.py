@@ -522,14 +522,18 @@ def main():
 
     print("\n" + "=" * 78)
     print("R² columns are the masked reading — vortex-carrying sites only.")
-    print(f"{'β':>8s} {'p_neg':>8s} {'base':>7s} {'R² lin':>9s} {'R² local':>10s}"
-          f" {'headroom':>9s}  gates")
+    print("'routing' is R²(local) − R²(linear): how much of the task is "
+          "connectivity rather than density.")
+    print(f"{'β':>8s} {'p_neg':>7s} {'base':>6s} {'R² lin':>17s} {'R² local':>17s}"
+          f" {'headroom':>9s} {'routing':>8s}  gates")
     for r in rows:
         failed = [k for k, ok in r["verdict"].items() if not ok]
-        r2_lin = r["v1_linear"]["radial"][2]
-        r2_loc = r["v1_local"]["+ local component size"][2]
-        print(f"{r['beta']:8.4f} {r['p_neg']:8.4f} {r['base_rate']:7.3f}"
-              f" {r2_lin:+9.4f} {r2_loc:+10.4f} {1 - r2_loc:+9.4f}"
+        r2_lin, e_lin = r["v1_linear"]["radial"][2], r["v1_linear"]["radial"][3]
+        loc = r["v1_local"]["+ local component size"]
+        r2_loc, e_loc = loc[2], loc[3]
+        print(f"{r['beta']:8.4f} {r['p_neg']:7.4f} {r['base_rate']:6.3f}"
+              f" {r2_lin:+9.4f} ± {e_lin:.4f} {r2_loc:+9.4f} ± {e_loc:.4f}"
+              f" {1 - r2_loc:+9.4f} {r2_loc - r2_lin:+8.4f}"
               f"  {'all pass' if not failed else 'FAIL: ' + ','.join(failed)}")
 
     os.makedirs("results/z2_vortex", exist_ok=True)
