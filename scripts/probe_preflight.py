@@ -44,7 +44,7 @@ from probe_common import (  # noqa: E402
     env_flag,
     env_int,
     jackknife,
-    load_timeslices,
+    load_samples,
     r2_from_stats,
     splits,
     standardize,
@@ -126,7 +126,7 @@ def main():
     print("=" * 78)
     print("M1 probe — pre-flight: the best fixed-offset-weight method at reach")
     print("=" * 78)
-    U3 = load_timeslices(verbose=VERBOSE)
+    U3 = load_samples(verbose=VERBOSE)
     print(f"\nTargets on the L1-ball of radius {BALL_RADIUS} "
           f"({N_CONFIGS} configs × {N_SLICES} timeslices):")
     f, targets = build_all_targets(U3, verbose=VERBOSE)

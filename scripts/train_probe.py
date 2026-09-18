@@ -40,12 +40,17 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from probe_common import (  # noqa: E402
     ARMS,
+    BETA,
+    GROUP,
+    IS_Z2,
     JACK_BLOCK,
     N_CONFIGS,
     N_SLICES,
     TARGETS,
     accumulate_stats,
+    available_arms,
     build_all_targets,
+    build_mask,
     arm_transport,
     build_arm,
     env_flag,
@@ -53,7 +58,7 @@ from probe_common import (  # noqa: E402
     env_int,
     env_str,
     jackknife,
-    load_timeslices,
+    load_samples,
     probe_inputs,
     r2_from_stats,
     real_dofs,
@@ -62,7 +67,7 @@ from probe_common import (  # noqa: E402
 )
 
 ARM = env_str("PROBE_ARM", "gelt")
-TARGET = env_str("PROBE_TARGET", "T2")
+TARGET = env_str("PROBE_TARGET", "V1" if IS_Z2 else "T2")
 INIT_SEED = env_int("PROBE_INIT_SEED", 0)
 ENSEMBLE_SEED = env_int("PROBE_ENSEMBLE_SEED", 0)
 NULL = env_flag("PROBE_NULL", False)
@@ -78,12 +83,18 @@ EPOCHS = env_int("PROBE_EPOCHS", 20)
 # one. Measured: the 40-epoch gelt gate stopped at epoch 16 of 40 on a val
 # oscillation and never saw its own anneal. Set PROBE_PATIENCE > 0 to re-enable.
 PATIENCE = env_int("PROBE_PATIENCE", 0)
-BATCH_CONFIGS = env_int("PROBE_BATCH", 8)
+# A Z₂ configuration is 27 648 sites against an SU(2) timeslice's 1 728, so the
+# same batch would be 2.7× the activations even before the slice axis is
+# counted. Halved by default; the knob is the same one.
+BATCH_CONFIGS = env_int("PROBE_BATCH", 4 if IS_Z2 else 8)
 GRAD_CHECKPOINT = env_flag("PROBE_GRAD_CHECKPOINT", True)
 RUN_TAG = env_str("PROBE_RUN_TAG", "")
 
-if ARM not in ARMS:
-    raise SystemExit(f"PROBE_ARM must be one of {sorted(ARMS)} (got {ARM!r})")
+if ARM not in available_arms():
+    raise SystemExit(
+        f"PROBE_ARM must be one of {sorted(available_arms())} with "
+        f"PROBE_GROUP={GROUP} (got {ARM!r})"
+    )
 if TARGET not in TARGETS:
     raise SystemExit(f"PROBE_TARGET must be one of {TARGETS} (got {TARGET!r})")
 if RUN_TAG and not RUN_TAG.startswith("_"):
@@ -108,13 +119,17 @@ DIVERGENCE_VAL = env_float("PROBE_DIVERGENCE_VAL", 10.0)
 # from an excursion and the L-CNN does not (notes/m1_probe.md §4.1).
 COLLAPSE_VAL = env_float("PROBE_COLLAPSE_VAL", 1.0)  # the trivial predictor
 
-OUT_DIR = "results/m1_probe"
+OUT_DIR = "results/z2_vortex/probe" if IS_Z2 else "results/m1_probe"
 # Every knob that changes the result is in the name, so no run can overwrite
 # another — the same rule train_glueball.py's artifact names follow.
+# The ensemble's identity differs by study: SU(2) has seeded chains, Z₂ keys its
+# cache on β alone (probe_common.cache_path), so β is what must be in the name.
+_ensemble_tag = f"b{BETA}" if IS_Z2 else f"ens{ENSEMBLE_SEED}"
+_default_n = 100 if IS_Z2 else 200
 STEM = (
-    f"probe_{ARM}_{TARGET}_ens{ENSEMBLE_SEED}_init{INIT_SEED}"
+    f"probe_{ARM}_{TARGET}_{_ensemble_tag}_init{INIT_SEED}"
     + ("_null" if NULL else "")
-    + ("" if N_CONFIGS == 200 else f"_n{N_CONFIGS}")
+    + ("" if N_CONFIGS == _default_n else f"_n{N_CONFIGS}")
     + RUN_TAG
 )
 
@@ -125,24 +140,36 @@ def batches(idx, size):
 
 
 def run_split(model, arch, U3, y, idx, device, optimizer=None, per_config=False,
-              transport="average"):
+              transport="average", mask=None):
     """One pass over ``idx``. Trains when ``optimizer`` is given, else evaluates.
 
     With ``per_config`` every configuration is scored on its own so the R²
     sufficient statistics come out per configuration — which is what makes the
     correlated jackknife of ΔR² possible offline.
+
+    ``mask`` restricts **both the loss and the statistics** to the sites the
+    study supervises on. The Z₂ vortex task masks to sites that carry a vortex:
+    ~90% of sites have V1 exactly 0, and training on them spends the gradient on
+    "is there a vortex here" rather than on the cluster size that is the
+    question (``notes/where_attention_can_win.md`` §9.4). Masking the loss but
+    not the statistics — or the other way round — would make the reported R² a
+    different quantity from the one optimised, so they move together here.
     """
     train = optimizer is not None
     model.train(train)
     total, n_seen, stats = 0.0, 0, []
     size = 1 if per_config else BATCH_CONFIGS
     for chunk in batches(idx, size):
-        U = U3[chunk].reshape(-1, *U3.shape[2:])  # (b·slices, 3, L,L,L, nc,nc)
+        U = U3[chunk].reshape(-1, *U3.shape[2:])  # (b·slices, 3, *Λ, nc, nc)
         t = y[chunk].reshape(-1, *y.shape[2:]).to(device, torch.float32)
+        m = None if mask is None else mask[chunk].reshape(-1, *y.shape[2:]).to(device)
         with torch.set_grad_enabled(train):
             W, T = probe_inputs(U, arch, device, transport=transport)
             pred = model(W, T)
-            loss = torch.nn.functional.mse_loss(pred, t)
+            loss = (
+                torch.nn.functional.mse_loss(pred, t) if m is None
+                else torch.nn.functional.mse_loss(pred[m], t[m])
+            )
         if train:
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
@@ -150,7 +177,11 @@ def run_split(model, arch, U3, y, idx, device, optimizer=None, per_config=False,
         total += loss.item() * t.shape[0]
         n_seen += t.shape[0]
         if per_config:
-            stats.append(accumulate_stats(t.detach().cpu(), pred.detach().cpu()))
+            p_cpu, t_cpu = pred.detach().cpu(), t.detach().cpu()
+            if m is not None:
+                m_cpu = m.cpu()
+                p_cpu, t_cpu = p_cpu[m_cpu], t_cpu[m_cpu]
+            stats.append(accumulate_stats(t_cpu, p_cpu))
     return total / max(n_seen, 1), (torch.stack(stats) if per_config else None)
 
 
@@ -166,18 +197,25 @@ def main():
         )
     )
     print("=" * 78)
-    print(f"M1 probe — arm {ARM}  target {TARGET}  ensemble {ENSEMBLE_SEED}  "
+    study = "Z₂ vortex geometry" if IS_Z2 else "M1 probe"
+    ensemble = f"β {BETA}" if IS_Z2 else f"ensemble {ENSEMBLE_SEED}"
+    print(f"{study} — arm {ARM}  target {TARGET}  {ensemble}  "
           f"init {INIT_SEED}" + ("  [NULL: frozen stack]" if NULL else ""))
     print(f"device: {device}   lr {LR:g}  epochs {EPOCHS}  batch {BATCH_CONFIGS} configs")
     print("=" * 78)
 
-    U3 = load_timeslices(seed=ENSEMBLE_SEED)
+    U3 = load_samples(seed=ENSEMBLE_SEED)
     _, targets = build_all_targets(U3, names=(TARGET,))
+    mask = build_mask(U3)
     tr, va, te = splits()
-    y, mu, sigma = standardize(targets[TARGET], tr)
+    # The standardisation is computed over the **supervised** sites, so the
+    # trivial predictor still scores exactly R² = 0 and the divergence and
+    # collapse thresholds below stay absolute rather than drifting with the
+    # mask's occupancy.
+    y, mu, sigma = standardize(targets[TARGET], tr, mask=mask)
     y = y.float()
     print(f"splits: train {len(tr)}  val {len(va)}  test {len(te)} configurations "
-          f"× {N_SLICES} timeslices")
+          f"× {N_SLICES} " + ("configuration(s) fed whole" if IS_Z2 else "timeslices"))
 
     model, arch = build_arm(ARM, seed=INIT_SEED, grad_checkpoint=GRAD_CHECKPOINT)
     transport = arm_transport(ARM)
@@ -208,10 +246,10 @@ def main():
     for epoch in range(EPOCHS):
         t0 = time.time()
         train_loss, _ = run_split(model, arch, U3, y, tr, device, optimizer,
-                                  transport=transport)
+                                  transport=transport, mask=mask)
         scheduler.step()
         val_loss, _ = run_split(model, arch, U3, y, va, device,
-                                transport=transport)
+                                transport=transport, mask=mask)
         history.append((train_loss, val_loss))
         mark = ""
         if val_loss < best_val:
@@ -241,7 +279,7 @@ def main():
     else:
         model.load_state_dict(torch.load(checkpoint, map_location=device))
     test_loss, stats = run_split(model, arch, U3, y, te, device, per_config=True,
-                                 transport=transport)
+                                 transport=transport, mask=mask)
     r2, err, _ = jackknife(stats, r2_from_stats)
     diverged = not (best_val < DIVERGENCE_VAL)  # not (<) also catches nan
     final_val = history[-1][1]
@@ -267,7 +305,8 @@ def main():
     torch.save({
         "stats": stats, "r2": r2, "r2_err": err, "test_mse": test_loss,
         "arm": ARM, "arch": arch, "target": TARGET, "spec": ARMS[ARM],
-        "transport": transport,
+        "transport": transport, "group": GROUP, "beta": BETA,
+        "masked": mask is not None,
         "real_dofs": dofs, "null": NULL,
         "ensemble_seed": ENSEMBLE_SEED, "init_seed": INIT_SEED, "run_tag": RUN_TAG,
         "lr": LR, "weight_decay": WEIGHT_DECAY, "epochs_run": len(history),

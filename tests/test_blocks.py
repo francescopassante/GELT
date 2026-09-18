@@ -27,9 +27,10 @@ from gelt import (
     build_transport_average,
     link_gauge_transformation,
     local_gauge_transformation,
+    plaquette_tensor,
     random_links,
 )
-from gelt.blocks import GELT, GEMHSA, ChannelLift
+from gelt.blocks import GELT, GEMHSA, ChannelLift, lattice_extents
 
 
 def _unitary_omega(L, D, nc, seed):
@@ -434,6 +435,80 @@ def test_gelt_d_model_widened_gauge_equivariant():
     assert torch.allclose(
         y, y_g, atol=1e-9
     ), f"max diff = {(y - y_g).abs().max().item():.3e}"
+
+
+# ── Non-cubic lattices ──────────────────────────────────────────────────────
+# The block's two neighbour index maps were the only thing in it that assumed a
+# cube; the Z₂ vortex probe feeds a 48 × 24 × 24 lattice whole
+# (notes/where_attention_can_win.md §9.5). What is pinned here is that the
+# per-axis modulus is right and that the cubic path is untouched.
+
+def test_lattice_extents_accepts_an_int_or_a_sequence():
+    assert lattice_extents(8, 3) == (8, 8, 8)
+    assert lattice_extents((48, 24, 24), 3) == (48, 24, 24)
+    assert lattice_extents([10, 6], 2) == (10, 6)
+    with pytest.raises(ValueError, match="sequence of D = 3"):
+        lattice_extents((48, 24), 3)
+    with pytest.raises(ValueError, match="positive"):
+        lattice_extents((48, 0, 24), 3)
+
+
+def test_neighbour_maps_wrap_each_axis_by_its_own_extent():
+    """Against a brute-force construction, on a lattice with three extents."""
+    gg, D, R = Z2(), 3, 2
+    extents = (7, 4, 5)
+    block = GEMHSA(gaugegroup=gg, L=extents, D=D, R=R, d_input=3, nhead=1,
+                   d_qkv=6, dtype=torch.float32)
+    assert block.extents == extents
+    for i, off in enumerate(block.offsets):
+        for d in range(D):
+            axis = torch.arange(extents[d])
+            shape = [1] * D
+            shape[d] = extents[d]
+            expect = (axis.view(shape) + off[d]) % extents[d]
+            expect_inv = (axis.view(shape) - off[d]) % extents[d]
+            assert torch.equal(block._nbr_idx[d, i], expect.expand(extents))
+            assert torch.equal(block._nbr_idx_inv[d, i], expect_inv.expand(extents))
+
+
+def test_an_int_and_the_equivalent_tuple_are_bit_identical():
+    """The cubic shorthand must not have become a different code path."""
+    gg, L, D, R, B = Z2(), 5, 3, 1, 2
+    torch.manual_seed(11)
+    U = random_links(L=L, D=D, gaugegroup=gg, dtype=torch.float32, N=B)
+    T = build_transport_average(U, R=R, gaugegroup=gg)
+    W = torch.randn(B, 3, *([L] * D), 1, 1, dtype=torch.float32)
+    kw = dict(gaugegroup=gg, D=D, R=R, nhead=1, gemhsa_layers=2, d_qkv=6,
+              dtype=torch.float32, reduction="none", in_channels=3, d_model=6,
+              mlp_zero_init=False)
+    torch.manual_seed(3)
+    a = GELT(L=L, **kw)
+    torch.manual_seed(3)
+    b = GELT(L=(L, L, L), **kw)
+    b.load_state_dict(a.state_dict())
+    assert torch.equal(a(W, T), b(W, T))
+
+
+def test_non_cubic_readout_is_gauge_invariant_z2():
+    """A 3D box with three different extents, the shape the vortex probe feeds."""
+    gg, D, R, B = Z2(), 3, 2, 2
+    extents = (10, 6, 4)
+    torch.manual_seed(13)
+    # Built directly rather than via random_links, which takes one spatial L
+    # plus an optional Lt and so cannot make three different extents.
+    U = (torch.randint(0, 2, (B, D, *extents, 1, 1)).to(torch.float32) * 2 - 1)
+    W = plaquette_tensor(U, gg)
+    T = build_transport_average(U, R=R, gaugegroup=gg)
+    model = GELT(gaugegroup=gg, L=extents, D=D, R=R, nhead=2, gemhsa_layers=2,
+                 d_qkv=6, dtype=torch.float32, reduction="none", in_channels=3,
+                 d_model=8, mlp_zero_init=False)
+    out = model(W, T)
+    assert out.shape == (B, *extents)
+
+    omega = (torch.randint(0, 2, (*extents, 1, 1)).to(torch.float32) * 2 - 1)
+    Ug = torch.stack([link_gauge_transformation(U[b], omega, gg) for b in range(B)])
+    out_g = model(plaquette_tensor(Ug, gg), build_transport_average(Ug, R=R, gaugegroup=gg))
+    assert torch.allclose(out, out_g, atol=1e-6)
 
 
 def test_gelt_z2_real_forward_backward():

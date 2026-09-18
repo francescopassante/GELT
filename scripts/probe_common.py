@@ -13,8 +13,27 @@ sufficient statistics and the jackknife all live here, so ``train_probe.py``
 cannot drift from ``probe_preflight.py`` and neither can drift from
 ``probe_readings.py``.
 
-Nothing here samples: the ensembles are ``train_glueball.py``'s cached ones,
-addressed by the identical cache key.
+Nothing here samples: the ensembles are the cached ones of ``train_glueball.py``
+(SU(2)) or ``train_z2_glueball.py`` (Z₂), addressed by the identical cache keys.
+
+**``PROBE_GROUP`` selects the study**, and nothing else in this module moves:
+
+======  ==================================  ========================================
+ group   task                                what changes
+======  ==================================  ========================================
+ su2     the M1 mechanism assay               SU(2), nc = 2, complex64; 12³ spatial
+         (``notes/m1_probe.md``)              timeslices of a 4D anisotropic
+                                              configuration; targets T0/T1/T2.
+ z2      the vortex-geometry candidate        Z₂, nc = 1, float32; a 48 × 24 × 24
+         (``where_attention_can_win.md`` §9)  configuration **whole** — it is already
+                                              3D, so one configuration is one sample
+                                              and there is no timeslice extraction;
+                                              targets V1/V2, plus a supervision mask.
+======  ==================================  ========================================
+
+``R``, ``LAYERS``, ``LCNN_K``, ``MLP_HIDDEN``, the splits, the standardisation,
+the R² sufficient statistics and the jackknife are **shared by construction** —
+that is the point of the switch being here rather than in a sibling module.
 """
 
 import math
@@ -26,10 +45,11 @@ import torch
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from gelt import probe_targets, vortex_targets
 from gelt.blocks import GELT
-from gelt.lattice import SU, build_transport_average, plaquette_tensor
+from gelt.lattice import SU, Z2, build_transport_average, plaquette_tensor
 from gelt.lcnn import LCNN, build_axis_transports
-from gelt.probe_targets import BALL_RADIUS, TARGETS, action_density, build_targets
+from gelt.probe_targets import BALL_RADIUS, action_density
 
 
 # ── Environment overrides ────────────────────────────────────────────────────
@@ -64,16 +84,33 @@ def env_flag(name, default):
     return default if v is None else v not in ("0", "false", "False", "")
 
 
-# ── Ensemble — train_glueball.py's, by the same cache key ────────────────────
-gaugegroup = SU(2)
+# ── The study switch ─────────────────────────────────────────────────────────
+GROUP = env_str("PROBE_GROUP", "su2").lower()
+if GROUP not in ("su2", "z2"):
+    raise SystemExit(f"PROBE_GROUP must be 'su2' or 'z2' (got {GROUP!r})")
+IS_Z2 = GROUP == "z2"
+
+# ── Ensembles — the training scripts', by the same cache keys ────────────────
+if IS_Z2:
+    gaugegroup = Z2()
+    L = 24  # the spatial extent; the configuration is LT × L × L
+    LT = 48
+    LATTICE = (LT, L, L)  # non-cubic, and fed whole
+    BETA = env_float("PROBE_Z2_BETA", 0.7520)  # §9.6's primary coupling
+    XI = 1.0  # the Z₂ ensembles are isotropic
+    N_CONFIGS_CACHE = 2000
+    MODEL_DTYPE = torch.float32  # Z₂ is real; nc = 1
+else:
+    gaugegroup = SU(2)
+    L = 12
+    LT = 24
+    LATTICE = (L, L, L)  # one spatial timeslice of the 4D configuration
+    BETA = 2.4
+    XI = 3.0
+    N_CONFIGS_CACHE = 2000  # the cached ensemble's size — part of the key
+    MODEL_DTYPE = torch.complex64
 NC = gaugegroup.nc
-L = 12
-D3 = 3  # the probe is per-timeslice 3D, exactly as the glueball operator is
-BETA = 2.4
-XI = 3.0
-LT = 24
-N_CONFIGS_CACHE = 2000  # the cached ensemble's size — part of the key
-MODEL_DTYPE = torch.complex64
+D3 = 3  # both studies are 3D: SU(2) per timeslice, Z₂ natively
 
 ENSEMBLE_SEED = env_int("PROBE_ENSEMBLE_SEED", 0)
 
@@ -83,12 +120,29 @@ ENSEMBLE_SEED = env_int("PROBE_ENSEMBLE_SEED", 0)
 # Timeslices are strided over Lt rather than taken contiguously: neighbouring
 # timeslices of one configuration are the most correlated samples available,
 # and the jackknife blocks over configurations anyway.
-N_CONFIGS = env_int("PROBE_N_CONFIGS", 200)
-N_SLICES = env_int("PROBE_N_SLICES", 6)
+# Z₂ uses fewer configurations because each one is 27 648 sites against the
+# SU(2) study's 1 728 per timeslice — 2.7× the supervision per configuration
+# even after the slice axis is counted.
+N_CONFIGS = env_int("PROBE_N_CONFIGS", 100 if IS_Z2 else 200)
+# A Z₂ configuration is *already* 3D, so one configuration is one sample and
+# there is no slice axis to stride over. Keeping the axis at length 1 rather
+# than removing it is deliberate: every shape downstream — the splits, the
+# per-configuration statistics, train_probe.py's batching — stays the code it
+# already was, and the switch cannot introduce a second layout to maintain.
+N_SLICES = 1 if IS_Z2 else env_int("PROBE_N_SLICES", 6)
 
 TRAIN_FRACTION = 0.7
 VAL_FRACTION = 0.1  # (TEST_FRACTION = 1 − TRAIN − VAL = 0.2)
 JACK_BLOCK = env_int("PROBE_JACK_BLOCK", 5)  # blocked jackknife, in configs
+
+# The L-Conv initialisation the Z₂ arms need. **Not a handicap and not a
+# taste**: at nc = 1 the L-Act gate multiplies by its own argument instead of
+# damping, so a stack that starts at unit scale *per layer* reaches 1e21 after
+# four of them and inf at the production volume, while GELT's field stays at 1
+# through the same depth (the M2 mechanism, visible at initialisation). 0.5 is
+# the largest scale on the stable plateau and reproduces the output magnitude
+# the SU(2) arms get for free — the ladder is in gelt/lcnn.py's LConv.
+Z2_LCNN_CONV_INIT = env_float("PROBE_Z2_LCNN_CONV_INIT", 0.5)
 
 R = 2  # GELT's per-layer L1-ball radius
 LAYERS = 4  # both architectures
@@ -96,8 +150,20 @@ LCNN_K = 2  # the L-CNN's axis-aligned hop length
 MLP_HIDDEN = 32
 
 
+# Which targets this study supervises on, and where they come from.
+TARGET_MODULE = vortex_targets if IS_Z2 else probe_targets
+TARGETS = TARGET_MODULE.TARGETS
+
+
 def cache_path(seed=None):
-    """``train_glueball.py``'s ensemble cache path — the identical key."""
+    """The training script's ensemble cache path — the identical key.
+
+    Z₂ has no ensemble seed: ``train_z2_glueball.py`` keys its cache on β alone,
+    so the coupling plays the role the seed plays for SU(2) and a second
+    ensemble means a second β rather than a second chain.
+    """
+    if IS_Z2:
+        return f"datasets/z2_configs_L{L}_Lt{LT}_b{BETA}_N{N_CONFIGS_CACHE}.pt"
     seed = ENSEMBLE_SEED if seed is None else seed
     return (
         f"datasets/glueball_configs_L{L}_Lt{LT}_b{BETA}_xi{XI}_N{N_CONFIGS_CACHE}"
@@ -106,13 +172,20 @@ def cache_path(seed=None):
     )
 
 
-def load_timeslices(seed=None, n_configs=None, n_slices=None, verbose=True):
-    """Spatial 3D links, as ``(n_configs, n_slices, 3, L, L, L, nc, nc)``.
+def load_samples(seed=None, n_configs=None, n_slices=None, verbose=True):
+    """Spatial 3D links, as ``(n_configs, n_slices, 3, *Λ, nc, nc)``.
 
-    Time is lattice axis 0 of the 4D configuration, so directions 1..3 at a
-    fixed time are one 3D slice's spatial links — the same extraction
+    **SU(2)**: time is lattice axis 0 of the 4D configuration, so directions
+    1..3 at a fixed time are one 3D slice's spatial links — the same extraction
     ``train_glueball.config_inputs`` performs, with the configuration axis kept
-    separate so the splits and the jackknife can block on it.
+    separate so the splits and the jackknife can block on it. Timeslices are
+    strided over ``LT`` rather than taken contiguously: neighbouring timeslices
+    of one configuration are the most correlated samples available.
+
+    **Z₂**: the cached configuration *is* the 3D lattice, so it is returned
+    whole with a length-1 slice axis. Nothing is extracted and nothing is
+    thrown away — the vortex clusters V1 measures are global objects on this
+    box, and a slice of it would cut them.
 
     Raises if the cache is absent: this probe deliberately samples nothing.
     """
@@ -122,14 +195,23 @@ def load_timeslices(seed=None, n_configs=None, n_slices=None, verbose=True):
     path = cache_path(seed)
     if not os.path.exists(path):
         raise SystemExit(
-            f"Ensemble cache {path} not found. The M1 probe reuses the glueball "
-            f"ensembles and samples nothing itself — run "
-            f"scripts/train_glueball.py (or measure_glueball.py) first, or point "
-            f"PROBE_ENSEMBLE_SEED at a seed whose cache exists."
+            f"Ensemble cache {path} not found. The probe reuses the training "
+            f"scripts' ensembles and samples nothing itself — run "
+            + (f"scripts/train_z2_glueball.py {BETA} (or "
+               f"scripts/z2_vortex_preflight.py, which needs the same cache) "
+               f"first, or point PROBE_Z2_BETA at a coupling whose cache exists."
+               if IS_Z2 else
+               f"scripts/train_glueball.py (or measure_glueball.py) first, or "
+               f"point PROBE_ENSEMBLE_SEED at a seed whose cache exists.")
         )
     if verbose:
         print(f"Loading cached ensemble {path} …")
     configs = torch.load(path, map_location="cpu")[:n_configs].to(MODEL_DTYPE)
+    if IS_Z2:
+        U3 = configs.unsqueeze(1)  # (n, 1, 3, Lt, L, L, 1, 1)
+        if verbose:
+            print(f"  configurations: {tuple(U3.shape)}  (fed whole, β = {BETA})")
+        return U3
     # Strided timeslices: evenly spaced over the temporal extent.
     t_idx = torch.linspace(0, LT - 1, n_slices).round().long()
     U3 = configs[:, 1:, t_idx]  # (n, 3, n_slices, L, L, L, nc, nc)
@@ -139,30 +221,65 @@ def load_timeslices(seed=None, n_configs=None, n_slices=None, verbose=True):
     return U3
 
 
-def build_all_targets(U3, names=TARGETS, verbose=True):
-    """``{name: (n_configs, n_slices, *Λ)}`` plus ``f`` itself, on the CPU.
+def build_all_targets(U3, names=None, verbose=True):
+    """``{name: (n_configs, n_slices, *Λ)}`` plus the scalar field behind them.
 
-    Cheap enough to precompute for the whole probe set (one ball traversal per
-    slice, no links involved beyond the plaquettes) and small enough to hold:
-    one float32 scalar per site.
+    Cheap enough to precompute for the whole probe set and small enough to hold:
+    one float scalar per site.
+
+    Both studies build their targets from **one gauge-invariant scalar per
+    plaquette** and differ only in how a neighbourhood of it is reduced — the
+    action density for SU(2) (T0/T1/T2), the vortex indicator for Z₂ (V1/V2).
+    The returned first element is that field, which is what the pre-flight's
+    linear filter is built from.
     """
-    n, s = U3.shape[0], U3.shape[1]
-    flat = U3.reshape(n * s, 3, L, L, L, NC, NC)
-    # float64 from here down. The targets are *deterministic* functions of the
-    # links — there is no irreducible noise and R² = 1 is attainable in
-    # principle — so the only way a small dynamic range could hurt is
-    # numerically, and 129 accumulated shells in float32 is exactly where that
-    # would happen. Standardisation then puts every target on the same scale
-    # for the fit.
-    f = action_density(flat, gaugegroup).double()
-    tgt = {k: v.reshape(n, s, L, L, L) for k, v in build_targets(f, BALL_RADIUS, names).items()}
+    names = TARGETS if names is None else names
+    n, s_ = U3.shape[0], U3.shape[1]
+    flat = U3.reshape(n * s_, 3, *LATTICE, NC, NC)
+    if IS_Z2:
+        # The indicator is a bool per (plane, site); the targets reduce it.
+        f = vortex_targets.vortex_field(flat, gaugegroup)
+        built = vortex_targets.build_targets(f, names=names)
+    else:
+        # float64 from here down. The targets are *deterministic* functions of
+        # the links — there is no irreducible noise and R² = 1 is attainable in
+        # principle — so the only way a small dynamic range could hurt is
+        # numerically, and 129 accumulated shells in float32 is exactly where
+        # that would happen. Standardisation then puts every target on the same
+        # scale for the fit.
+        f = action_density(flat, gaugegroup).double()
+        built = probe_targets.build_targets(f, BALL_RADIUS, names)
+    tgt = {k: v.reshape(n, s_, *LATTICE) for k, v in built.items()}
     if verbose:
         for k, v in tgt.items():
             print(
-                f"  {k}: mean {v.mean():+.5f}  std {v.std():.5f}  "
+                f"  {k}: mean {v.double().mean():+.5f}  std {v.double().std():.5f}  "
                 f"range [{v.min():+.4f}, {v.max():+.4f}]"
             )
-    return f.reshape(n, s, L, L, L), tgt
+    return f.reshape(n, s_, *f.shape[1:]), tgt
+
+
+def build_mask(U3, verbose=True):
+    """``(n_configs, n_slices, *Λ)`` bool, or ``None`` when the study has none.
+
+    **Z₂ supervises only on sites that carry a vortex.** The other ~90% have
+    V1 exactly 0 and a linear filter predicts them from the local plaquette
+    count, so an unmasked loss spends most of its gradient on *"is there a
+    vortex here"* — which is not the question and is not where an architecture
+    can separate (`notes/where_attention_can_win.md` §9.4, measured: the
+    all-sites R² reads 0.65 where the masked one reads 0.19).
+
+    The SU(2) study has no mask: its targets are defined at every site.
+    """
+    if not IS_Z2:
+        return None
+    n, s_ = U3.shape[0], U3.shape[1]
+    flat = U3.reshape(n * s_, 3, *LATTICE, NC, NC)
+    v = vortex_targets.vortex_field(flat, gaugegroup)
+    mask = v.any(dim=1).reshape(n, s_, *LATTICE)
+    if verbose:
+        print(f"  supervision mask: {mask.double().mean():.4f} of sites carry a vortex")
+    return mask
 
 
 def splits(n_configs=None):
@@ -180,14 +297,23 @@ def splits(n_configs=None):
     return idx[:n_tr], idx[n_tr : n_tr + n_va], idx[n_tr + n_va :]
 
 
-def standardize(y, train_idx):
+def standardize(y, train_idx, mask=None):
     """``(y − μ)/σ`` with μ, σ from the *train* configurations only.
 
     Returns ``(y_std, mu, sigma)``. Every target is standardised so the MSE
-    and the R² are on one scale across T0/T1/T2 and the readout head never has
-    to travel decades of output scale before the fit begins.
+    and the R² are on one scale across the study's targets and the readout head
+    never has to travel decades of output scale before the fit begins.
+
+    ``mask`` restricts the moments to the **supervised** sites. It has to: with
+    ~90% of Z₂ sites carrying V1 = 0, moments over every site would put the
+    trivial predictor somewhere other than 0 on the supervised subset, and
+    ``train_probe.py``'s divergence and collapse thresholds — which are absolute
+    because the target is standardised — would quietly stop meaning what they
+    say.
     """
     ytr = y[train_idx]
+    if mask is not None:
+        ytr = ytr[mask[train_idx]]
     mu = ytr.mean()
     sigma = ytr.std().clamp_min(1e-12)
     return (y - mu) / sigma, mu.item(), sigma.item()
@@ -254,6 +380,15 @@ ARMS = {
                         transport="single"),
     "gelt_projected": dict(arch="gelt", alpha_mode="softmax", d_model=16,
                            d_qkv=6, transport="projected"),
+    # The vortex candidate's 2 × 2 (notes/where_attention_can_win.md §9.3 and
+    # §9.5). In Z₂ the two transports are not "better and worse" but "present
+    # and absent": a path-averaged T is a hard vortex mask, T² = (1+P)/2 ∈
+    # {0,1}, while a single-path T is ±1 and its adjoint action is the
+    # identity. So {softmax, frozen} × {average, single} varies M1 and that
+    # mask independently, and `frozen_single` is the cell the M1 probe's arm
+    # table never needed. Nested in `frozen` exactly as `frozen` is in `gelt`.
+    "frozen_single": dict(arch="gelt", alpha_mode="frozen", d_model=16,
+                          d_qkv=6, transport="single"),
 }
 DOF_TOLERANCE = 0.15
 
@@ -275,15 +410,30 @@ def build_arm(name, seed=0, grad_checkpoint=True):
     """
     if name not in ARMS:
         raise SystemExit(f"unknown arm {name!r}; expected one of {sorted(ARMS)}")
+    if IS_Z2 and ARMS[name].get("transport") == "projected":
+        # build_transport_average refuses mode="projected" for Z₂: projecting a
+        # vanishing path average back onto the group needs the arbitrary 0 → +1
+        # tie-break that is CLAUDE.md caveat 1's defect in another place. Fail
+        # here, at construction, rather than three hours into a batch.
+        raise SystemExit(
+            f"arm {name!r} is not available with PROBE_GROUP=z2: a projected "
+            f"transport is ill-defined there (see build_transport_average)."
+        )
     spec = dict(ARMS[name])
     arch = spec.pop("arch")
     spec.pop("transport", None)  # an input property; see `arm_transport`
     torch.manual_seed(seed)
     common = dict(
-        gaugegroup=gaugegroup, L=L, D=D3, dtype=MODEL_DTYPE, mlp_hidden=MLP_HIDDEN,
-        mlp_out=1, reduction="none", in_channels=3, grad_checkpoint=grad_checkpoint,
+        # LATTICE rather than L: the Z₂ box is 48 × 24 × 24 and is fed whole,
+        # which is what gelt.blocks.lattice_extents exists for. in_channels is 3
+        # either way — D(D−1)/2 spatial plaquettes at D = 3, for both groups.
+        gaugegroup=gaugegroup, L=LATTICE, D=D3, dtype=MODEL_DTYPE,
+        mlp_hidden=MLP_HIDDEN, mlp_out=1, reduction="none", in_channels=3,
+        grad_checkpoint=grad_checkpoint,
     )
     if arch == "lcnn":
+        if IS_Z2:
+            spec.setdefault("conv_init_scale", Z2_LCNN_CONV_INIT)
         model = LCNN(K=LCNN_K, n_layers=LAYERS, gate="softplus", **spec, **common)
         with torch.no_grad():
             model.head_fc2.weight.zero_()
@@ -307,13 +457,21 @@ def arm_transport(name):
     return ARMS[name].get("transport", "average")
 
 
+def available_arms():
+    """The arms this study can actually build — see :func:`build_arm`."""
+    return tuple(
+        k for k in ARMS
+        if not (IS_Z2 and ARMS[k].get("transport") == "projected")
+    )
+
+
 def dof_table():
     """``{arm: (real_dofs, ratio to gelt)}`` — the matched-parameter claim."""
     ref = real_dofs(build_arm("gelt", grad_checkpoint=False)[0])
     return {
         k: (real_dofs(build_arm(k, grad_checkpoint=False)[0]),
             real_dofs(build_arm(k, grad_checkpoint=False)[0]) / ref)
-        for k in ARMS
+        for k in available_arms()
     }
 
 

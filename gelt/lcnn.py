@@ -158,6 +158,7 @@ class LConv(nn.Module):
         dtype: torch.dtype = torch.complex64,
         symmetric: bool = True,
         normalize_shifts: bool = False,
+        conv_init_scale: float = 1.0,
     ):
         super().__init__()
         self.gaugegroup = gaugegroup
@@ -173,8 +174,31 @@ class LConv(nn.Module):
 
         # ω[i, j, s]. Variance ~ 1 / (c_prime · n_shifts) so the L-Conv output
         # starts at unit scale regardless of fan-in.
+        #
+        # ``conv_init_scale`` multiplies that, and exists because unit scale per
+        # *layer* is not unit scale per *stack* at nc = 1. The L-Act gate is
+        # ``g(Re Tr W/nc)·W``: for SU(2) the averaged trace of a 2×2 matrix is
+        # small and the gate damps, but at nc = 1 the "trace" is the entry
+        # itself, so the gate squares whatever it is given and the L-Bilin
+        # squares it again. Measured on a Z₂ 8³ box, 4 layers, c_hidden = 6,
+        # the output magnitude of the reference init:
+        #
+        #   layers   1        2        3        4
+        #   |out|    0.36     3.6      7.8e4    1.4e21      (and inf at 48×24×24)
+        #
+        # and against the L-Conv weight scale s at 4 layers, three seeds:
+        #
+        #   s        1.00            0.70            0.50            0.20
+        #   |out|    1e21 … 3e28     0.17 … 3e4      0.02 … 0.13     0.01 … 0.13
+        #
+        # s = 0.5 is the largest value on the stable plateau and puts the Z₂
+        # stack at the same output magnitude the SU(2) reference reaches at
+        # s = 1 (0.05 … 0.19). It is **not** a handicap on the baseline: it is
+        # the initialisation that gives it the same starting scale the other
+        # group gets for free. The default is 1.0, so every existing caller is
+        # bit-identical. See ``notes/where_attention_can_win.md`` §9.5.
         n_terms = self.c_prime * self.n_shifts
-        sigma = 1.0 / math.sqrt(n_terms)
+        sigma = conv_init_scale / math.sqrt(n_terms)
         w = torch.randn(c_out, self.c_prime, self.n_shifts, dtype=dtype) * sigma
         self.w = nn.Parameter(w)
         if normalize_shifts:
@@ -335,11 +359,12 @@ class LCB(nn.Module):
         dtype: torch.dtype = torch.complex64,
         symmetric: bool = True,
         normalize_shifts: bool = False,
+        conv_init_scale: float = 1.0,
     ):
         super().__init__()
         self.lconv = LConv(
             gaugegroup, c_in, c_out, D, K, dtype=dtype, symmetric=symmetric,
-            normalize_shifts=normalize_shifts,
+            normalize_shifts=normalize_shifts, conv_init_scale=conv_init_scale,
         )
         self.lbilin = LBilin(gaugegroup, c_in, c_out, c_out, dtype=dtype)
 
@@ -425,6 +450,7 @@ class LCNN(nn.Module):
         grad_checkpoint: bool = False,
         symmetric: bool = True,
         normalize_shifts: bool = False,
+        conv_init_scale: float = 1.0,
     ):
         super().__init__()
         if reduction not in ("sum", "mean", "none"):
@@ -454,6 +480,7 @@ class LCNN(nn.Module):
                 LCB(
                     gaugegroup, widths[i], widths[i + 1], D, K, dtype=dtype,
                     symmetric=symmetric, normalize_shifts=normalize_shifts,
+                    conv_init_scale=conv_init_scale,
                 )
                 for i in range(n_layers)
             ]

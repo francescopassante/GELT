@@ -21,6 +21,28 @@ from gelt.lattice import l1_ball_offsets
 _GRAD_GATHER_BUDGET = 512 * 2**20
 
 
+def lattice_extents(L, D):
+    """``L`` as a per-axis extent tuple: an int is the cubic shorthand.
+
+    The block is shape-agnostic everywhere except its two neighbour index maps,
+    which need one modulus per axis. Accepting a sequence here is what lets a
+    non-cubic lattice — the Z₂ vortex probe's 48 × 24 × 24
+    (``notes/where_attention_can_win.md`` §9.5), or any anisotropic box fed
+    whole rather than per timeslice — go through unchanged, and an int still
+    builds exactly the maps it always did.
+    """
+    if isinstance(L, int):
+        return (L,) * D
+    extents = tuple(int(n) for n in L)
+    if len(extents) != D:
+        raise ValueError(
+            f"L must be an int or a sequence of D = {D} extents, got {tuple(L)}"
+        )
+    if any(n < 1 for n in extents):
+        raise ValueError(f"lattice extents must be positive, got {extents}")
+    return extents
+
+
 class _OffsetGather(torch.autograd.Function):
     """Gather ``X`` at every L1-ball offset, with a *coalesced* backward.
 
@@ -261,24 +283,33 @@ class GEMHSA(nn.Module):
         self.n_offsets = len(self.offsets)
 
         # _nbr_idx[d, i, x] are the coords of the neighbor of x at offset Δx_i
-        # = (x[d] + Δx_i[d]) mod L.
+        # = (x[d] + Δx_i[d]) mod L[d]. The modulus is **per axis**: everything
+        # else in the block is shape-agnostic (the transport is torch.roll),
+        # and these two index maps were the only thing assuming a cube. The Z₂
+        # vortex probe feeds a 48 × 24 × 24 lattice whole
+        # (``notes/where_attention_can_win.md`` §9.5); ``L`` as an int is still
+        # the cubic shorthand and builds bit-identical maps.
+        extents = lattice_extents(L, D)
+        self.extents = extents
         offset_tensor = torch.tensor(self.offsets, dtype=torch.long)  # (n_off, D)
         coords = torch.meshgrid(
-            *[torch.arange(L) for _ in range(D)], indexing="ij"
+            *[torch.arange(n) for n in extents], indexing="ij"
         )  # (*Λ)
         nbr_idx = torch.stack(
             [
-                (coords[d].unsqueeze(0) + offset_tensor[:, d].view(-1, *([1] * D))) % L
+                (coords[d].unsqueeze(0) + offset_tensor[:, d].view(-1, *([1] * D)))
+                % extents[d]
                 for d in range(D)
             ],
             dim=0,
         )  # (D, n_offsets, *Λ)
         self.register_buffer("_nbr_idx", nbr_idx)
-        # The same map with the offsets reversed, (x − Δx_i) mod L. This is the
-        # index the gather's *gradient* needs — see _OffsetGather.
+        # The same map with the offsets reversed, (x − Δx_i) mod L[d]. This is
+        # the index the gather's *gradient* needs — see _OffsetGather.
         nbr_idx_inv = torch.stack(
             [
-                (coords[d].unsqueeze(0) - offset_tensor[:, d].view(-1, *([1] * D))) % L
+                (coords[d].unsqueeze(0) - offset_tensor[:, d].view(-1, *([1] * D)))
+                % extents[d]
                 for d in range(D)
             ],
             dim=0,

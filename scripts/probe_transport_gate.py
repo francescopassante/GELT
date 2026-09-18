@@ -52,7 +52,7 @@ from probe_common import (  # noqa: E402
     env_int,
     env_str,
     gaugegroup,
-    load_timeslices,
+    load_samples,
 )
 from gelt.lattice import build_transport_average, l1_ball_offsets  # noqa: E402
 
@@ -99,7 +99,7 @@ def shell_stats(T_ref, T_alt, offsets, multi_only):
 
 
 def main():
-    U3 = load_timeslices(n_configs=N_GATE, n_slices=1)
+    U3 = load_samples(n_configs=N_GATE, n_slices=1)
     U = U3[:, 0].to(DEVICE)  # (n, 3, L,L,L, nc,nc)
     offsets = l1_ball_offsets(D=3, R=R)
     print(f"\nR = {R}, D = 3: {len(offsets)} offsets, "

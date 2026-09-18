@@ -432,10 +432,10 @@ no fermions and no U(1) sampler entry. It is a second thesis, not a chapter.
 
 ## 9. Proposal 2 — vortex-cluster geometry in 3D Z₂ (2026-09-18)
 
-**Status: proposed, pre-flight passed on all four cached ensembles
-(2026-09-18), no training code.** The supervision, the gate and their tests are
-built (§9.5), the gate has been run in production and **the β ladder is now
-fixed in §9.6**; nothing has been trained and no arm has been run. Everything labelled *measured* below was measured on 2026-09-18 on
+**Status: proposed, pre-flight passed on all four cached ensembles, training
+code wired (2026-09-18).** The supervision, the gate, the `PROBE_GROUP=z2`
+switch and their tests are built (§9.5), the gate has been run in production and
+**the β ladder is fixed in §9.6**; no arm has been trained. Everything labelled *measured* below was measured on 2026-09-18 on
 freshly sampled Z₂ configurations at production geometry. The pre-flight is §5's gate run before any training code exists,
 and it did its job twice — once on the task (§9.4) and once on the design
 (§9.3), which it changed.
@@ -661,6 +661,69 @@ command is in CLAUDE.md's *Running* block; it needs no GPU and takes minutes.
 | `gelt/vortex_targets.py` | the vortex indicator, the dual-graph connected components (Shiloach–Vishkin with a root hook), V1, V2, and the classical local arm |
 | `scripts/z2_vortex_preflight.py` | §9.4's five gates and two ceilings, offline on the cached ensembles; `Z2V_SMOKE=1` runs the whole thing at production geometry off a short freshly sampled chain, in under a minute |
 | `tests/test_vortex_targets.py` | 20 tests: closure by Bianchi, the four-plaquette loop around a flipped link, label propagation against a plain union-find, the long-line regression, V2's exact linearity, the local arm's locality, gauge invariance |
+| `PROBE_GROUP=z2` in `scripts/probe_common.py` | the switch: group, cache key, loader, targets and the supervision mask. `R`, `LAYERS`, `LCNN_K`, `MLP_HIDDEN`, the splits, the standardisation and the R² statistics are shared by construction, which is why it is a switch and not a sibling module |
+| `scripts/train_probe.py` | unchanged in structure; the loss and the statistics are masked together when the study provides a mask |
+
+**Three things had to be fixed before the switch could run, and each is a fact
+about the candidate rather than about the plumbing:**
+
+1. **The block assumed a cube.** `GEMHSA`'s two neighbour index maps were the
+   only thing in GELT that was not shape-agnostic, and the Z₂ box is
+   48 × 24 × 24. `gelt.blocks.lattice_extents` now takes a per-axis extent; an
+   int is still the cubic shorthand and builds bit-identical maps.
+2. **The supervision has to be masked.** ~90% of sites carry no vortex, V1 is
+   exactly 0 there, and an unmasked loss spends its gradient on "is there a
+   vortex here" (§9.4). `probe_common.build_mask` supplies it, and
+   `standardize` takes the moments over the masked sites so the trivial
+   predictor still scores exactly 0 and `train_probe.py`'s absolute divergence
+   and collapse thresholds keep meaning what they say.
+3. **The L-CNN has no usable forward pass in Z₂ at the matched depth** —
+   measured, and the sharpest thing found while building this. See §9.5.1.
+
+### 9.5.1 The baseline does not start, and the reason is M2
+
+*Measured 2026-09-18.* At the arm table's own geometry (`c_hidden = 6`, 4
+layers, `K = 2`) the matched L-CNN's output magnitude at **initialisation**, on
+a Z₂ 8³ box:
+
+| layers | 1 | 2 | 3 | 4 |
+|---|---|---|---|---|
+| L-CNN, Z₂ | 0.36 | 3.6 | 7.8 × 10⁴ | **1.4 × 10²¹** |
+| L-CNN, SU(2) | 0.45 | 0.43 | 0.50 | 0.19 |
+| GELT, Z₂ (field entering the head) | 1 | 1 | 1 | **1** |
+
+At the production volume it reaches `inf` and the run is NaN before the first
+gradient. The mechanism is exactly M2 and it is visible *at initialisation*
+rather than in the tail: L-Act is `g(Re Tr W/nc)·W`, and at `nc = 1` the
+"trace" is the entry itself, so the gate multiplies by its own argument instead
+of damping it, and the L-Bilin squares the result again. For SU(2) the averaged
+trace of a 2 × 2 matrix is small and the same gate damps. GELT's aggregation is
+a convex combination, so its field does not move.
+
+**This is the most direct evidence M2 has**, and it is worth saying what kind:
+not a failure *rate* over training runs (§7's caveat — those cannot separate M2
+from the transport), but a deterministic, reproducible blow-up of the forward
+map at matched parameters, with a mechanism that predicts it and a group
+comparison that isolates it. It is also not yet a *result*: it is one
+architecture being unusable out of the box on one group, which is a fact about
+initialisation scales as much as about boundedness.
+
+**The fix, and why it is not a handicap.** `LConv` gained `conv_init_scale`
+(default 1.0, so every existing caller is bit-identical), and the Z₂ arms use
+**0.5** — the largest value on the stable plateau, measured over three seeds:
+
+| L-Conv weight scale | 1.00 | 0.70 | 0.50 | 0.20 |
+|---|---|---|---|---|
+| ‖out‖ at 4 layers | 10²¹ … 10²⁸ | 0.17 … 3 × 10⁴ | **0.02 … 0.13** | 0.01 … 0.13 |
+
+0.5 puts the Z₂ stack at the output magnitude the SU(2) one reaches for free
+(0.05 … 0.19). Giving the baseline the *same starting scale* is the opposite of
+handicapping it — and the alternative, leaving it at 1.0, would have made W-D a
+measurement of an initialisation constant. The repo has made this mistake once
+already and recorded it (`lcnn_norm` being given `lcnn`'s learning rate), which
+is why this is written down rather than patched quietly. **It is still a choice,
+and it should be revisited in the LR × init sweep the arms get before the grid.**
+
 
 Two things the code changed about the design, both recorded where they happened:
 V2's definition (§9.2) and the masked reading (§9.4). A third is a plain bug

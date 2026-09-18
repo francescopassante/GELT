@@ -311,6 +311,51 @@ def test_the_kernel_reaches_both_directions():
 # ---------------------------------------------------------------------------
 
 
+def test_conv_init_scale_defaults_to_the_reference_initialisation():
+    """The knob must be invisible unless asked for: every existing caller is
+    bit-identical at 1.0."""
+    gg, L, D, K = Z2(), 6, 3, 2
+    kw = dict(gaugegroup=gg, L=L, D=D, K=K, c_hidden=4, n_layers=2,
+              dtype=torch.float32, reduction="none", in_channels=3)
+    torch.manual_seed(2)
+    a = LCNN(**kw)
+    torch.manual_seed(2)
+    b = LCNN(conv_init_scale=1.0, **kw)
+    for pa, pb in zip(a.parameters(), b.parameters()):
+        assert torch.equal(pa, pb)
+
+
+def test_z2_stack_needs_conv_init_scale_to_stay_finite():
+    """At nc = 1 a four-layer stack at the reference init leaves float32.
+
+    The L-Act gate is ``g(Re Tr W/nc)·W``: for SU(2) the averaged trace of a 2×2
+    matrix is small and the gate damps, but at nc = 1 the "trace" is the entry
+    itself, so the gate squares its own argument and the L-Bilin squares it
+    again. This is the probe's production geometry
+    (``notes/where_attention_can_win.md`` §9.5) and it is why the Z₂ arms carry
+    ``conv_init_scale = 0.5``. It is not a handicap: 0.5 puts the Z₂ stack at
+    the output magnitude the SU(2) one reaches at 1.0.
+    """
+    gg, L, D, K = Z2(), 8, 3, 2
+    kw = dict(gaugegroup=gg, L=L, D=D, K=K, c_hidden=6, n_layers=4,
+              dtype=torch.float32, reduction="none", in_channels=3)
+    reference, scaled = [], []
+    for seed in range(3):
+        torch.manual_seed(seed)
+        U = random_links(L=L, D=D, gaugegroup=gg, dtype=torch.float32).unsqueeze(0)
+        W = plaquette_tensor(U, gg)
+        T = build_axis_transports(U, K, gg)
+        torch.manual_seed(seed)
+        reference.append(LCNN(**kw)(W, T).abs().max().item())
+        torch.manual_seed(seed)
+        scaled.append(LCNN(conv_init_scale=0.5, **kw)(W, T).abs().max().item())
+    assert min(reference) > 1e6, (
+        f"the reference init no longer blows up in Z₂ ({reference}) — if that is "
+        f"a deliberate fix, probe_common.Z2_LCNN_CONV_INIT is now unnecessary"
+    )
+    assert max(scaled) < 10.0, scaled
+
+
 def test_normalize_shifts_bounds_the_offset_axis_and_preserves_init():
     """``kernel()`` is the reference ω at init and L1-bounded over offsets after.
 
