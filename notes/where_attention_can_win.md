@@ -682,87 +682,66 @@ about the candidate rather than about the plumbing:**
 
 ### 9.5.1 The baseline does not start, and the reason is M2
 
-*Measured 2026-09-18.* At the arm table's own geometry (`c_hidden = 6`, 4
-layers, `K = 2`) the matched L-CNN's output magnitude at **initialisation**, on
-a Z₂ 8³ box:
+*Measured 2026-09-18, and **re-measured the same day after the first instrument
+turned out to be the wrong one**.*
+
+At the arm table's geometry (`c_hidden = 6`, 4 layers, `K = 2`) the matched
+L-CNN's **field entering the head**, at initialisation, three seeds:
 
 | layers | 1 | 2 | 3 | 4 |
 |---|---|---|---|---|
-| L-CNN, Z₂ | 0.36 | 3.6 | 7.8 × 10⁴ | **1.4 × 10²¹** |
-| L-CNN, SU(2) | 0.45 | 0.43 | 0.50 | 0.19 |
-| GELT, Z₂ (field entering the head) | 1 | 1 | 1 | **1** |
+| L-CNN, Z₂, 8³ | 10 … 24 | 150 … 770 | 2 × 10⁶ … 5 × 10⁸ | 4 × 10²² … 6 × 10²⁹ |
+| L-CNN, Z₂, 48 × 24 × 24 | 29 … 51 | 10³ … 3 × 10⁴ | 2 × 10¹⁰ … 3 × 10¹⁵ | **inf** |
+| L-CNN, SU(2) | — | — | — | O(0.1) |
+| GELT, Z₂ (same walk) | 1 | 1 | 1 | **1** |
 
-At the production volume it reaches `inf` and the run is NaN before the first
-gradient. The mechanism is exactly M2 and it is visible *at initialisation*
-rather than in the tail: L-Act is `g(Re Tr W/nc)·W`, and at `nc = 1` the
-"trace" is the entry itself, so the gate multiplies by its own argument instead
-of damping it, and the L-Bilin squares the result again. For SU(2) the averaged
-trace of a 2 × 2 matrix is small and the same gate damps. GELT's aggregation is
-a convex combination, so its field does not move.
+The mechanism is M2, visible *at initialisation* rather than in the tail: L-Act
+is `g(Re Tr W/nc)·W`, and at `nc = 1` the "trace" is the entry itself, so the
+gate multiplies by its own argument instead of damping it and the L-Bilin
+squares the result again. For SU(2) the averaged trace of a 2 × 2 matrix is
+small and the same gate damps. GELT's aggregation is a convex combination, so
+its field does not move at all.
 
-**This is the most direct evidence M2 has**, and it is worth saying what kind:
-not a failure *rate* over training runs (§7's caveat — those cannot separate M2
-from the transport), but a deterministic, reproducible blow-up of the forward
-map at matched parameters, with a mechanism that predicts it and a group
-comparison that isolates it. It is also not yet a *result*: it is one
-architecture being unusable out of the box on one group, which is a fact about
-initialisation scales as much as about boundedness.
+> **Read the field, never the output.** `build_arm` zero-initialises every arm's
+> head, so the output is identically 0 whatever the field is — a model one
+> gradient step from `inf` looks perfectly healthy from outside. The first
+> version of this section quoted output magnitudes (0.36 / 3.6 / 7.8e4 / 1.4e21)
+> taken through a *randomly* initialised head, which is a different and much
+> tamer quantity than the one that matters. That is also how the pathology
+> survived long enough to come back as a NaN after one epoch of an end-to-end
+> run rather than at construction.
 
-**The fix, and why it is not a handicap.** `LConv` gained `conv_init_scale`
-(default 1.0, so every existing caller is bit-identical), and the Z₂ arms use
-**0.5** — the largest value on the stable plateau, measured over three seeds:
+**This is the most direct evidence M2 has**: not a failure *rate* over training
+runs (§7's caveat — those cannot separate M2 from the transport), but a
+deterministic, reproducible blow-up of the forward map at matched parameters,
+with a mechanism that predicts it and a group comparison that isolates it. It is
+still not a *result*: it is one architecture being unusable out of the box on
+one group, which is a fact about initialisation scales as much as about
+boundedness.
 
-| L-Conv weight scale | 1.00 | 0.70 | 0.50 | 0.20 |
-|---|---|---|---|---|
-| ‖out‖ at 4 layers | 10²¹ … 10²⁸ | 0.17 … 3 × 10⁴ | **0.02 … 0.13** | 0.01 … 0.13 |
+**The fix, the number, and the mistake it corrects.** `LConv` gained
+`conv_init_scale` (default 1.0, so every existing caller is bit-identical). The
+value was first set to **0.5 from an 8³ box** — and
+`scripts/z2_init_gate.py`, written because a small box is not a proxy for a 54×
+larger one, **falsified it at the production volume on the first run**. Worst
+field at four layers over four seeds, cached configurations at 48 × 24 × 24:
 
-0.5 puts the Z₂ stack at the output magnitude the SU(2) one reaches for free
-(0.05 … 0.19). Giving the baseline the *same starting scale* is the opposite of
-handicapping it — and the alternative, leaving it at 1.0, would have made W-D a
-measurement of an initialisation constant. The repo has made this mistake once
-already and recorded it (`lcnn_norm` being given `lcnn`'s learning rate), which
-is why this is written down rather than patched quietly. **It is still a choice,
-and it should be revisited in the LR × init sweep the arms get before the grid.**
+| L-Conv init scale | 0.05 | 0.10 | 0.20 | 0.30 | 0.40 | 0.50 |
+|---|---|---|---|---|---|---|
+| worst field, 4 layers | 1.0 | 1.3 | **2.6** | 5.0 | 8.4 | **5.8 × 10⁵** |
 
+The cliff between 0.4 and 0.5 is sharp *and seed-dependent* — at 0.5 one seed of
+two was fine and the other reached 5.8e5 — so 0.5 would have poisoned some grid
+cells and not others, which is the worst possible failure mode for a
+seed-averaged reading. **The default is now 0.2**: not the largest passing
+value, but the largest whose profile decays monotonically at every seed.
 
-Two things the code changed about the design, both recorded where they happened:
-V2's definition (§9.2) and the masked reading (§9.4). A third is a plain bug
-worth remembering: hooking the *boundary plaquette* rather than its tree's root
-makes the labelling `O(diameter)`, and at the production volume the percolating
-line is a few thousand dual links long — it was still 223 components after 20
-rounds and never converged. With the root hook it converges in 6.
-
-`probe_common.py` already holds every one of the arms. The adapter this needs is a
-`PROBE_GROUP=z2` switch **inside** `probe_common.py`, not a sibling module — the
-whole point of that file is that the arms cannot drift, and a second copy of the
-ensemble/splits/estimator layer is how a matched comparison silently stops being
-one. What the switch changes: the group (`Z2`, `nc = 1`, real dtype), the cache
-key and the loading path (a Z₂ configuration is *already* 3D, so one
-configuration is one sample and there is no timeslice extraction), and the
-target module. `R`, `LAYERS`, `LCNN_K`, `MLP_HIDDEN`, the splits, the
-standardisation and the R² sufficient statistics are untouched.
-
-| arm | M1 | M3 (vortex mask) | role |
-|---|---|---|---|
-| `gelt` | ✓ | ✓ | the architecture |
-| `frozen` | ✗ | ✓ | M1 removed, nested (fewer parameters) |
-| `frozen_matched` | ✗ | ✓ | M1 removed at matched capacity |
-| `gelt_single` | ✓ | ✗ | M3 removed — in Z₂ the transport becomes the identity |
-| `frozen_single` | ✗ | ✗ | the 2 × 2's fourth cell; **the one new arm** |
-| `lcnn` | ✗ | ✗ | the thesis-relevant baseline |
-| `lcnn_norm` | ✗ | ✗ | M2's control, rides along |
-
-Worth saying plainly, because it makes the 2 × 2 sharper than it looks: in Z₂ a
-single-path transport is ±1 and its adjoint action is `T² W = W`, so
-`gelt_single` is not "GELT with a worse transport" — it is **GELT with no
-transport at all**, a pure attention-over-offsets network on the raw plaquette
-field. The same is true of the L-CNN's transport, which is why the `lcnn` and
-`frozen_single` arms are close in spirit and the difference between them is
-softmax-versus-fixed-kernel aggregation and nothing else.
-
-Cost is the reason this is worth doing at all: `nc = 1`, 24 offsets, 27 648
-sites, so a transport is 2.6 MB per configuration and a run is minutes rather
-than the hours the SU(2) probe costs.
+Giving the baseline the *same starting scale* SU(2) gets for free is the
+opposite of handicapping it; leaving it at 1.0 would have made W-D a measurement
+of an initialisation constant. The repo has made the adjacent mistake once
+already and recorded it (`lcnn_norm` given `lcnn`'s learning rate), which is why
+this is written down rather than patched quietly. **It remains a choice**, and
+the sweep spans init scale for the L-CNN arms precisely so it does not stay one.
 
 ### 9.6 Pre-registered readings
 

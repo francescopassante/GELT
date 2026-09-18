@@ -339,9 +339,13 @@ implementation (MIT, Favoni et al. 2012.12901), layer sources only, tracked so
   multiplies the L-Conv weight init. Unit scale per *layer* is not unit scale
   per *stack* at `nc = 1`: L-Act is `g(Re Tr W/nc)·W`, so at one colour the gate
   multiplies by its own argument instead of damping it and four layers reach
-  1e21. The Z₂ probe arms use **0.5**, the largest value on the stable plateau
-  and the one that gives the Z₂ stack the output magnitude SU(2) gets for free —
-  giving the baseline the same starting scale, not a handicap.
+  1e21. The Z₂ probe arms use **0.2**, measured by
+  `scripts/z2_init_gate.py` at the production volume (worst field at 4 layers
+  over 4 seeds: 0.1 → 1.3, 0.2 → 2.6, 0.3 → 5.0, 0.4 → 8.4, **0.5 → 5.8e5**).
+  The cliff is sharp and *seed-dependent*, so 0.2 rather than the largest
+  passing value. **Read the field, never the output**: `build_arm`
+  zero-initialises every head, so the output is 0 whatever the field is and a
+  model one step from `inf` looks perfectly healthy.
   **`normalize_shifts`** (off by default) reparameterises ω as
   `g[i,j]·ω̂[i,j,s]` with `Σ_s |ω̂| = 1`, bounding the aggregation over offsets
   the way a softmax does while the per-channel magnitude stays free — the M2
@@ -460,7 +464,17 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   maps), and **the matched L-CNN has no usable forward pass in Z₂ at 4 layers**
   (§9.5.1 — 1.4e21 at initialisation, `inf` at the production volume, while
   GELT's field stays at 1: M2, visible before any training). Hence
-  `conv_init_scale = 0.5` on the Z₂ arms.
+  `conv_init_scale`, **0.2** on the Z₂ arms — 0.5 was the first value, chosen on
+  an 8³ box, and `scripts/z2_init_gate.py` falsified it at the production volume
+  on its first run.
+- **`z2_init_gate.py`** — the Z₂ arms' initialisation gate, forward-only on
+  cached configurations at the production volume: does the matched L-CNN's field
+  survive 4 layers at each `conv_init_scale`? It exists because the first value
+  was picked on an 8³ box, and the growth is multiplicative in depth with the
+  statistic a maximum over sites, so a 54× smaller box is not a proxy. Refuses
+  to run if the arms' configured scale is not in the scanned grid — otherwise
+  the verdict would pass vacuously. `scripts/z2_dof_table.py` prints the
+  matched-parameter table under whichever group is selected.
 - **`z2_vortex_preflight.py`** — `probe_preflight.py`'s sibling for the Z₂
   vortex candidate (`notes/where_attention_can_win.md` §9.4), and the gate that
   must be read before any training code exists. Five gates (closure,
@@ -690,6 +704,8 @@ PROBE_ARM=frozen PROBE_TARGET=T2 python scripts/train_probe.py
 python scripts/probe_readings.py             # R-A…R-E (offline, seconds)
 PROBE_GROUP=z2 PROBE_ARM=gelt PROBE_TARGET=V1 python scripts/train_probe.py
 python scripts/z2_vortex_preflight.py        # the Z₂ vortex gate (offline, minutes)
+python scripts/z2_init_gate.py               # the Z₂ arms' init gate (forward-only)
+PROBE_DRY_RUN=1 PROBE_PARTS=z-gate,z-sweep bash scripts/probe_batch.sh
 Z2V_SMOKE=1 python scripts/z2_vortex_preflight.py  # …off a fresh short chain
 PROFILE_DIAGNOSTICS=1 python scripts/profile_glueball_step.py
 PROFILE_ROPE=1 python scripts/profile_glueball_step.py   # the rope_score bench

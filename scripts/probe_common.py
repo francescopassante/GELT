@@ -137,12 +137,18 @@ JACK_BLOCK = env_int("PROBE_JACK_BLOCK", 5)  # blocked jackknife, in configs
 
 # The L-Conv initialisation the Z₂ arms need. **Not a handicap and not a
 # taste**: at nc = 1 the L-Act gate multiplies by its own argument instead of
-# damping, so a stack that starts at unit scale *per layer* reaches 1e21 after
-# four of them and inf at the production volume, while GELT's field stays at 1
-# through the same depth (the M2 mechanism, visible at initialisation). 0.5 is
-# the largest scale on the stable plateau and reproduces the output magnitude
-# the SU(2) arms get for free — the ladder is in gelt/lcnn.py's LConv.
-Z2_LCNN_CONV_INIT = env_float("PROBE_Z2_LCNN_CONV_INIT", 0.5)
+# damping, so the field grows doubly exponentially with depth — inf by layer 4
+# at the production volume — while GELT's stays at 1 through the same depth (the
+# M2 mechanism, visible at initialisation). Measured by scripts/z2_init_gate.py
+# on cached configurations at 48 × 24 × 24, worst field over four seeds at four
+# layers: 0.05 → 1.0, 0.1 → 1.3, 0.2 → 2.6, 0.3 → 5.0, 0.4 → 8.4, 0.5 → 5.8e5.
+# The cliff is sharp and seed-dependent, so 0.2 rather than the largest passing
+# value: its profile decays monotonically at every seed.
+#
+# **0.5 was this default until 2026-09-18 and was wrong** — it was chosen on an
+# 8³ box, which is not a proxy for a 54× larger one. Run the gate, not the
+# small box (notes/where_attention_can_win.md §9.5.1).
+Z2_LCNN_CONV_INIT = env_float("PROBE_Z2_LCNN_CONV_INIT", 0.2)
 
 R = 2  # GELT's per-layer L1-ball radius
 LAYERS = 4  # both architectures
@@ -207,6 +213,14 @@ def load_samples(seed=None, n_configs=None, n_slices=None, verbose=True):
     if verbose:
         print(f"Loading cached ensemble {path} …")
     configs = torch.load(path, map_location="cpu")[:n_configs].to(MODEL_DTYPE)
+    if configs.shape[0] < n_configs:
+        # Otherwise `splits` hands out indices past the end and the failure
+        # surfaces as an IndexError from the middle of the training loop.
+        raise SystemExit(
+            f"{path} holds {configs.shape[0]} configurations but "
+            f"{n_configs} were asked for. Lower PROBE_N_CONFIGS, or point the "
+            f"run at an ensemble that has them."
+        )
     if IS_Z2:
         U3 = configs.unsqueeze(1)  # (n, 1, 3, Lt, L, L, 1, 1)
         if verbose:

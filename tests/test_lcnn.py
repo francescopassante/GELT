@@ -331,24 +331,36 @@ def test_z2_stack_needs_conv_init_scale_to_stay_finite():
     The L-Act gate is ``g(Re Tr W/nc)·W``: for SU(2) the averaged trace of a 2×2
     matrix is small and the gate damps, but at nc = 1 the "trace" is the entry
     itself, so the gate squares its own argument and the L-Bilin squares it
-    again. This is the probe's production geometry
-    (``notes/where_attention_can_win.md`` §9.5) and it is why the Z₂ arms carry
-    ``conv_init_scale = 0.5``. It is not a handicap: 0.5 puts the Z₂ stack at
-    the output magnitude the SU(2) one reaches at 1.0.
+    again. This is the vortex probe's architecture
+    (``notes/where_attention_can_win.md`` §9.5.1) and it is why the Z₂ arms carry
+    ``conv_init_scale = 0.2``.
+
+    **The field, not the output.** ``probe_common.build_arm`` zero-initialises
+    the head, so the output is identically 0 whatever the field is and a model
+    one gradient step from ``inf`` looks healthy from outside. Reading the output
+    here is how the pathology hid long enough to reach an end-to-end run.
     """
     gg, L, D, K = Z2(), 8, 3, 2
     kw = dict(gaugegroup=gg, L=L, D=D, K=K, c_hidden=6, n_layers=4,
               dtype=torch.float32, reduction="none", in_channels=3)
+
+    def field(model, W, T):
+        x = W
+        for lcb, lact in zip(model.lcb_blocks, model.l_acts):
+            x = lact(lcb(x, T))
+        return x.abs().max().item()
+
     reference, scaled = [], []
     for seed in range(3):
         torch.manual_seed(seed)
         U = random_links(L=L, D=D, gaugegroup=gg, dtype=torch.float32).unsqueeze(0)
         W = plaquette_tensor(U, gg)
         T = build_axis_transports(U, K, gg)
-        torch.manual_seed(seed)
-        reference.append(LCNN(**kw)(W, T).abs().max().item())
-        torch.manual_seed(seed)
-        scaled.append(LCNN(conv_init_scale=0.5, **kw)(W, T).abs().max().item())
+        with torch.no_grad():
+            torch.manual_seed(seed)
+            reference.append(field(LCNN(**kw), W, T))
+            torch.manual_seed(seed)
+            scaled.append(field(LCNN(conv_init_scale=0.2, **kw), W, T))
     assert min(reference) > 1e6, (
         f"the reference init no longer blows up in Z₂ ({reference}) — if that is "
         f"a deliberate fix, probe_common.Z2_LCNN_CONV_INIT is now unnecessary"

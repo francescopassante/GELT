@@ -48,6 +48,24 @@
 #   tail -f logs/probe_batch.log
 #
 #   PROBE_PARTS=0,1              the gates and the sweep (the default)
+#
+#   ── the Z₂ vortex study (notes/where_attention_can_win.md §9) ──
+#   PROBE_PARTS=z-gate           the gates: the matched-DOF table under the
+#                                switch, and the **initialisation gate at the
+#                                production volume**. The L-CNN's field grows
+#                                doubly exponentially with depth at nc = 1 and
+#                                the scale that tames it was first set from an
+#                                8³ box, which the gate falsified — so this runs
+#                                before anything trains, every time.
+#   PROBE_PARTS=z-sweep          the per-arm LR sweep (and, for the L-CNN arms,
+#                                init scale) at β = 0.7520, on **V1 masked and
+#                                V2 together**: an arm that is down on the
+#                                calibration target is down for reasons the
+#                                study does not measure (m1_probe.md §0 point 6).
+#   PROBE_PARTS=z-grid           the grid at the primary coupling, six seeds.
+#                                **Read W-A (V2) first** — it is the gate — and
+#                                run the replication only if it passes:
+#                                  PROBE_PARTS=z-grid PROBE_Z2_BETAS=0.745 …
 #   PROBE_PARTS=2,3,4            the grid, after the sweep has been read
 #   PROBE_PARTS=8,9              the transport arms (§4.4), after the CPU gate
 #   PROBE_PARTS=6 then 7         the signed-α side experiment (§8); independent
@@ -100,6 +118,46 @@ TRANSPORT_ARMS="${PROBE_TRANSPORT_ARMS:-gelt_single gelt_projected}"
 TRANSPORT_LRS="${PROBE_TRANSPORT_LRS:-1e-2 3e-3}"
 LR_GELT_SINGLE="${PROBE_LR_GELT_SINGLE:-${LR_GELT}}"
 LR_GELT_PROJECTED="${PROBE_LR_GELT_PROJECTED:-${LR_GELT}}"
+
+# ── the Z₂ vortex study ──────────────────────────────────────────────────────
+# β is the ensemble's identity here: train_z2_glueball.py keys its cache on the
+# coupling, so a second ensemble is a second β rather than a second chain.
+# §9.6 fixed 0.7520 as primary and 0.7450 as the replication, in writing, from
+# the production pre-flight — do not add couplings without re-reading it.
+# Written as Python's float repr, because that is what the cache key and the
+# dump stems are built from (probe_common.cache_path, train_probe.STEM): 0.752
+# *is* §9.6's 0.7520, and spelling it with the trailing zero would silently
+# break the skip-on-existing-dump rule that makes a restart resume.
+Z2_BETAS="${PROBE_Z2_BETAS:-0.752}"
+Z2_SEEDS="${PROBE_Z2_SEEDS:-0 1 2 3 4 5}"
+Z2_TARGETS="${PROBE_Z2_TARGETS:-V2 V1}"
+# The seven arms: the 2 × 2 of §9.3 ({softmax,frozen} × {average,single}) plus
+# the capacity control, plus the two L-CNN arms.
+Z2_ARMS="${PROBE_Z2_ARMS:-gelt frozen frozen_matched gelt_single frozen_single lcnn lcnn_norm}"
+# Half-decade steps. An arm whose optimum sits at an edge is not bracketed and
+# the grid must not be run on it — extend and re-run z-sweep, finished points
+# are skipped.
+Z2_SWEEP_LRS="${PROBE_Z2_SWEEP_LRS:-1e-2 3e-3 1e-3 3e-4}"
+# …and the L-CNN arms also over init scale, because 0.2 is a gate verdict and
+# not an optimum. Only scales the gate passed belong here.
+Z2_SWEEP_INITS="${PROBE_Z2_SWEEP_INITS:-0.1 0.2 0.3}"
+Z2_SWEEP_EPOCHS="${PROBE_Z2_SWEEP_EPOCHS:-${EPOCHS}}"
+# Per-arm rates for z-grid, set from z-sweep's val curves. The defaults are one
+# rate for every arm, which is exactly what the sweep exists to fix.
+z2_arm_lr() {
+  local v
+  case "$1" in
+    gelt)           v="${PROBE_Z2_LR_GELT:-}";;
+    frozen)         v="${PROBE_Z2_LR_FROZEN:-}";;
+    frozen_matched) v="${PROBE_Z2_LR_FROZEN_MATCHED:-}";;
+    gelt_single)    v="${PROBE_Z2_LR_GELT_SINGLE:-}";;
+    frozen_single)  v="${PROBE_Z2_LR_FROZEN_SINGLE:-}";;
+    lcnn)           v="${PROBE_Z2_LR_LCNN:-}";;
+    lcnn_norm)      v="${PROBE_Z2_LR_LCNN_NORM:-}";;
+    *)              v="";;
+  esac
+  echo "${v:-${PROBE_Z2_LR:-3e-3}}"
+}
 
 stamp() { date "+%F %T"; }
 wants() { case ",${PARTS}," in *",$1,"*) return 0;; *) return 1;; esac; }
@@ -160,6 +218,30 @@ train() {
     python -u scripts/train_probe.py --arm="${arm}" --target="${tgt}" \
     --ensemble-seed="${ens}" --init-seed="${seed}" --epochs="${EPOCHS}" \
     --lr="$(arm_lr "${arm}")" "$@"
+}
+
+# z2_train <arm> <target> <beta> <seed> [extra flags…]
+# The Z₂ study's dumps live under results/z2_vortex/probe and their stems carry
+# β rather than an ensemble seed (probe_common.cache_path), so the skip-on-dump
+# rule needs its own stem builder rather than a flag on the one above.
+z2_train() {
+  local arm="$1" tgt="$2" beta="$3" seed="$4"; shift 4
+  local tag="" stem name
+  for a in "$@"; do
+    case "$a" in --run-tag=*) tag="${a#--run-tag=}";; esac
+  done
+  # train_probe.STEM appends _n<N> whenever PROBE_N_CONFIGS is not the group
+  # default, so the stem this builds has to as well or skip-on-existing-dump
+  # silently stops firing and a restart re-runs everything.
+  local nsuf=""
+  if [ -n "${PROBE_N_CONFIGS:-}" ] && [ "${PROBE_N_CONFIGS}" != "100" ]; then
+    nsuf="_n${PROBE_N_CONFIGS}"
+  fi
+  stem="results/z2_vortex/probe/probe_${arm}_${tgt}_b${beta}_init${seed}${nsuf}${tag}"
+  name="z2_${arm}_${tgt}_b${beta}_s${seed}${tag}"
+  run_phase "${name}" "${stem}_stats.pt" \
+    python -u scripts/train_probe.py --group=z2 --arm="${arm}" --target="${tgt}" \
+    --z2-beta="${beta}" --init-seed="${seed}" "$@"
 }
 
 export TQDM_MININTERVAL=30
@@ -337,6 +419,76 @@ if wants 9; then
       done
     done
   done
+fi
+
+# ── part z-gate: the Z₂ study's gates (no training) ──────────────────────────
+if wants z-gate; then
+  echo "[$(stamp)] ══ part z-gate: matched-DOF table under the switch, then the"
+  echo "[$(stamp)]    initialisation gate at the production volume"
+  python -u scripts/z2_dof_table.py --group=z2
+  run_phase "z2_init_gate" "results/z2_vortex/init_gate.pt" \
+    python -u scripts/z2_init_gate.py \
+      --z2gate-betas="$(echo ${Z2_BETAS} | tr ' ' ',')"
+  echo "[$(stamp)]    READ logs/z2_init_gate.log before z-sweep. A FAIL there"
+  echo "[$(stamp)]    means the arms' conv_init_scale does not hold at the"
+  echo "[$(stamp)]    production volume, and nothing should train until it does."
+fi
+
+# ── part z-sweep: per-arm LR (and init scale) at the primary coupling ─────────
+# On V1 *and* V2, because m1_probe.md §0 point 6 is the lesson: an arm that is
+# down on the calibration target is down for reasons the study does not measure,
+# and reading that only after the grid wastes the grid.
+if wants z-sweep; then
+  echo "[$(stamp)] ══ part z-sweep: β ${Z2_BETAS}, ${Z2_SWEEP_EPOCHS} epochs, seed 0"
+  echo "[$(stamp)]    arms: ${Z2_ARMS}"
+  echo "[$(stamp)]    rates: ${Z2_SWEEP_LRS}   L-CNN init scales: ${Z2_SWEEP_INITS}"
+  for BETA in ${Z2_BETAS}; do
+    for TGT in ${Z2_TARGETS}; do
+      for ARM in ${Z2_ARMS}; do
+        for SLR in ${Z2_SWEEP_LRS}; do
+          case "${ARM}" in
+            lcnn|lcnn_norm)
+              for CI in ${Z2_SWEEP_INITS}; do
+                z2_train "${ARM}" "${TGT}" "${BETA}" 0 \
+                  --epochs="${Z2_SWEEP_EPOCHS}" --lr="${SLR}" \
+                  --z2-lcnn-conv-init="${CI}" \
+                  --run-tag="_sweep_lr${SLR}_ci${CI}"
+              done
+              ;;
+            *)
+              z2_train "${ARM}" "${TGT}" "${BETA}" 0 \
+                --epochs="${Z2_SWEEP_EPOCHS}" --lr="${SLR}" \
+                --run-tag="_sweep_lr${SLR}"
+              ;;
+          esac
+        done
+      done
+    done
+  done
+  echo "[$(stamp)]    grep -H 'best epoch' logs/z2_*_sweep_*.log"
+  echo "[$(stamp)]    Check every arm's winner is NOT at an edge of the grid,"
+  echo "[$(stamp)]    on BOTH V1 and V2, before believing it. Then:"
+  echo "[$(stamp)]    PROBE_PARTS=z-grid PROBE_Z2_LR_GELT=… PROBE_Z2_LR_LCNN=… \\"
+  echo "[$(stamp)]      PROBE_Z2_LCNN_CONV_INIT=… bash scripts/probe_batch.sh"
+fi
+
+# ── part z-grid: the grid at the primary coupling ────────────────────────────
+# V2 first and outermost: it is W-A, the calibration, and it is the gate. A
+# batch cut short should leave the reading that can stop the study complete.
+if wants z-grid; then
+  echo "[$(stamp)] ══ part z-grid: β ${Z2_BETAS}, seeds ${Z2_SEEDS}, targets ${Z2_TARGETS}"
+  for BETA in ${Z2_BETAS}; do
+    for TGT in ${Z2_TARGETS}; do
+      for SEED in ${Z2_SEEDS}; do
+        for ARM in ${Z2_ARMS}; do
+          z2_train "${ARM}" "${TGT}" "${BETA}" "${SEED}" \
+            --epochs="${EPOCHS}" --lr="$(z2_arm_lr "${ARM}")"
+        done
+      done
+    done
+  done
+  echo "[$(stamp)]    READ W-A (V2) FIRST. The replication at 0.745 runs only"
+  echo "[$(stamp)]    if it passes:  PROBE_PARTS=z-grid PROBE_Z2_BETAS=0.745 …"
 fi
 
 echo "[$(stamp)] ══ batch done. Readings:  python scripts/probe_readings.py"
