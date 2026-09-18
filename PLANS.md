@@ -403,7 +403,7 @@ In the existing GELT results, it was discovered that the connected correlator of
 > **Status (2026-09-15): built, run, and STOPPED on a measurement. Do not
 > restart this without reading `notes/where_attention_can_win.md` §4 first.**
 > The design, the theory report and all of the code (`gelt/flow.py`,
-> `scripts/measure_topology.py`) are deleted; §10 of that note says where they
+> `scripts/measure_topology.py`) are deleted; §11 of that note says where they
 > live. What killed it was not attention and not the implementation — every
 > layer verified to machine precision, the charge renormalisation `Z(β)` came out
 > physically correct, and there was no topological freezing. It was the target:

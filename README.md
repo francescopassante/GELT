@@ -128,11 +128,14 @@ CLAUDE.md              module-by-module detail, conventions, status, caveats
 | `train_probe.py` | one (arm, target, seed) of the M1 probe; `PROBE_ARM` picks GELT, frozen-α, or the L-CNN arms |
 | `probe_batch.sh` | the V100 batch behind the M1 probe: gates, LR sweep, the grid, the null |
 | `probe_readings.py` | R-A…R-E, correlated ΔR², median over seeds — offline |
+| `z2_vortex_preflight.py` | the Z₂ vortex candidate's gate: five checks and the two classical ceilings at the architecture's reach — offline |
 
-The four `probe_*` scripts belong to a study that has **not been run yet** — the
-M1 ablation of `notes/m1_probe.md`, built and pre-flighted 2026-09-15. They
-produce nothing in `main.tex`; the readings they will produce are pre-registered
-in that note's §4.
+The `probe_*` scripts belong to the M1 ablation of `notes/m1_probe.md`, run to
+completion 2026-09-16 (132 runs); `z2_vortex_preflight.py` belongs to the
+candidate proposed in `notes/where_attention_can_win.md` §9, which has a
+pre-flight but **no training code**. Neither produces anything in `main.tex`;
+the M1 probe's readings are in `notes/m1_probe.md` §0 and the vortex candidate's
+are pre-registered in §9.6 of the other note.
 
 ---
 

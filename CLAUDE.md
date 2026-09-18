@@ -46,29 +46,58 @@ or "removed in the 2026-09-09 cleanup", that is where it went.
   record, and the first thing to read before proposing a GELT-vs-L-CNN task.**
   Both attempts and why each closed: the 0⁺⁺ tie (structural) and the flow-free
   topology study (**stopped 2026-09-15**, measured). It separates the two
-  candidate mechanisms — *relative weighting* (M1, never observed to pay) from
-  *boundedness* (M2, observed three times) — states the **four criteria** a
+  candidate mechanisms — *relative weighting* (M1, which **the probe's ablation
+  has now shown to pay, 6/6 cells, on a constructed target** — §1.2; it has
+  still never paid on a physics task) from *boundedness* (M2, observed three
+  times) — states the **four criteria** a
   candidate task must now satisfy, and proposes the one experiment that targets
-  M2 directly. §5's pre-flight rule is the cheap gate that stopped topology for
+  M2 directly (§8). §5's pre-flight rule is the cheap gate that stopped topology for
   ~4 h instead of ~60–100: **measure the best classical method at the
   architecture's own reach before building any training code.**
+  **§9 (2026-09-18) is attempt 4, proposed and pre-flighted, not built**: vortex-
+  cluster geometry in 3D Z₂ on the cached ensembles, the first candidate that is
+  a physics observable and clears all four criteria. **The pre-flight is built
+  and passes all five gates** (`scripts/z2_vortex_preflight.py`,
+  `gelt/vortex_targets.py`, `tests/test_vortex_targets.py`): on the production
+  geometry it measures R² = 0.186 ± 0.037 for the best linear filter at
+  Manhattan 8 against 0.736 ± 0.033 for the best *local* classical algorithm and
+  1.0 for the target, so the task's difficulty is concentrated in routing
+  (connectivity is worth +0.550 over density at the same reach). It also records a measured identity that changed the
+  design: **in Z₂ GELT's path-averaged transport is a hard vortex mask**
+  (`T_Δ² = (1 + P_enclosed)/2 ∈ {0,1}`) while the L-CNN's axis transport acts as
+  the identity, which is a *third* input-dependent weighting (M3) and forces a
+  2 × 2 design, `{softmax, frozen} × {average, single}`, rather than an A/B.
 - `notes/m1_probe_status.md` — **the plain-language orientation for the M1
   probe: read it before `m1_probe.md`.** What is being tested and why, the
   arms and targets in one table each, the findings so far, what is running,
-  what to run when it finishes, and the five things not to re-break.
-- `notes/m1_probe.md` — **attempt 3, built and pre-flighted 2026-09-15, not yet
-  run.** The confound `where_attention_can_win.md` §1 missed: GELT and the
-  matched L-CNN differ in *two* things (input-dependent offset weights **and**
-  transport geometry), so no GELT-vs-L-CNN number has ever measured M1. The
-  clean test is GELT against **GELT with the softmax frozen**, on three
-  constructed per-site targets. Holds the arm table, the four-criteria audit
-  (criterion 4 is knowingly violated — it is a mechanism assay, not a physics
-  result), the pre-registered readings R-A…R-E, and §3.1, where the pre-flight
-  **changed the design before any training code ran**. §3.2 is the production
-  pre-flight (2026-09-15, both ensembles, all gates pass): T0 exactly 1.0000,
-  T1 headroom 0.92, T2 0.38 — and the **radial linear filter equals the
-  full-ball one to four decimals**, so the M1-free ceiling is a five-parameter
-  object and nothing that separates the arms can be directional weighting.
+  what to run when it finishes, and the six things not to re-break.
+- `notes/m1_probe.md` — **attempt 3, run and completed 2026-09-16 (132 runs).** The confound
+  `where_attention_can_win.md` §1 missed: GELT and the matched L-CNN differ in
+  *two* things (input-dependent offset weights **and** transport geometry), so
+  no GELT-vs-L-CNN number has ever measured M1. The clean test is GELT against
+  **GELT with the softmax frozen**, on three constructed per-site targets.
+  Holds the arm table, the four-criteria audit (criterion 4 is knowingly
+  violated — it is a mechanism assay, not a physics result), the pre-registered
+  readings R-A…R-E, and §3.1, where the pre-flight **changed the design before
+  any training code ran**. §3.2 is the production pre-flight (2026-09-15, both
+  ensembles, all gates pass): T0 exactly 1.0000, T1 headroom 0.92, T2 0.38 — and
+  the **radial linear filter equals the full-ball one to four decimals**, so the
+  M1-free ceiling is a five-parameter object and nothing that separates the arms
+  can be directional weighting.
+  **§0 is the one-page readout of what it found**, from the 90-run grid plus
+  parts 7 and 9: **M1 pays** — R-B = +0.144 on T2, 6/6 paired cells, p = 0.031,
+  with capacity controlled by `frozen_matched` — GELT and the L-CNN tie on
+  accuracy and differ 8× in dispersion; the softmax is worth ≈ 0.48 of R² at
+  matched parameters but **not** for the reason proposed (§7.6 withdraws the
+  non-negativity / normalisation / boundedness split: the T0 control says
+  trainability); **path averaging in the transport is a null on accuracy**
+  (§7.7) and is worth *less* on the mechanism target than on the calibration
+  one, which makes GELT's 3.9× step cost a choice here; and **part of GELT's
+  low dispersion is the transport rather than the attention** — the same network
+  fed a single-path `T` falls below R² = 0.70 in 2 of 12 cells and the projected
+  one in 3, against 0 of 12 for `gelt`. The verbatim readings for all 132 runs
+  are tracked at `notes/m1_probe_readout_2026-09-16.txt`, because the dumps they
+  come from are gitignored and live only on the V100.
 - `notes/attention_as_operator.md` — the design record for "the attention map is
   a lattice operator": why ℓ_att failed and the correlator of the attention field
   does not, the three arms, the Z₂ result (§6.1) and its transport to SU(2) (§9).
@@ -270,6 +299,19 @@ implementation (MIT, Favoni et al. 2012.12901), layer sources only, tracked so
   design matrix. **`SCALE_POWER = 4` is a pre-flight finding**, not a taste: at
   p = 1 the 66-site outer shell concentrates, the `min{r}` selection never
   selects, and a linear filter reaches R² = 0.978.
+- **`vortex_targets.py`** — the 3D Z₂ vortex candidate's supervision
+  (`notes/where_attention_can_win.md` §9). `vortex_field` → the gauge-invariant
+  indicator `[Re Tr P/nc < 0]`; in 3D the negative plaquettes are dual links and
+  Bianchi closes them into loops, which `closure_defect` checks as a hard gate
+  (**Z₂ only** — the sign of a trace is not a centre element for SU(N)).
+  `cluster_labels` is Shiloach–Vishkin on the dual graph, and **the hook must be
+  applied to the tree's root**: hooking the boundary plaquette is `O(diameter)`
+  and never converges at the production volume, where the percolating line is a
+  few thousand dual links long. `build_targets` → **V1** (`log(1 + largest
+  cluster touching x)` — global, the primary) and **V2** (the ball count — a
+  convolution, exactly linear, the calibration arm). `local_component_size` is
+  **not** a target: it is the classical local ceiling §5's rule requires be
+  measured first. D = 3 only; in 4D the negative plaquettes form surfaces.
 - **`lcnn.py`** — Favoni et al. L-CNN: `build_axis_transports` (axis-aligned link
   products — distinct from GELT's L1-ball `T`), `LConv`, `LBilin`, `LCB`,
   `LAct`, `Trace`, `LCNN`. Mirrors `GELT`'s I/O so the two are
@@ -392,6 +434,19 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   not the L-CNN's transport. `probe_transport_gate.py` is their own pre-flight,
   a necessary-condition gate (do the two transports differ on production
   configurations at all?) rather than a ceiling.
+- **`z2_vortex_preflight.py`** — `probe_preflight.py`'s sibling for the Z₂
+  vortex candidate (`notes/where_attention_can_win.md` §9.4), and the gate that
+  must be read before any training code exists. Five gates (closure,
+  non-degeneracy of the cluster competition, the transport-mask identity of
+  §9.3, V2's exact linearity, headroom) and **two** classical ceilings, because
+  this task has two: the best linear filter at the architecture's reach and the
+  best *local connectivity* algorithm at the same reach. **The reading is the
+  masked one** — only ~9% of sites carry a vortex, so an all-sites R² mostly
+  scores "is there a vortex here" (0.65 against the masked 0.19). Env:
+  `Z2V_BETAS`, `Z2V_N_CONFIGS`, `Z2V_LOCAL_CONFIGS`, `Z2V_REACH`, `Z2V_CHUNK`,
+  `Z2V_SMOKE` (production *geometry* off a short fresh chain, under a minute —
+  it samples nothing otherwise, the ensembles are `train_z2_glueball.py`'s by
+  the identical cache key).
 - **`profile_glueball_step.py`** — where one optimizer step goes, per stage,
   forward **and backward** separately. It goes through
   `train_glueball.config_inputs`, i.e. the pipeline the training loop actually
@@ -448,6 +503,16 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   degree 1; the periodic-ball guard; and **both architectures reach the whole
   radius-4 target ball** (GELT after 2 of 4 layers, the L-CNN after 3) as
   integer set arithmetic — if that fails, R-C is measuring receptive field.
+- **`test_vortex_targets.py`** — the Z₂ vortex candidate's premise: the cube-face
+  enumeration checked **by physics** (per-cube vortex parity vanishes on gauge
+  configurations, and does not on a hand-broken field); the dual graph against
+  the one case known by hand (one flipped link ⇒ four vortex plaquettes in one
+  loop); the vectorised labelling against a plain union-find, plus the long-line
+  regression that the root hook exists for; non-cubic lattices and no merging
+  across the configuration axis; **V2 is exactly the ball count** and V1 is not
+  additive; the local arm is bounded by the global one, matches a brute-force
+  BFS and **ignores structure outside its ball** — the honesty gate that makes
+  it a ceiling; gauge invariance in Z₂ and SU(2); the D ≠ 3 guard.
 - **`test_data_model.py`** — split validation and CNN-baseline shape guards.
 
 ## Conventions
@@ -596,6 +661,8 @@ python scripts/probe_preflight.py            # §5's gate (offline, seconds)
 python scripts/probe_transport_gate.py       # the transport arms' gate (CPU, minutes)
 PROBE_ARM=frozen PROBE_TARGET=T2 python scripts/train_probe.py
 python scripts/probe_readings.py             # R-A…R-E (offline, seconds)
+python scripts/z2_vortex_preflight.py        # the Z₂ vortex gate (offline, minutes)
+Z2V_SMOKE=1 python scripts/z2_vortex_preflight.py  # …off a fresh short chain
 PROFILE_DIAGNOSTICS=1 python scripts/profile_glueball_step.py
 PROFILE_ROPE=1 python scripts/profile_glueball_step.py   # the rope_score bench
 pytest tests
@@ -626,7 +693,7 @@ Ranked in `notes/audit_2026-09-06.md` §4, and unchanged by the cleanup:
    until a clean run exists (§9.1/§9.2).
 6. **Where attention can win, given parity** — `notes/where_attention_can_win.md`.
    The flow-free topology study that used to sit here was **stopped 2026-09-15**
-   on a measurement, and its code is deleted (§10 of that note). The lesson is
+   on a measurement, and its code is deleted (§11 of that note). The lesson is
    the durable part: the target was the output of a classical smoother, and 48
    APE steps with one fitted scalar reproduce it at R² = 0.978 — free, untrained,
    and with more reach than any bounded receptive field. **Before proposing the
@@ -634,12 +701,21 @@ Ranked in `notes/audit_2026-09-06.md` §4, and unchanged by the cleanup:
    measure the best classical method at the architecture's own reach.** §8
    proposes the one experiment aimed at the mechanism that *has* been observed
    (boundedness, 0-of-14 vs 3-of-9), which costs a dozen short runs on data
-   already on disk.
-7. **Run the M1 probe** — `notes/m1_probe.md`. Built and pre-flighted
-   2026-09-15; §7 of that note is the command sequence. `probe_batch.sh` part 0
-   (the matched-DOF table + the pre-flight on both real ensembles, no GPU) is
-   the next thing to run, and **part 1 must not start until part 0's logs have
-   been read** — the pre-flight has already invalidated one target design once.
+   already on disk. **§9 is attempt 4** — vortex-cluster geometry in 3D Z₂,
+   proposed and pre-flighted 2026-09-18, with pre-registered readings W-A…W-F.
+   The supervision, the gate and their tests exist; **what it needs next is
+   `python scripts/z2_vortex_preflight.py` on the four cached ensembles** (no
+   GPU, minutes) to fix the β ladder, and then the `PROBE_GROUP=z2` switch
+   inside `probe_common.py` — never a sibling module, or the arms drift.
+7. ~~Run the M1 probe~~ — **done and complete** 2026-09-16, 132 runs, and it is
+   the first of three attempts in which M1 was measured to pay
+   (`notes/m1_probe.md` §0). Three cheap follow-ups, none needing new data:
+   **six seeds per ensemble** (the binding constraint on R-B′ and on both
+   dispersion readings, which are counts a sign test cannot resolve at n = 6),
+   `signed_bounded` at 1e−1 (its rate is still unbracketed), and
+   `PROBE_GATE_CONFIGS=64` on the GPU for the three transports' cost ratio.
+   **The claim that needs re-wording elsewhere first**: GELT's robustness is
+   attention *and* the shortest-path-averaged transport, not attention alone.
 
 ## Things to keep in mind
 
