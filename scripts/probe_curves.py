@@ -42,6 +42,13 @@ from probe_common import IS_Z2, env_float, env_str, validate_argv  # noqa: E402
 # matters — a run can tick its best on the last epoch by 1e-5 of noise and be
 # perfectly converged.
 STILL_IMPROVING = env_float("PROBE_CURVES_TAIL", 0.02)
+# The classical local ceiling this study has to clear — reading W-E of
+# notes/where_attention_can_win.md §9.6. An arm below it has not beaten the best
+# bounded-reach classical method and is not an architecture result whatever the
+# arm-vs-arm differences say, so the comparison belongs next to the numbers
+# rather than in someone's memory. 0.671 is the β = 0.752 pre-flight value;
+# β = 0.745 is 0.747. Set to 0 to switch the column off.
+CEILING = env_float("PROBE_CEILING", 0.671)
 # PROBE_FILTER, not PROBE_CURVES_FILTER: the flag derived from the name is
 # what the docstring promises (--filter=), and a flag that does not match its
 # documentation is the same silent no-op validate_argv now refuses.
@@ -113,6 +120,7 @@ def main():
         best = d.get("best_epoch", -1) + 1
         n = len(hist)
         gain = tail_gain(val)
+        r2 = d.get("r2", float("nan"))
         cut_off = n > 0 and best == n and gain > STILL_IMPROVING
         flags = []
         if cut_off:
@@ -121,10 +129,12 @@ def main():
             flags.append("DIVERGED")
         if d.get("collapsed"):
             flags.append("COLLAPSED")
+        if CEILING and d.get("target") == "V1" and r2 == r2 and r2 < CEILING:
+            flags.append(f"below the classical ceiling {CEILING:.3f}")
         print(f"{d.get('arm', '?'):16s} {d.get('target', '?'):4s} "
               f"{d.get('lr', float('nan')):7.1e} {n:3d} {best:4d} "
               f"{(val[-1] if val else float('nan')):9.4f} "
-              f"{d.get('r2', float('nan')):+8.4f} {gain:+7.1%}  "
+              f"{r2:+8.4f} {gain:+7.1%}  "
               f"{sparkline(val)}  " + "  ".join(flags))
         rows.append((os.path.basename(path), d.get("arm"), d.get("target"),
                      d.get("lr"), n, best, d.get("r2"), gain, cut_off))
