@@ -77,6 +77,15 @@ Six independent runs per cell (3 seeds × 2 ensembles). Headlines first:
   so "the max over the ball" is GELT's own operation restated as a task. All
   claims rest on T2.
 
+Two post-hoc parts ran after the grid and each changed a conclusion:
+
+- **The softmax is worth 0.48 of R² at identical parameters** — but *not*
+  because of non-negativity, and the three-way split published on 2026-09-16 is
+  withdrawn. See 5b.
+- **Path averaging in the transport buys no accuracy** (a null on T2, and worth
+  *more* on the calibration target than on the mechanism one) — but it is where
+  part of GELT's consistency advantage comes from. See 5c.
+
 The one-page version with every number and p-value is `notes/m1_probe.md` §0;
 the full working, error bars and the two estimator repairs needed before any of
 it was quotable are in §7.5 of the same file.
@@ -104,18 +113,39 @@ visible.** It is one seed on one ensemble.
   such subtractions. If that holds, the boundedness that makes GELT robust is
   also what costs it accuracy here — a trade-off, not a defeat.
 
-## 5. What is running right now
+## 5. What has run — **the probe is finished**
 
-```
+**132 runs, 2026-09-16.** Nothing is pending. The verbatim readings behind every
+number in this note are tracked at `notes/m1_probe_readout_2026-09-16.txt` —
+worth knowing, because `results/m1_probe/` and `logs/` are gitignored and live
+only on the V100.
+
+| part | what | runs | state |
+|---|---|---|---|
+| 0, 1 | gates + LR sweep | — | done (§8 of `m1_probe.md`) |
+| 2, 3, 4 | the grid: 5 arms × 3 targets × 3 seeds × 2 ensembles + 6 nulls | 90 | **done**, nothing failed |
+| 6, 7 | the signed-α arms, T0 + T2, 3 seeds, ens0 only | 18 | **done** — and it withdrew a result, see 5b |
+| 8, 9 | the transport arms, T0 + T2, 3 seeds, 2 ensembles | 24 | **done** — a null, plus an unplanned finding, see 5c |
+
+The whole grid, for the record — every phase skips itself if its dump exists, so
+these are re-runnable as written:
+
+```bash
 PROBE_PARTS=2,3,4 PROBE_EPOCHS=40 PROBE_LR_GELT=1e-2 PROBE_LR_FROZEN=1e-2 \
   PROBE_LR_LCNN=1e-3 PROBE_LR_LCNN_NORM=3e-4 bash scripts/probe_batch.sh
+PROBE_PARTS=6 PROBE_EPOCHS=40 bash scripts/probe_batch.sh   # then read the sweep
+PROBE_PARTS=7 PROBE_EPOCHS=40 PROBE_LR_SIGNED=3e-3 \
+  PROBE_LR_SIGNED_BOUNDED=3e-2 PROBE_LR_SIGNED_L1=3e-3 bash scripts/probe_batch.sh
+python scripts/probe_transport_gate.py                       # CPU, minutes
+PROBE_PARTS=8,9 PROBE_EPOCHS=40 PROBE_LR_GELT=1e-2 bash scripts/probe_batch.sh
+python scripts/probe_readings.py                             # offline, seconds
 ```
 
-**90 training runs, ~15 hours**, started 2026-09-15 evening. Every combination
-of arm × target × 3 initialisation seeds × 2 ensembles, plus 6 control runs with
-the network frozen at initialisation. It writes one small file per run to
-`results/m1_probe/` and logs to `logs/`. It skips anything already done, so it
-is safe to kill and restart.
+**If you come back to this, three cheap things would strengthen it** and none
+needs new data: six seeds per ensemble instead of three (the binding constraint
+on R-B′ and on *both* dispersion readings), `signed_bounded` at 1e−1 (its rate
+is still unbracketed), and `PROBE_GATE_CONFIGS=64` on the GPU for the three
+transports' cost ratio.
 
 ## 5b. The side experiment (second GPU, ~6 h)
 
@@ -165,15 +195,32 @@ arm with the strictly larger repertoire loses by 0.44. What the constraint buys
 is not what the network *can* express but how easily it finds it — the same
 message as the main grid's dispersion result, in another currency.
 
-**Not yet established:** this is one seed on one ensemble. Against the grid's
-seed-to-seed spread for `gelt` (sd 0.049) the 0.44 is nine standard deviations
-and the two smaller steps are one — so the headline stands a seed and the
-ladder's lower rungs do not. Part 7 (three seeds, plus T0 as the calibration
-control) is what promotes them, and `signed_bounded` needs one extra run at
-1e−1 first: its best rate is at the top edge of the sweep grid, so its 0.32 is
-a lower bound.
+**Part 7 has now run — three seeds, and the T0 control. The headline promoted,
+the ladder withdrawn.** (Full working: `notes/m1_probe.md` §7.6.)
 
-## 5c. The transport side experiment (built 2026-09-16, not yet run)
+- **Promoted.** Removing the softmax costs **0.48 of R²** at identical parameter
+  count, in 3 of 3 seeds, every cell in [−0.61, −0.44]. The 0.44 was not a lucky
+  seed. And it cannot be a capacity argument, because the weights a softmax can
+  produce are a *subset* of the ones `signed_l1` can — so what the constraint
+  buys is how easily the network finds a good answer, not what it can express.
+- **Withdrawn: the ladder, and the name on the big number.** Part 7 also ran
+  T0 — the target that is a plain weighted sum, where the sign of the weights
+  cannot possibly matter — and the signed arm is **worse there than on T2**:
+  −0.658 against −0.480. So the arms are not paying for dropping non-negativity,
+  they are simply harder to train at all, and most of the damage shows up on the
+  target where the mechanism is inert. "Non-negativity is worth 0.44,
+  normalisation 0.061, boundedness 0.089" is **not supportable** and is
+  withdrawn. The two smaller rungs are inside the noise, and one of them changed
+  sign once three seeds existed.
+- This was foreseen in writing before the run — §4.3 of `m1_probe.md` states the
+  condition and part 7 exists to test it — which is the only reason the walk-back
+  is one paragraph instead of a re-analysis.
+- **`signed_bounded` collapsed in all three T0 runs** (never beat the trivial
+  predictor), so anything computed through that arm is reading a collapsed run.
+  Its learning rate is still unbracketed at the top of the sweep grid; the 1e−1
+  run is still the first thing to do if anyone returns to this.
+
+## 5c. The transport side experiment — **run 2026-09-16, complete**
 
 R-C — GELT against the matched L-CNN — has never been a clean comparison,
 because the two differ in *two* things: the attention (which R-B isolated) and
@@ -212,13 +259,55 @@ PROBE_PARTS=8 PROBE_EPOCHS=40 PROBE_LR_GELT=1e-2 bash scripts/probe_batch.sh
 PROBE_PARTS=9 PROBE_EPOCHS=40 PROBE_LR_GELT=1e-2 bash scripts/probe_batch.sh
 ```
 
-## 6. When it finishes
+**The gate passed by thirty times its threshold** (the two transports differ by
+0.60 in relative norm over the two-path offsets, against a 0.02 bar), so the
+arms were worth training.
+
+**Result (2026-09-16, complete — all 24 runs).** Full working:
+`notes/m1_probe.md` §7.7.
+
+- **Averaging over all shortest paths buys no accuracy.** `gelt` − `gelt_single`
+  is −0.037 on T2 (2 of 6 cells favour the average), `gelt` − `gelt_projected`
+  +0.024 (3 of 6). Both are nothing. On this target, at this radius, the cheap
+  single-path transport is as good.
+- **And the calibration target settles which way to read that.** On T0 — the
+  plain convolution — the average *is* ahead, 5 of 6 cells and 4 of 6. So the
+  single-path arms carry a small generic handicap, and on the target built to
+  need input-dependent weighting they make it back and then some. Averaging is
+  worth **less** where the mechanism lives, not more. Which is the opposite of
+  the reason the architecture does it.
+- **That is a useful null, not a disappointment.** The transport is 63% of a
+  GELT step, so the 3.9× cost against the L-CNN is a *choice* here rather than a
+  fact about the architecture. It does **not** carry over to the glueball task,
+  where the loop content of the average is the physics argument for it and the
+  operator is the product rather than a regression target.
+- **But the averaged transport is what keeps the runs trainable, and that is
+  the finding.** Count the cells where an arm falls below R² = 0.70, over all
+  12 it ran (2 targets × 2 ensembles × 3 seeds): `gelt` **0**, `gelt_single`
+  **2**, `gelt_projected` **3**. Same network to the byte, same parameters, same
+  rate — only `T` differs. The bad cells are the *same* cells in both arms
+  (`(ens0, seed 2)` on T2, `(ens1, seed 0)` on T0), which is what an
+  initialisation × data pathology looks like when one variant suppresses it and
+  the others do not.
+- **Why that matters.** Consistency is the one axis GELT has ever won on — here,
+  and in the L-CNN shootout. Part of it is the **geometry**, not the attention:
+  same α, same everything, and the consistency goes away. Anything in the thesis
+  that reads GELT's robustness as an attention property has to say "attention
+  *and* the shortest-path-averaged transport".
+- **Still a count, not a test.** 0-of-12 against 2- and 3-of-12 at n = 6 cannot
+  be resolved by a sign test. Six seeds would do it, and these arms need no new
+  data.
+
+## 6. Reading the results
 
 ```bash
 python scripts/probe_readings.py
 ```
 
-Offline, seconds, no GPU. Prints every reading with proper error bars. The names
+Offline, seconds, no GPU. Prints every reading with proper error bars. The
+output as of the final run is tracked at
+`notes/m1_probe_readout_2026-09-16.txt`, so the numbers are readable without the
+V100. The names
 (R-A … R-F) are defined in `notes/m1_probe.md` §4; the short version:
 
 - **R-A** — the sanity check on T0. If the arms differ much *there*, the other
@@ -228,11 +317,14 @@ Offline, seconds, no GPU. Prints every reading with proper error bars. The names
 - **R-C** — `gelt` vs `lcnn`. The thesis-relevant number, but confounded.
 - **R-D / R-F** — the two M2 readings: accuracy, and failure rate.
 - **R-G / R-H** — the side experiment: is the L-CNN's win the sign constraint
-  (**no** — R-G is −0.44), and what the softmax's normalising and boundedness
-  are worth on top of that, measured inside one architecture.
+  (**no** — R-G is −0.48 over three seeds). R-H tried to split that number into
+  normalisation and boundedness; **its rungs are withdrawn** — the T0 control
+  says the arms are just harder to train (5b).
 - **R-E** — the untrained-network floor.
-- **R-I / R-I′** — the transport arms: does averaging over shortest paths pay,
-  and is it the averaging or the fact that the average is not a group element.
+- **R-I / R-I′** — the transport arms: does averaging over shortest paths pay
+  (**no** on T2 — both nulls; slightly, on the T0 calibration target), and is it
+  the averaging or the fact that the average is not a group element (neither —
+  both arms behave the same way).
 
 ## 7. Things fixed along the way — do not re-break them
 
@@ -244,11 +336,23 @@ Offline, seconds, no GPU. Prints every reading with proper error bars. The names
 4. **T2 uses `f⁴`, not `f`.** With plain `f` a simple linear filter already
    scored 0.978 and the task was worthless.
 5. **Runs tagged with `--run-tag` are excluded from the readings** — they are
-   tuning runs, not results.
+   tuning runs, not results. (So part 8's rate check does not appear in the
+   table; it only exists in `logs/probe_sweep40_*.log` on the V100.)
+6. **Every new arm runs T0 as well as T2.** T0 is a plain convolution, so an arm
+   that is down *there* is down for reasons the probe is not measuring. Skipping
+   it is what produced the retracted ladder in 5b, and running it is what caught
+   it.
 
 ## 8. Where the detail is
 
 `notes/m1_probe.md` — the full record, including every number above with its
 error bar, the pre-registered readings, and §4.2, which explains why one
-criterion had to be repaired after the fact. `notes/where_attention_can_win.md`
-§1.1 is the confound that motivated the whole thing.
+criterion had to be repaired after the fact. §7.5 is the grid, §7.6 part 7 and
+§7.7 part 9. `notes/where_attention_can_win.md` §1.1 is the confound that
+motivated the whole thing.
+
+`notes/m1_probe_readout_2026-09-16.txt` — the verbatim `probe_readings.py`
+output for all 132 runs: every run's R², the per-cell spreads, every reading
+with its error bars, the residual ratios and the failure ledger. Tracked in the
+repo on purpose, since the dumps it was computed from are gitignored and exist
+only on the V100.

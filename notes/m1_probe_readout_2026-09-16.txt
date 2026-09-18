@@ -1,0 +1,353 @@
+The M1 probe — `python scripts/probe_readings.py`, verbatim. **FINAL.**
+
+Run 2026-09-16 on the V100 with the probe complete: parts 2/3/4 (the 90-run
+grid), part 7 (the signed arms, 3 seeds, ens0, T0+T2) and parts 8/9 (the
+transport arms, 3 seeds, 2 ensembles, T0+T2). 132 runs, nothing pending.
+
+An earlier copy of this file was taken while part 9 was four runs short; it has
+been replaced rather than kept, since the only readings that moved are R-I/R-I′
+on T0 — which that copy marked unreadable — and `gelt_single`'s T0 median
+(0.8307 → 0.8742). Everything else is bit-identical.
+
+Kept in the repo because `results/m1_probe/` and `logs/` are gitignored and live
+on the V100 only. Analysis: notes/m1_probe.md §7.5 (the grid), §7.6 (part 7),
+§7.7 (part 9).
+
+==============================================================================
+M1 probe readings — 132 runs from results/m1_probe/
+arms ['frozen', 'frozen_matched', 'gelt', 'gelt_projected', 'gelt_single', 'lcnn', 'lcnn_norm', 'signed', 'signed_bounded', 'signed_l1']
+ensembles [0, 1]  init seeds [0, 1, 2]
+==============================================================================
+
+Every trained run (R² on the held-out split)
+
+   arm              tgt   ens  seed        R²  flags
+   frozen           T0      0     0   +0.9783  
+   frozen           T0      0     1   +0.9800  
+   frozen           T0      0     2   +0.9796  
+   frozen           T0      1     0   +0.9744  
+   frozen           T0      1     1   +0.9697  
+   frozen           T0      1     2   +0.9810  
+   frozen           T1      0     0   +0.0207  
+   frozen           T1      0     1   +0.0116  excursion
+   frozen           T1      0     2   +0.0227  
+   frozen           T1      1     0   -0.7552  
+   frozen           T1      1     1   -0.7275  
+   frozen           T1      1     2   +0.2911  
+   frozen           T2      0     0   +0.6127  
+   frozen           T2      0     1   +0.8953  
+   frozen           T2      0     2   +0.7339  
+   frozen           T2      1     0   +0.5616  
+   frozen           T2      1     1   +0.5484  
+   frozen           T2      1     2   +0.8385  
+   frozen_matched   T0      0     0   +0.5167  excursion
+   frozen_matched   T0      0     1   +0.9874  
+   frozen_matched   T0      0     2   +0.9674  
+   frozen_matched   T0      1     0   +0.9773  
+   frozen_matched   T0      1     1   +0.9831  
+   frozen_matched   T0      1     2   +0.9396  
+   frozen_matched   T1      0     0   +0.0407  
+   frozen_matched   T1      0     1   +0.0061  excursion
+   frozen_matched   T1      0     2   +0.0265  
+   frozen_matched   T1      1     0   +0.0542  
+   frozen_matched   T1      1     1   +0.0041  excursion
+   frozen_matched   T1      1     2   +0.0834  
+   frozen_matched   T2      0     0   +0.6336  
+   frozen_matched   T2      0     1   +0.9131  
+   frozen_matched   T2      0     2   +0.6760  
+   frozen_matched   T2      1     0   +0.5818  
+   frozen_matched   T2      1     1   +0.9245  
+   frozen_matched   T2      1     2   +0.6901  
+   gelt             T0      0     0   +0.9802  
+   gelt             T0      0     1   +0.9799  
+   gelt             T0      0     2   +0.9726  
+   gelt             T0      1     0   +0.9829  
+   gelt             T0      1     1   +0.9824  
+   gelt             T0      1     2   +0.9804  
+   gelt             T1      0     0   +0.9980  
+   gelt             T1      0     1   +0.9970  
+   gelt             T1      0     2   +0.9970  
+   gelt             T1      1     0   +0.9941  
+   gelt             T1      1     1   +0.9955  
+   gelt             T1      1     2   +0.2571  excursion
+   gelt             T2      0     0   +0.8221  
+   gelt             T2      0     1   +0.9333  
+   gelt             T2      0     2   +0.8118  
+   gelt             T2      1     0   +0.8267  
+   gelt             T2      1     1   +0.8751  
+   gelt             T2      1     2   +0.9017  
+   gelt_projected   T0      0     0   +0.8556  
+   gelt_projected   T0      0     1   +0.9825  
+   gelt_projected   T0      0     2   +0.7767  
+   gelt_projected   T0      1     0   +0.4505  
+   gelt_projected   T0      1     1   +0.9867  
+   gelt_projected   T0      1     2   +0.6075  
+   gelt_projected   T2      0     0   +0.8268  
+   gelt_projected   T2      0     1   +0.8805  
+   gelt_projected   T2      0     2   +0.4102  
+   gelt_projected   T2      1     0   +0.9000  
+   gelt_projected   T2      1     1   +0.7771  
+   gelt_projected   T2      1     2   +0.9272  
+   gelt_single      T0      0     0   +0.8215  
+   gelt_single      T0      0     1   +0.9818  
+   gelt_single      T0      0     2   +0.8400  
+   gelt_single      T0      1     0   +0.4356  
+   gelt_single      T0      1     1   +0.9745  
+   gelt_single      T0      1     2   +0.9085  
+   gelt_single      T2      0     0   +0.8812  
+   gelt_single      T2      0     1   +0.9222  
+   gelt_single      T2      0     2   +0.3492  
+   gelt_single      T2      1     0   +0.9302  
+   gelt_single      T2      1     1   +0.9018  
+   gelt_single      T2      1     2   +0.9498  
+   lcnn             T0      0     0   +0.9857  
+   lcnn             T0      0     1   +0.9508  
+   lcnn             T0      0     2   +0.9873  
+   lcnn             T0      1     0   +0.9512  
+   lcnn             T0      1     1   +0.9432  
+   lcnn             T0      1     2   +0.9836  
+   lcnn             T1      0     0   +0.0295  
+   lcnn             T1      0     1   +0.1201  
+   lcnn             T1      0     2   -0.0003  
+   lcnn             T1      1     0   +0.0995  
+   lcnn             T1      1     1   +0.0384  excursion
+   lcnn             T1      1     2   +0.0880  
+   lcnn             T2      0     0   +0.9425  
+   lcnn             T2      0     1   +0.2182  
+   lcnn             T2      0     2   +0.7496  
+   lcnn             T2      1     0   +0.9649  
+   lcnn             T2      1     1   +0.2413  
+   lcnn             T2      1     2   +0.0072  
+   lcnn_norm        T1      0     0   +0.0396  
+   lcnn_norm        T1      0     1   +0.0020  excursion
+   lcnn_norm        T1      0     2   +0.0480  
+   lcnn_norm        T1      1     0   +0.0791  
+   lcnn_norm        T1      1     1   +0.0534  
+   lcnn_norm        T1      1     2   +0.1109  
+   lcnn_norm        T2      0     0   +0.6239  
+   lcnn_norm        T2      0     1   +0.2353  
+   lcnn_norm        T2      0     2   +0.7298  
+   lcnn_norm        T2      1     0   +0.8880  
+   lcnn_norm        T2      1     1   +0.2594  
+   lcnn_norm        T2      1     2   +0.8267  
+   signed           T0      0     0   +0.2245  
+   signed           T0      0     1   +0.1588  
+   signed           T0      0     2   +0.1299  excursion
+   signed           T2      0     0   +0.2319  
+   signed           T2      0     1   +0.2395  
+   signed           T2      0     2   +0.1825  
+   signed_bounded   T0      0     0   +0.1070  COLLAPSED
+   signed_bounded   T0      0     1   +0.1178  COLLAPSED
+   signed_bounded   T0      0     2   +0.0941  COLLAPSED excursion
+   signed_bounded   T2      0     0   +0.3207  
+   signed_bounded   T2      0     1   +0.0497  
+   signed_bounded   T2      0     2   +0.0128  excursion
+   signed_l1        T0      0     0   +0.3221  
+   signed_l1        T0      0     1   +0.3822  
+   signed_l1        T0      0     2   +0.2415  
+   signed_l1        T2      0     0   +0.3819  
+   signed_l1        T2      0     1   +0.3254  
+   signed_l1        T2      0     2   +0.3322  
+
+Spread across the 6 runs (2 ensembles × 3 seeds) of each cell
+   This is what a median protects against, and what a jackknife over
+   test configurations cannot see.
+
+   arm              tgt        min    median       max     range
+   frozen           T0     +0.9697   +0.9790   +0.9810    0.0113
+   frozen           T1     -0.7552   +0.0161   +0.2911    1.0463
+   frozen           T2     +0.5484   +0.6733   +0.8953    0.3469
+   frozen_matched   T0     +0.5167   +0.9723   +0.9874    0.4707
+   frozen_matched   T1     +0.0041   +0.0336   +0.0834    0.0792
+   frozen_matched   T2     +0.5818   +0.6830   +0.9245    0.3427
+   gelt             T0     +0.9726   +0.9803   +0.9829    0.0102
+   gelt             T1     +0.2571   +0.9963   +0.9980    0.7409
+   gelt             T2     +0.8118   +0.8509   +0.9333    0.1215
+   gelt_projected   T0     +0.4505   +0.8161   +0.9867    0.5362
+   gelt_projected   T2     +0.4102   +0.8536   +0.9272    0.5170
+   gelt_single      T0     +0.4356   +0.8743   +0.9818    0.5462
+   gelt_single      T2     +0.3492   +0.9120   +0.9498    0.6006
+   lcnn             T0     +0.9432   +0.9674   +0.9873    0.0441
+   lcnn             T1     -0.0003   +0.0632   +0.1201    0.1204
+   lcnn             T2     +0.0072   +0.4954   +0.9649    0.9577
+   lcnn_norm        T1     +0.0020   +0.0507   +0.1109    0.1089
+   lcnn_norm        T2     +0.2353   +0.6768   +0.8880    0.6527
+   signed           T0     +0.1299   +0.1588   +0.2245    0.0945
+   signed           T2     +0.1825   +0.2319   +0.2395    0.0570
+   signed_bounded   T0     +0.0941   +0.1070   +0.1178    0.0237
+   signed_bounded   T2     +0.0128   +0.0497   +0.3207    0.3078
+   signed_l1        T0     +0.2415   +0.3221   +0.3822    0.1406
+   signed_l1        T2     +0.3254   +0.3322   +0.3819    0.0565
+
+R² on the held-out split (median over init seeds, ± the median seed's jackknife)
+
+arm                                 T0                    T1                    T2
+frozen                +0.9790 ± 0.0057      +0.0161 ± 0.5232      +0.6733 ± 0.1735
+frozen_matched        +0.9723 ± 0.2354      +0.0336 ± 0.0396      +0.6830 ± 0.1713
+gelt                  +0.9803 ± 0.0051      +0.9963 ± 0.3704      +0.8509 ± 0.0608
+gelt_projected        +0.8161 ± 0.2681                     —      +0.8536 ± 0.2585
+gelt_single           +0.8743 ± 0.2731                     —      +0.9120 ± 0.3003
+lcnn                  +0.9674 ± 0.0221      +0.0632 ± 0.0602      +0.4954 ± 0.4789
+lcnn_norm                            —      +0.0507 ± 0.0544      +0.6768 ± 0.3264
+signed                +0.1588 ± 0.0473                     —      +0.2319 ± 0.0285
+signed_bounded        +0.1070 ± 0.0119                     —      +0.0497 ± 0.1539
+signed_l1             +0.3221 ± 0.0703                     —      +0.3322 ± 0.0283
+frozen [null]                        —      +0.0059 ± 0.0009      +0.0169 ± 0.0005
+gelt [null]                          —      +0.0059 ± 0.0009      +0.0162 ± 0.0005
+lcnn [null]                          —      -0.0000 ± 0.0010      +0.0049 ± 0.0004
+
+── R-A  calibration/arch:  ΔR²(gelt − lcnn)
+   must be within 1σ of zero, or every other reading is void
+   T0  ens0: -0.0055 ± 0.0219 (-0.3σ, 3 seeds, spread [-0.0147, +0.0290])  [seed spread dominates]
+   T0  ens1: +0.0316 ± 0.0212 (+1.5σ, 3 seeds, spread [-0.0033, +0.0392])  [seed spread dominates]
+   T0  combined: +0.0136 ± 0.0152  (+0.9σ)
+   T0  POOLED over 6 (ensemble, seed) cells: median +0.0129, range [-0.0147, +0.0392], 3/6 favour gelt, sign test p = 1.000
+
+── R-A  calibration/M1:  ΔR²(gelt − frozen)
+   T0 is a convolution: a GELT win here is capacity, not the mechanism
+   T0  ens0: -0.0001 ± 0.0044 (-0.0σ, 3 seeds, spread [-0.0070, +0.0019])  [seed spread dominates]
+   T0  ens1: +0.0085 ± 0.0067 (+1.3σ, 3 seeds, spread [-0.0006, +0.0127])  [seed spread dominates]
+   T0  combined: +0.0025 ± 0.0037  (+0.7σ)
+   T0  POOLED over 6 (ensemble, seed) cells: median +0.0009, range [-0.0070, +0.0127], 3/6 favour gelt, sign test p = 1.000
+
+── R-B  primary (M1):  ΔR²(gelt − frozen)
+   >2σ on T2 confirms M1; within 1σ on both falsifies it here
+   T1  ens0: +0.9773 ± 0.0056 (+175.4σ, 3 seeds, spread [+0.9743, +0.9855])  [seed spread dominates]
+   T1  ens1: +1.7230 ± 1.0654 (+1.6σ, 3 seeds, spread [-0.0340, +1.7493])
+   T1  combined: +0.9773 ± 0.0056  (+175.4σ)
+   T1  POOLED over 6 (ensemble, seed) cells: median +0.9814, range [-0.0340, +1.7493], 5/6 favour gelt, sign test p = 0.219
+   T2  ens0: +0.0779 ± 0.0857 (+0.9σ, 3 seeds, spread [+0.0380, +0.2094])  [seed spread dominates]
+   T2  ens1: +0.2651 ± 0.1318 (+2.0σ, 3 seeds, spread [+0.0632, +0.3268])  [seed spread dominates]
+   T2  combined: +0.1335 ± 0.0718  (+1.9σ)
+   T2  POOLED over 6 (ensemble, seed) cells: median +0.1436, range [+0.0380, +0.3268], 6/6 favour gelt, sign test p = 0.031
+
+── R-B' matched-param:  ΔR²(gelt − frozen_matched)
+   read only if R-B favours GELT at >2σ — capacity vs mechanism
+   T1  ens0: +0.9705 ± 0.0168 (+57.8σ, 3 seeds, spread [+0.9573, +0.9909])  [seed spread dominates]
+   T1  ens1: +0.9399 ± 0.4088 (+2.3σ, 3 seeds, spread [+0.1738, +0.9914])  [seed spread dominates]
+   T1  combined: +0.9705 ± 0.0168  (+57.8σ)
+   T1  POOLED over 6 (ensemble, seed) cells: median +0.9639, range [+0.1738, +0.9914], 6/6 favour gelt, sign test p = 0.031
+   T2  ens0: +0.1358 ± 0.0841 (+1.6σ, 3 seeds, spread [+0.0203, +0.1885])  [seed spread dominates]
+   T2  ens1: +0.2116 ± 0.1471 (+1.4σ, 3 seeds, spread [-0.0493, +0.2449])  [seed spread dominates]
+   T2  combined: +0.1545 ± 0.0730  (+2.1σ)
+   T2  POOLED over 6 (ensemble, seed) cells: median +0.1622, range [-0.0493, +0.2449], 5/6 favour gelt, sign test p = 0.219
+
+── R-C  architecture:  ΔR²(gelt − lcnn)
+   the thesis number; carries the transport confound, read through R-B
+   T1  ens0: +0.9684 ± 0.0602 (+16.1σ, 3 seeds, spread [+0.8769, +0.9974])  [seed spread dominates]
+   T1  ens1: +0.8946 ± 0.3940 (+2.3σ, 3 seeds, spread [+0.1692, +0.9571])  [seed spread dominates]
+   T1  combined: +0.9668 ± 0.0595  (+16.2σ)
+   T1  POOLED over 6 (ensemble, seed) cells: median +0.9259, range [+0.1692, +0.9974], 6/6 favour gelt, sign test p = 0.031
+   T2  ens0: +0.0622 ± 0.4178 (+0.1σ, 3 seeds, spread [-0.1204, +0.7151])  [seed spread dominates]
+   T2  ens1: +0.6339 ± 0.5163 (+1.2σ, 3 seeds, spread [-0.1382, +0.8945])  [seed spread dominates]
+   T2  combined: +0.2884 ± 0.3248  (+0.9σ)
+   T2  POOLED over 6 (ensemble, seed) cells: median +0.3480, range [-0.1382, +0.8945], 4/6 favour gelt, sign test p = 0.688
+
+── R-D  M2 control:  ΔR²(lcnn_norm − lcnn)
+   if bounding the offset weights closes a gap, the effect was M2
+   T1  ens0: +0.0101 ± 0.0832 (+0.1σ, 3 seeds, spread [-0.1181, +0.0484])  [seed spread dominates]
+   T1  ens1: +0.0150 ± 0.0217 (+0.7σ, 3 seeds, spread [-0.0204, +0.0229])  [seed spread dominates]
+   T1  combined: +0.0147 ± 0.0210  (+0.7σ)
+   T1  POOLED over 6 (ensemble, seed) cells: median +0.0126, range [-0.1181, +0.0484], 4/6 favour lcnn_norm, sign test p = 0.688
+   T2  ens0: -0.0198 ± 0.1679 (-0.1σ, 3 seeds, spread [-0.3186, +0.0171])  [seed spread dominates]
+   T2  ens1: +0.0181 ± 0.4482 (+0.0σ, 3 seeds, spread [-0.0769, +0.8194])  [seed spread dominates]
+   T2  combined: -0.0151 ± 0.1572  (-0.1σ)
+   T2  POOLED over 6 (ensemble, seed) cells: median -0.0013, range [-0.3186, +0.8194], 3/6 favour lcnn_norm, sign test p = 1.000
+
+── R-G  sign constraint:  ΔR²(signed_l1 − gelt)
+   α signed at unit L1 gain: does dropping non-negativity alone recover it
+   T2  ens0: -0.4796 ± 0.0839 (-5.7σ, 3 seeds, spread [-0.6079, -0.4402])  [seed spread dominates]
+   T2  combined: -0.4796 ± 0.0839  (-5.7σ)
+   T2  POOLED over 3 (ensemble, seed) cells: median -0.4796, range [-0.6079, -0.4402], 0/3 favour signed_l1, sign test p = 0.250
+   T0  ens0: -0.6581 ± 0.0667 (-9.9σ, 3 seeds, spread [-0.7311, -0.5977])  [seed spread dominates]
+   T0  combined: -0.6581 ± 0.0667  (-9.9σ)
+   T0  POOLED over 3 (ensemble, seed) cells: median -0.6581, range [-0.7311, -0.5977], 0/3 favour signed_l1, sign test p = 0.250
+
+── R-H  normalisation:  ΔR²(signed_l1 − signed_bounded)
+   Σ|α| = 1 vs a free gain, sign held: what the softmax's normalising buys
+   T2  ens0: +0.2757 ± 0.1290 (+2.1σ, 3 seeds, spread [+0.0613, +0.3193])  [seed spread dominates]
+   T2  combined: +0.2757 ± 0.1290  (+2.1σ)
+   T2  POOLED over 3 (ensemble, seed) cells: median +0.2757, range [+0.0613, +0.3193], 3/3 favour signed_l1, sign test p = 0.250
+   T0  ens0: +0.2151 ± 0.0585 (+3.7σ, 3 seeds, spread [+0.1475, +0.2644])  [seed spread dominates]
+   T0  combined: +0.2151 ± 0.0585  (+3.7σ)
+   T0  POOLED over 3 (ensemble, seed) cells: median +0.2151, range [+0.1475, +0.2644], 3/3 favour signed_l1, sign test p = 0.250
+
+── R-H  boundedness:  ΔR²(signed_bounded − signed)
+   bounded vs unbounded α, both unnormalised: the M2 cost, inside GELT
+   T2  ens0: -0.1697 ± 0.1393 (-1.2σ, 3 seeds, spread [-0.1899, +0.0887])  [seed spread dominates]
+   T2  combined: -0.1697 ± 0.1393  (-1.2σ)
+   T2  POOLED over 3 (ensemble, seed) cells: median -0.1697, range [-0.1899, +0.0887], 1/3 favour signed_bounded, sign test p = 1.000
+
+── R-I  path averaging:  ΔR²(gelt − gelt_single)
+   averaged shortest paths vs one canonical path: what the DP average buys
+   T2  ens0: +0.0111 ± 0.2608 (+0.0σ, 3 seeds, spread [-0.0591, +0.4626])  [seed spread dominates]
+   T2  ens1: -0.0481 ± 0.0384 (-1.3σ, 3 seeds, spread [-0.1035, -0.0267])  [seed spread dominates]
+   T2  combined: -0.0469 ± 0.0380  (-1.2σ)
+   T2  POOLED over 6 (ensemble, seed) cells: median -0.0374, range [-0.1035, +0.4626], 2/6 favour gelt, sign test p = 0.688
+   T0  ens0: +0.1326 ± 0.0803 (+1.7σ, 3 seeds, spread [-0.0019, +0.1587])  [seed spread dominates]
+   T0  ens1: +0.0718 ± 0.2697 (+0.3σ, 3 seeds, spread [+0.0079, +0.5472])  [seed spread dominates]
+   T0  combined: +0.1276 ± 0.0770  (+1.7σ)
+   T0  POOLED over 6 (ensemble, seed) cells: median +0.1022, range [-0.0019, +0.5472], 5/6 favour gelt, sign test p = 0.219
+
+── R-I' averaging, on-group:  ΔR²(gelt − gelt_projected)
+   same average projected back onto the group: content, or leaving it
+   T2  ens0: +0.0528 ± 0.2031 (+0.3σ, 3 seeds, spread [-0.0047, +0.4016])  [seed spread dominates]
+   T2  ens1: -0.0255 ± 0.0857 (-0.3σ, 3 seeds, spread [-0.0733, +0.0981])  [seed spread dominates]
+   T2  combined: -0.0137 ± 0.0789  (-0.2σ)
+   T2  POOLED over 6 (ensemble, seed) cells: median +0.0241, range [-0.0733, +0.4016], 3/6 favour gelt, sign test p = 1.000
+   T0  ens0: +0.1246 ± 0.0993 (+1.3σ, 3 seeds, spread [-0.0027, +0.1959])  [seed spread dominates]
+   T0  ens1: +0.3728 ± 0.2683 (+1.4σ, 3 seeds, spread [-0.0043, +0.5324])  [seed spread dominates]
+   T0  combined: +0.1545 ± 0.0931  (+1.7σ)
+   T0  POOLED over 6 (ensemble, seed) cells: median +0.1603, range [-0.0043, +0.5324], 4/6 favour gelt, sign test p = 0.688
+
+── residual ratios  (1−R²_a)/(1−R²_b), and the T0-calibrated move
+   R-A as pre-registered was un-passable: it asked for ΔR² within 1σ
+   of zero, and with 414k test sites σ → 0, so any difference fails.
+   The calibrated column is what it meant — 1.00 = the pair's T2 gap
+   is entirely their generic gap on a pure convolution.
+             gelt/frozen         T1 ens0: ×0.003 ± 0.000   calibrated ×0.002 ± 0.000
+             gelt/frozen         T1 ens1: ×0.003 ± 0.523   calibrated ×0.005 ± 0.506
+             gelt/frozen         T2 ens0: ×0.637 ± 0.124   calibrated ×0.526 ± 0.066
+             gelt/frozen         T2 ens1: ×0.395 ± 0.166   calibrated ×0.590 ± 0.057
+             gelt/frozen_matched T1 ens0: ×0.003 ± 0.000   calibrated ×0.004 ± 0.025
+             gelt/frozen_matched T1 ens1: ×0.006 ± 0.403   calibrated ×0.008 ± 1.245
+             gelt/frozen_matched T2 ens0: ×0.581 ± 0.141   calibrated ×0.691 ± 5.682
+             gelt/frozen_matched T2 ens1: ×0.414 ± 0.668   calibrated ×0.976 ± 0.521
+             gelt/lcnn           T1 ens0: ×0.003 ± 0.001   calibrated ×0.001 ± 0.003
+             gelt/lcnn           T1 ens1: ×0.007 ± 0.405   calibrated ×0.019 ± 0.332
+             gelt/lcnn           T2 ens0: ×0.752 ± 1.504   calibrated ×0.347 ± 1.013
+             gelt/lcnn           T2 ens1: ×0.165 ± 2.420   calibrated ×0.531 ± 6.982
+        lcnn_norm/lcnn           T1 ens0: ×0.990 ± 0.091
+        lcnn_norm/lcnn           T1 ens1: ×0.984 ± 0.024
+        lcnn_norm/lcnn           T2 ens0: ×1.079 ± 2.782
+        lcnn_norm/lcnn           T2 ens1: ×0.976 ± 1.509
+        signed_l1/gelt           T2 ens0: ×3.548 ± 3.321   calibrated ×0.128 ± 0.114
+        signed_l1/gelt           T0 ens0: ×30.709 ± 3.263   calibrated ×1.000 ± 0.000
+        signed_l1/signed_bounded T2 ens0: ×0.710 ± 0.117   calibrated ×1.014 ± 0.195
+        signed_l1/signed_bounded T0 ens0: ×0.759 ± 0.068   calibrated ×1.000 ± 0.000
+   signed_bounded/signed         T2 ens0: ×1.208 ± 0.183   calibrated ×1.160 ± 0.212
+             gelt/gelt_single    T2 ens0: ×0.857 ± 0.604   calibrated ×1.689 ± 6.359
+             gelt/gelt_single    T2 ens1: ×1.959 ± 0.605   calibrated ×9.135 ± 39.926
+             gelt/gelt_single    T0 ens0: ×0.171 ± 0.497   calibrated ×1.000 ± 0.000
+             gelt/gelt_single    T0 ens1: ×0.214 ± 0.330   calibrated ×1.000 ± 0.000
+             gelt/gelt_projected T2 ens0: ×0.558 ± 0.354   calibrated ×2.601 ± 3.502
+             gelt/gelt_projected T2 ens1: ×1.350 ± 0.586   calibrated ×27.009 ± 27.553
+             gelt/gelt_projected T0 ens0: ×0.137 ± 0.515   calibrated ×1.000 ± 0.000
+             gelt/gelt_projected T0 ens1: ×0.050 ± 0.646   calibrated ×1.000 ± 0.000
+
+── R-E  null: random features (stack frozen at init, head trained)
+frozen                               —      +0.0059 ± 0.0009      +0.0169 ± 0.0005
+gelt                                 —      +0.0059 ± 0.0009      +0.0162 ± 0.0005
+lcnn                                 —      -0.0000 ± 0.0010      +0.0049 ± 0.0004
+
+── R-F  training failure (post-hoc), per architecture family
+   counts over every run on disk, sweep runs included — not a rate
+   family          diverged  collapsed  excursions  recovered   runs
+   GELT family            2          3           9          8    129
+   L-CNN family           2          0           2          2     40
+   diverged  = best val never beat 10× the trivial predictor
+   collapsed = ended no better than the trivial predictor, having once done better
+   excursion = training loss left the scale at some epoch; 'recovered' = and the run still finished usable
+
+wrote results/m1_probe/readings.pt
+wrote results/m1_probe/readings.tex

@@ -17,10 +17,19 @@ missing, aimed at the mechanism that has *never* been observed to pay.
 
 ## 0. Final readout (2026-09-16)
 
-90 runs, none failed. 5 arms × 3 targets × 3 seeds × 2 ensembles + 6 nulls, 40
-epochs, per-arm rates tuned at that horizon. Every reading is a median over six
-paired `(ensemble, seed)` cells with an exact sign test — the only statistic six
-samples support. Detail and the two estimator repairs: §7.5.
+**The grid** (parts 2–4): 90 runs, none failed. 5 arms × 3 targets × 3 seeds ×
+2 ensembles + 6 nulls, 40 epochs, per-arm rates tuned at that horizon. Every
+reading is a median over six paired `(ensemble, seed)` cells with an exact sign
+test — the only statistic six samples support. Detail and the two estimator
+repairs: §7.5.
+
+**Two post-hoc parts followed**, and the probe is now complete at **132 runs**:
+part 7, the signed-α arms at three seeds *with the T0 control* (§7.6 — it
+withdrew a decomposition), and part 9, the transport arms (§7.7 — a null on
+accuracy, and an unplanned finding about where GELT's consistency comes from).
+The verbatim `probe_readings.py` output behind all of it is kept in the repo at
+`notes/m1_probe_readout_2026-09-16.txt`, because `results/m1_probe/` and
+`logs/` are gitignored and exist only on the V100.
 
 | reading | median ΔR² (T2) | sign | p |
 |---|---|---|---|
@@ -41,8 +50,26 @@ samples support. Detail and the two estimator repairs: §7.5.
    `frozen`/`frozen_matched` 0.147, `lcnn_norm` 0.283, `lcnn` 0.415 — a 70.6×
    variance ratio. Distribution-free: **all six GELT runs exceed 0.81; three of
    six L-CNN runs fall below 0.25.** R-D's dispersion improvement (0.96 → 0.65)
-   points the same way but is only 2.15× and not significant at n = 6.
+   points the same way but is only 2.15× and not significant at n = 6. **Read
+   with point 7**: part of this is the transport, not the attention.
 4. **R-E null:** 0.005–0.017. Every trained arm is far above its floor.
+5. **The softmax earns its place, but not for the reason proposed** (§7.6).
+   Removing it costs ≈ 0.48 of R² at identical parameters in 3 of 3 seeds — and
+   costs *more* on T0, where the mechanism is definitionally inert. An
+   optimisation result, not an expressiveness one, and not attributable to the
+   sign, the normalisation or the bound individually.
+6. **Path averaging buys no accuracy** (§7.7). R-I = −0.037 (2/6, p = 0.69) and
+   R-I′ = +0.024 (3/6, p = 1.0) on T2, against +0.102 and +0.160 on the
+   *calibration* target — so what deficit the single-path arms have is generic,
+   and calibrated they do **better** on T2 (×1.7 … ×27) than on T0. The
+   transport is 62.8% of a GELT step, so on this target the 3.9× cost gap
+   against the L-CNN is a choice.
+7. **Part of GELT's consistency is the transport, not the attention** (§7.7) —
+   the same network fed a single-path `T` falls below R² = 0.70 in 2 of its 12
+   cells and the projected one in 3, where `gelt` does in **0 of 12**. Same α,
+   same parameters; only `T` differs. This is a count at n = 6, not a
+   significance test, but point 3's dispersion result can no longer be
+   attributed to attention alone.
 
 **Withdrawn during the study**, each with its reason recorded in place rather
 than edited away:
@@ -52,15 +79,30 @@ than edited away:
 - **"the matched L-CNN beats GELT by 0.12"** and the residual-ratio analysis
   built on it — one lucky seed of six (§7.5).
 - **the signed-α hypothesis**, falsified (§4.3) — and it produced the study's
-  largest single number on the way: at matched parameters, removing the
-  softmax's **non-negativity** costs **0.440** of R² (`signed_l1`, the arm that
-  varies only that), with a further 0.061 for its normalisation and 0.089 for
-  its boundedness. One cell, not the six-cell median the table above reports;
-  part 7 is what promotes it.
+  largest single number on the way: at matched parameters, removing the softmax
+  costs **≈ 0.48** of R² (`signed_l1`, three seeds), which cannot be capacity
+  because softmax's α are a strict subset of that arm's.
+- **the attribution of that 0.48 to non-negativity**, and the
+  0.440 / 0.061 / 0.089 ladder with it — withdrawn 2026-09-16 by part 7's own
+  T0 control (§7.6). The signed arms are down *more* on the calibration target
+  (−0.658) than on T2 (−0.480), so the instrument is seeing trainability, not
+  the constraint each rung removes.
 
 **Limits.** Constructed targets, not physics — a mechanism assay (§3, criterion
-4). n = 6, so p = 0.031 is the ceiling on significance and six seeds per
-ensemble would settle R-B′. One β, one volume, one training budget.
+4). n = 6, so p = 0.031 is the ceiling on significance. One β, one volume, one
+training budget.
+
+**The probe is finished; three cheap things would strengthen it**, none needing
+new data or new code:
+
+1. **Six seeds per ensemble** instead of three. It is the binding constraint on
+   R-B′ (5/6, p = 0.219), on R-D, and on both dispersion readings (points 3 and
+   7), all of which are counts that a sign test cannot resolve at n = 6.
+2. **`signed_bounded` at 1e−1.** Its rate is still unbracketed at the top of the
+   sweep grid (§4.3), so its number is a lower bound — worth closing only if
+   anyone returns to R-H, whose rungs §7.6 withdrew.
+3. **`PROBE_GATE_CONFIGS=64` on the GPU** for the three DP modes' cost ratio,
+   which is what point 6's "the 3.9× is a choice" needs to be quantitative.
 
 ---
 
@@ -505,6 +547,14 @@ the grid (3e−2, monotone), so its 0.3207 is a lower bound and the −0.061
 normalisation step is the increment most likely to move. One run at 1e−1 closes
 it, and should be taken before either R-H increment is quoted.
 
+> **Part 7 ran, and the condition in the paragraph above fired — §7.6.**
+> `signed_l1` is down on T0 by *more* than on T2 (−0.658 against −0.480), so the
+> ladder measures trainability and **the 0.440 / 0.061 / 0.089 split is
+> withdrawn**. What survives is "removing the softmax costs ≈ 0.48 at matched
+> parameters, in every seed, on both targets". The section above is left as
+> written because the re-posing of R-G onto `signed_l1` rests on its reasoning,
+> and that reasoning is unaffected.
+
 ### 4.4 R-I — the transport half of R-C's confound, added post-hoc
 
 **Not pre-registered.** Added 2026-09-16, after §7.5 left R-C with no consistent
@@ -608,6 +658,13 @@ is 0.17 over shell 2 — the loop content, present as predicted.
 The cost reading is **not** settled by this run: 0.02 s against 0.01 s at 8
 configurations on the CPU is noise, and `projected` at 0.05 s is the only ratio
 large enough to survive it. `PROBE_GATE_CONFIGS=64` on the GPU is what to quote.
+
+> **Measured — §7.7, complete.** Both readings are nulls on T2 (R-I −0.037, 2/6;
+> R-I′ +0.024, 3/6) while the T0 calibration leg favours the average (5/6 and
+> 4/6), so the averaging is not load-bearing *on the mechanism target* and the
+> cheaper branch is available. The confound stated above resolves harmlessly:
+> what small deficit exists is on T0, for both arms, including the one that
+> keeps the rotation symmetry.
 
 #### Against §6's four criteria
 
@@ -858,6 +915,162 @@ ran. **T1 is reported and not used**; T2 carries every claim above.
 `gelt` +0.0162, `frozen` +0.0169, `lcnn` +0.0049 on T2 with the stack frozen at
 initialisation. Every trained arm is two orders of magnitude above its own
 random-feature floor, so nothing above is a readout artifact.
+
+## 7.6 Part 7 — the signed ladder at three seeds, **and its calibration control**
+
+*Measured 2026-09-16, V100.* Three init seeds on ens0, 40 epochs, per-arm rates
+from the §4.3 sweep (`signed` 3e−3, `signed_bounded` 3e−2, `signed_l1` 3e−3),
+**with T0 alongside T2** — the control §4.3 asked for in writing and did not
+have. Verbatim readout: `notes/m1_probe_readout_2026-09-16.txt`.
+
+| arm | T2 median (range over 3) | T0 median (range over 3) |
+|---|---|---|
+| `gelt` | **0.8221** (0.8118 – 0.9333) | **0.9799** (0.9726 – 0.9802) |
+| `signed_l1` | 0.3322 (0.3254 – 0.3819) | 0.3221 (0.2415 – 0.3822) |
+| `signed` | 0.2319 (0.1825 – 0.2395) | 0.1588 (0.1299 – 0.2245) |
+| `signed_bounded` | 0.0497 (0.0128 – 0.3207) | 0.1070 (0.0941 – 0.1178), **all 3 COLLAPSED** |
+
+**The headline survives the seeds.** R-G at three paired cells:
+ΔR²(`signed_l1` − `gelt`) = **−0.480** on T2, 0/3, every cell in
+[−0.608, −0.440]. The single-cell −0.440 of §4.3 was not a seed.
+
+**The decomposition does not survive the control, and that is the result of
+this part.** §4.3 wrote the condition out before the run: *"if `signed_l1` is
+down on the calibration target too, then what the ladder measures is
+trainability rather than the constraint."* It is down on T0 — **by more than on
+T2**:
+
+| | T2 | T0 (a pure convolution: α's sign cannot matter) |
+|---|---|---|
+| ΔR²(`signed_l1` − `gelt`) | −0.480 | **−0.658** |
+| residual ratio (1−R²)/(1−R²) | ×3.55 ± 3.32 | **×30.7 ± 3.3** |
+
+and the T0-calibrated move is **×0.128 ± 0.114** — i.e. relative to its own
+generic handicap, `signed_l1` does *eight times better* on the mechanism target
+than on the calibration one. So the ladder's steps cannot be read as
+attributions to the properties they remove:
+
+| step | property removed | ΔR² T2, 1 cell (§4.3) | ΔR² T2, 3 cells | calibrated |
+|---|---|---|---|---|
+| `gelt` → `signed_l1` | non-negativity | −0.440 | **−0.480** | ×0.128 (deficit is *smaller* on T2) |
+| `signed_l1` → `signed_bounded` | normalisation | −0.061 | **−0.276** | ×1.01 ± 0.20 — entirely generic |
+| `signed_bounded` → `signed` | boundedness | −0.089 | **+0.170**, sign flipped | ×1.16 ± 0.21 |
+
+**Withdrawn: "75% of the drop is non-negativity alone", and the
+0.440 / 0.061 / 0.089 split with it.** What is left standing is narrower and
+still worth having:
+
+1. **Removing the softmax costs ≈ 0.48 of R² at identical parameter count**, in
+   every one of three seeds, on both targets. Since softmax's reachable α is a
+   strict *subset* of `signed_l1`'s unit-L1 sphere (§4.3), this cannot be
+   capacity — it is optimisation. That was already §4.3's point 1 and it is the
+   part the control does not touch.
+2. **It is not a statement about the sign, the normalisation or the bound
+   individually.** All three arms are worse *everywhere*, most of it on a target
+   where the mechanism under test is definitionally inert. The instrument sees
+   trainability, and the ladder's rungs are within its noise.
+
+**Two reasons not to push this further without new arms.** `signed_bounded`
+collapsed in all three T0 runs — it never beat the trivial predictor — so every
+calibrated ratio that passes through it is reading a collapsed run, which is why
+R-H's ×1.01 and ×1.16 are *uninformative* rather than informative. And its rate
+is still unbracketed at the top of the grid (§4.3), so its T2 median of 0.0497
+is a lower bound that got *worse* with seeds, not better. The 1e−1 run named in
+§4.3 is still the thing to do first if anyone returns to R-H.
+
+**Statistical floor.** Three cells on one ensemble: an exact sign test cannot go
+below p = 0.25, which is why the direction of R-G is quoted and none of R-H's
+rungs are. ens1 was never run for the signed arms.
+
+## 7.7 Part 9 — the transport arms. **Complete. R-I is a null on accuracy, and the averaging pays somewhere else.**
+
+*Measured 2026-09-16, V100*, at `gelt`'s 1e−2 for both arms, 3 seeds × 2
+ensembles on T2 **and** T0 — 24 runs, complete. Verbatim readout:
+`notes/m1_probe_readout_2026-09-16.txt`.
+
+### The two pre-registered readings
+
+| reading | target | median ΔR² | range | sign | p |
+|---|---|---|---|---|---|
+| **R-I** `gelt` − `gelt_single` | T2 | **−0.037** | [−0.104, +0.463] | 2/6 | 0.688 |
+| **R-I′** `gelt` − `gelt_projected` | T2 | +0.024 | [−0.073, +0.402] | 3/6 | 1.000 |
+| R-I | T0 | +0.102 | [−0.002, +0.547] | 5/6 | 0.219 |
+| R-I′ | T0 | +0.160 | [−0.004, +0.532] | 4/6 | 0.688 |
+
+Combined: R-I −0.047 ± 0.038 on T2 and +0.128 ± 0.077 on T0; R-I′ −0.014 ± 0.079
+and +0.155 ± 0.093. **Averaging over all shortest paths buys no accuracy on the
+mechanism target** — if anything the single-path arm is marginally ahead — while
+on the *calibration* target it is ahead in 5 of 6 cells.
+
+That ordering is the opposite of a mechanism signature, and §4.2's calibration
+is what reads it: the T0-calibrated ratios are **×1.69 and ×9.14** for
+`gelt_single` and **×2.60 and ×27.0** for `gelt_projected`, i.e. relative to
+their own generic handicap the single-path arms do *better* on T2 than on T0.
+Whatever the averaged transport is worth, **it is not worth more on the target
+built to demand input-dependent weighting** — which is the honest reading of
+"the loop content of the average helps the network see shell structure", and it
+is negative.
+
+Two consequences, both pre-registered in §4.4 as the useful branch:
+
+- The transport is **62.8% of a GELT step** (`notes/performance_audit.md`
+  §5.0(v)) and `mode="single"` is the cheaper DP branch, so **on this target the
+  3.9× step-cost gap against the matched L-CNN is a choice, not a cost of the
+  architecture.**
+- It **does not transfer to the glueball task**, where the loop content of the
+  averaged transport is the physics argument for it, and where the operator is
+  the product rather than a regression target. R-I says only that a radius-4
+  shell statistic of the action density does not need it.
+
+The §4.4 confound resolves in the harmless direction: `gelt_single` breaks
+90°-rotation equivariance and still ties on T2, and the T0 column — a
+rotation-symmetric convolution, the place an arm that pays for broken symmetry
+should pay — is where the small deficit shows up, for **both** arms, including
+the one that keeps the symmetry. So it is not the broken symmetry either.
+
+### Where the averaging does pay: keeping the run trainable
+
+| arm | target | min | median | max | sd over 6 | cells below 0.70 |
+|---|---|---|---|---|---|---|
+| `gelt` | T2 | +0.8118 | +0.8509 | +0.9333 | 0.045 | **0 of 6** |
+| `gelt_single` | T2 | +0.3492 | +0.9120 | +0.9498 | 0.213 | 1 of 6 |
+| `gelt_projected` | T2 | +0.4102 | +0.8536 | +0.9272 | 0.176 | 1 of 6 |
+| `gelt` | T0 | +0.9726 | +0.9803 | +0.9829 | 0.003 | **0 of 6** |
+| `gelt_single` | T0 | +0.4356 | +0.8743 | +0.9818 | 0.185 | 1 of 6 |
+| `gelt_projected` | T0 | +0.4505 | +0.8161 | +0.9867 | 0.195 | 2 of 6 |
+
+Same network to the byte (15405 real DOFs, `dof_table`), same parameters, same
+rate, same splits — **only `T` differs.** Over the 12 `(target, ensemble, seed)`
+cells each arm ran: **`gelt` falls below 0.70 in 0, `gelt_single` in 2,
+`gelt_projected` in 3.** The failures track the cell, not the arm —
+`(ens0, seed 2)` on T2 and `(ens1, seed 0)` on T0 are low for *both* single-path
+arms — which is the signature of an initialisation × data pathology that the
+averaged transport suppresses and neither alternative does.
+
+**This matters more than R-I itself.** Dispersion is the one axis GELT has ever
+won on (§0.3 here, and `notes/lcnn_shootout.md` §9.2's 0-of-14 against 3-of-9),
+and it has been attributed to attention's boundedness (M2). **Part of it is the
+transport geometry, not the attention.** Any claim in the thesis that reads
+GELT's consistency as an attention property now has to say "attention *and* the
+shortest-path-averaged transport", because this is the same network with the
+same α and the consistency is gone.
+
+**What it is not.** 0-of-12 against 2- and 3-of-12 is a *count*, not a
+significance test; the variance ratios (22× and 15× on T2, and a meaningless
+3000× on T0 where `gelt`'s sd is 0.003) are corroboration at n = 6 and the F
+assumption is visibly violated by a bimodal sample. Six seeds per ensemble is
+what would settle it, and it is cheap — these arms need no new data.
+
+### Still open
+
+- **The cost ratio between the three DP modes.** §4.4's gate measured it at 8
+  configurations on the CPU, where 0.02 s against 0.01 s is noise;
+  `PROBE_GATE_CONFIGS=64` on the GPU is the number to quote, and it is what the
+  "the 3.9× is a choice" sentence needs to be quantitative.
+- **Part 8's rate check** ran under `--run-tag`, so `probe_readings.py` excludes
+  it by design and its outcome is not recorded here.
+  `grep -H 'R² =' logs/probe_sweep40_gelt_*.log` on the V100 is the only place
+  it exists.
 
 ---
 
