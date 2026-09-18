@@ -531,8 +531,18 @@ That is the `T·T† = (𝟙 + Re W)/2` of `build_transport_average`'s own docst
 made binary by the group. **GELT's transport in Z₂ is a hard vortex mask**: a
 neighbour is switched off exactly when a vortex line pierces the square between
 `x` and `x + Δ`. Measured on a sampled β = 0.7585 configuration it fires on
-**4.0% of the diagonal offsets and 2.0% of all 24** — sparse, and precisely on
-the objects this task is about.
+**4.0% of the diagonal offsets and 2.0% of all 24**.
+
+> **And it is a liability on this task, not an advantage — measured 2026-09-18,
+> and this paragraph originally said the opposite.** The task is to *follow the
+> vortex line*; the mask switches a neighbour off exactly where the line
+> crosses, so it blinds the network to the structure it has to trace. Same α,
+> same parameters, only `T` differs: `gelt` reaches R² = 0.216 on V1 where
+> `gelt_single` — the identical network with the mask absent — reaches 0.556.
+> The original wording ("sparse, and precisely on the objects this task is
+> about") had the sign of its own argument backwards: being concentrated on the
+> objects is what makes deleting them expensive. M3 is real, large and
+> **negative** — still a result about the transport, just not the proposed one.
 
 Three consequences, and the third is the one that matters:
 
@@ -599,6 +609,34 @@ four clear every gate:
 classical method at its own reach; *routing* is `R²(local) − R²(linear)`, how
 much of the task is connectivity rather than density. Per-β error bars, the AUC
 columns and the all-sites readings are in `results/z2_vortex/preflight_b<β>.pt`.
+
+> **Reach has two dimensions and only one was checked — corrected 2026-09-18.**
+> The `R² + local connectivity` column above runs its BFS *to convergence inside
+> the ball*: it follows the line for as many steps as the line is long. A
+> `k`-layer network gets exactly `k` rounds of message passing, and a line of
+> length 50 inside the ball needs ~50 sequential steps, so that arm is **not in
+> the function class** of the 4-layer architectures — comparing against it
+> measures depth, not inductive bias. Criterion 3 says "at the architecture's
+> own reach"; the spatial half was checked (there is even a test for it) and the
+> *iteration* half was not. With the hop cap
+> (`local_component_size(max_hops=…)`), production geometry:
+>
+> | classical arm at reach 8 | R² (vortex sites) |
+> |---|---|
+> | linear filter | 0.156 |
+> | BFS, 2 hops | 0.231 |
+> | **BFS, 4 hops — matched depth** | **0.440** |
+> | BFS, 8 hops | 0.640 |
+> | BFS, unlimited | 0.737 |
+>
+> **W-E's bar is the matched-depth row**, so every "headroom" figure in the
+> table above is against an arm no bounded-depth network can reach. Against the
+> right bar the first long runs (120 epochs, β = 0.752) read `gelt_single` 0.556
+> and `frozen` 0.461 — both *above* it — and `gelt` 0.216, below even the 2-hop
+> arm, which is §9.3's mask plus a rate chosen at a horizon that had not
+> converged. The uncapped row stays as context: 0.30 of R² is hiding in depth
+> alone, which makes **depth an axis worth varying** rather than a constant
+> inherited from the M1 probe.
 
 **Three things the ladder says**, and the third is the one that decides §9.6:
 
@@ -768,9 +806,11 @@ not resolve.
 - **W-E — the classical gate.** Every trained arm against the local-BFS ceiling
   of §9.4 (`gelt.vortex_targets.local_component_size`), re-measured on the same
   configurations. An arm below it has not beaten the classical local method and
-  should not be reported as an architecture result whatever W-D says. As of the
-  production pre-flight that bar is **R² = 0.671 at β = 0.7520** and **0.747 at
-  β = 0.7450**, on vortex-carrying sites.
+  should not be reported as an architecture result whatever W-D says. **The bar
+  is the matched-depth arm** — the BFS capped at `LAYERS` hops, not the uncapped
+  one (§9.4): 0.671 and 0.747 were the *uncapped* numbers and are not a ceiling
+  any 4-layer network can be asked to clear. Re-measure both couplings with the
+  hop cap before reading W-E.
 - **W-F — null.** Both architectures frozen at initialisation, as R-E.
 - **Dispersion**, as a count and not a test: the spread over the six cells per
   arm. §1.2 point 7 is the reason it is listed separately from accuracy.
