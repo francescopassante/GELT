@@ -55,8 +55,38 @@ from gelt.probe_targets import BALL_RADIUS, action_density
 # ── Environment overrides ────────────────────────────────────────────────────
 # Same two routes as train_glueball.py (env var or ``--name=value`` in argv),
 # because env vars do not survive every container wrapper.
+# Every flag any env_* call has asked about, so validate_argv can tell a typo
+# from a real option. An unrecognised --x=y used to be *silently ignored*, which
+# is how a run can quietly not do the thing its command line says it does.
+_QUERIED_FLAGS = set()
+
+
 def _flag_for(name):
-    return f"--{name.lower().replace('probe_', '').replace('_', '-')}="
+    flag = f"--{name.lower().replace('probe_', '').replace('_', '-')}="
+    _QUERIED_FLAGS.add(flag)
+    return flag
+
+
+def validate_argv(*also):
+    """Refuse an unrecognised ``--name=value``. Call it at the top of ``main``.
+
+    Only flags some ``env_*`` call has actually queried are accepted, so this
+    catches the failure mode that motivated it: a flag that looks right, is
+    spelled wrong, and is therefore ignored without a word — the run then
+    reports the defaults while its command line claims otherwise. ``also`` names
+    the environment variables a script reads *after* this is called.
+    """
+    known = set(_QUERIED_FLAGS) | {_flag_for(n) for n in also}
+    unknown = [
+        a for a in sys.argv[1:]
+        if a.startswith("--") and "=" in a
+        and not any(a.startswith(k) for k in known)
+    ]
+    if unknown:
+        raise SystemExit(
+            "unrecognised option(s): " + ", ".join(unknown) + "\n"
+            "known: " + ", ".join(sorted(known))
+        )
 
 
 def env_str(name, default):

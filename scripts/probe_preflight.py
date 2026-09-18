@@ -35,6 +35,7 @@ import torch
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from probe_common import (  # noqa: E402
+    validate_argv,
     BALL_RADIUS,
     N_CONFIGS,
     N_SLICES,
@@ -122,6 +123,7 @@ def fit_linear_filter(f, y, train_idx, test_idx, kind, ridge=1e-8):
 
 
 def main():
+    validate_argv()
     torch.manual_seed(0)
     print("=" * 78)
     print("M1 probe — pre-flight: the best fixed-offset-weight method at reach")

@@ -15,9 +15,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import probe_common as pc  # noqa: E402
+from probe_common import validate_argv  # noqa: E402
 
 
 def main():
+    validate_argv()
     print(f"group {pc.GROUP}  lattice {pc.LATTICE}  targets {pc.TARGETS}"
           + (f"  β {pc.BETA}  conv_init_scale {pc.Z2_LCNN_CONV_INIT}"
              if pc.IS_Z2 else f"  ensemble seed {pc.ENSEMBLE_SEED}"))

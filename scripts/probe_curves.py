@@ -35,16 +35,19 @@ import torch
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from probe_common import IS_Z2, env_float, env_str  # noqa: E402
+from probe_common import IS_Z2, env_float, env_str, validate_argv  # noqa: E402
 
 # "Still improving" needs both: the best epoch is the last one, and the curve
 # fell by more than this fraction over the final quarter. The second clause
 # matters — a run can tick its best on the last epoch by 1e-5 of noise and be
 # perfectly converged.
 STILL_IMPROVING = env_float("PROBE_CURVES_TAIL", 0.02)
-FILTER = env_str("PROBE_CURVES_FILTER", "")
+# PROBE_FILTER, not PROBE_CURVES_FILTER: the flag derived from the name is
+# what the docstring promises (--filter=), and a flag that does not match its
+# documentation is the same silent no-op validate_argv now refuses.
+FILTER = env_str("PROBE_FILTER", "")
 OUT_DIR = env_str(
-    "PROBE_CURVES_DIR", "results/z2_vortex/probe" if IS_Z2 else "results/m1_probe"
+    "PROBE_DIR", "results/z2_vortex/probe" if IS_Z2 else "results/m1_probe"
 )
 
 BLOCKS = "▁▂▃▄▅▆▇█"
@@ -83,6 +86,7 @@ def tail_gain(val):
 
 
 def main():
+    validate_argv()
     paths = sorted(glob.glob(os.path.join(OUT_DIR, "*_stats.pt")))
     if FILTER:
         paths = [p for p in paths if FILTER in os.path.basename(p)]

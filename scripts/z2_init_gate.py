@@ -70,6 +70,7 @@ from probe_common import (  # noqa: E402
     env_int,
     env_str,
     gaugegroup,
+    validate_argv,
     probe_inputs,
 )
 import probe_common as pc  # noqa: E402
@@ -81,8 +82,11 @@ N_CONFIGS = env_int("Z2GATE_CONFIGS", 3)
 GATE_MAX = env_float("Z2GATE_MAX", 10.0)
 
 
+DEVICE = env_str("Z2GATE_DEVICE", "")
+
+
 def device():
-    forced = env_str("Z2GATE_DEVICE", "")
+    forced = DEVICE
     return torch.device(
         forced or (
             "cuda" if torch.cuda.is_available()
@@ -124,6 +128,7 @@ def gelt_layer_profile(model, W, T):
 
 
 def main():
+    validate_argv()
     dev = device()
     print("=" * 78)
     print("Z₂ arms — initialisation gate at the production volume")

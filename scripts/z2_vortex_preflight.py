@@ -75,6 +75,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from probe_common import (  # noqa: E402
+    validate_argv,
     accumulate_stats,
     env_flag,
     env_int,
@@ -509,6 +510,7 @@ def run_beta(beta):
 
 
 def main():
+    validate_argv()
     torch.manual_seed(0)
     print("=" * 78)
     print("Z₂ vortex geometry — pre-flight: the best classical method at reach")

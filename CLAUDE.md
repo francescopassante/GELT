@@ -430,7 +430,10 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   `train_probe.py` / `probe_readings.py` / `probe_batch.sh`** — the M1 probe
   (`notes/m1_probe.md`). `probe_common.py` holds ensemble, sample
   extraction, splits, inputs, standardisation, the `ARMS` and the R²
-  sufficient statistics, so the arms cannot drift — the same discipline that
+  sufficient statistics, so the arms cannot drift. Every entry point calls
+  **`validate_argv()`** first: an unrecognised `--name=value` used to be ignored
+  in silence, so a run would report its defaults while its command line claimed
+  otherwise — it is now refused, with the known flags listed — the same discipline that
   makes the two attention scripts share one estimator. It **samples nothing**:
   the ensembles are `train_glueball.py`'s cached ones, by the identical cache
   key, and a missing cache is an error rather than a 24-hour sampling run.

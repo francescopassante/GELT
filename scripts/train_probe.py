@@ -40,6 +40,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from probe_common import (  # noqa: E402
     ARMS,
+    validate_argv,
     BETA,
     GROUP,
     IS_Z2,
@@ -89,6 +90,10 @@ PATIENCE = env_int("PROBE_PATIENCE", 0)
 BATCH_CONFIGS = env_int("PROBE_BATCH", 4 if IS_Z2 else 8)
 GRAD_CHECKPOINT = env_flag("PROBE_GRAD_CHECKPOINT", True)
 RUN_TAG = env_str("PROBE_RUN_TAG", "")
+# Read here rather than inside main() so validate_argv() sees the flag: the
+# smoke tests pass --device=cpu, and an option the validator does not know about
+# would be rejected as a typo.
+DEVICE = env_str("PROBE_DEVICE", "")
 
 if ARM not in available_arms():
     raise SystemExit(
@@ -186,9 +191,10 @@ def run_split(model, arch, U3, y, idx, device, optimizer=None, per_config=False,
 
 
 def main():
+    validate_argv()
     # PROBE_DEVICE overrides the cuda → mps → cpu order; the smoke tests use it
     # to stay on the CPU, where the complex kernels are all available.
-    forced = env_str("PROBE_DEVICE", "")
+    forced = DEVICE
     device = torch.device(
         forced or (
             "cuda" if torch.cuda.is_available()
