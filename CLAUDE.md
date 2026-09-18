@@ -467,6 +467,12 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   `conv_init_scale`, **0.2** on the Z₂ arms — 0.5 was the first value, chosen on
   an 8³ box, and `scripts/z2_init_gate.py` falsified it at the production volume
   on its first run.
+- **`probe_curves.py`** — reads the dumps' stored `history` and answers the one
+  question a sweep cannot be read without: **was the epoch budget the binding
+  constraint rather than the learning rate?** A run whose best epoch is its last
+  *and* whose val curve is still falling over its final quarter was cut off, and
+  a sweep read on such runs picks the rate that converges fastest at that
+  horizon rather than the best rate. Works for either group.
 - **`z2_init_gate.py`** — the Z₂ arms' initialisation gate, forward-only on
   cached configurations at the production volume: does the matched L-CNN's field
   survive 4 layers at each `conv_init_scale`? It exists because the first value
@@ -705,6 +711,7 @@ python scripts/probe_readings.py             # R-A…R-E (offline, seconds)
 PROBE_GROUP=z2 PROBE_ARM=gelt PROBE_TARGET=V1 python scripts/train_probe.py
 python scripts/z2_vortex_preflight.py        # the Z₂ vortex gate (offline, minutes)
 python scripts/z2_init_gate.py               # the Z₂ arms' init gate (forward-only)
+python scripts/probe_curves.py --group=z2    # did the runs converge? (offline)
 PROBE_DRY_RUN=1 PROBE_PARTS=z-gate,z-sweep bash scripts/probe_batch.sh
 Z2V_SMOKE=1 python scripts/z2_vortex_preflight.py  # …off a fresh short chain
 PROFILE_DIAGNOSTICS=1 python scripts/profile_glueball_step.py
