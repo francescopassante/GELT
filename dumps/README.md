@@ -24,6 +24,19 @@ artifacts, so they travel with the repo instead:
   every arm offline in seconds. Their `gelt` entry is the 7-level net's; take
   the trained series from the dumps above, never from here.
 
+Two subdirectories hold the L-CNN shootout's dumps, which used to sit in a
+`lcnn_shootout/` directory at the repo root and were moved here so every tracked
+Ō dump lives in one place:
+
+- `lcnn_shootout/` — the matched-parameter L-CNN batch of
+  `notes/lcnn_shootout.md`: both full trainings, the three untrained controls on
+  each ensemble, and the four LR × init-scale sweep arms. `meta["arch"]` is
+  `lcnn`; the Ō key is still `gelt_obar`, because the consumer is "one learned
+  operator against the classical span" whatever produced it.
+- `p2/` — the clean ens0 rerun that §9.1 of that note says the provisional row
+  is waiting for. Only the `_test_obars.pt` is tracked; the `.pth` checkpoint
+  beside it is gitignored like every other checkpoint.
+
 The two 7-level nets are **d_model 24**, although neither the name nor the
 dump's `meta` says so (they predate the width tag). Their `Obar_basis` is still
 the 4-level `published` basis, so the fair fight's slice gate runs on them

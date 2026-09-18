@@ -776,7 +776,8 @@ connectivity at the architecture's own reach, which says the task's difficulty
 is concentrated in routing, and
 §9.3's measured fact that GELT carries a vortex gate in Z₂ that the L-CNN does
 not. One caution against the session transcript this proposal came from
-(`2026-09-18-fable_audit.txt`, untracked): its argument was that the L-CNN fails
+(`2026-09-18-fable_audit.txt`, tracked at the repo root): its argument was that
+the L-CNN fails
 at selection because the field is *dense*, and that fixed kernels do fine on
 sparse objects. This field is sparse. The counter-argument is
 that the task is not detection but comparison of extended objects, and a cluster
