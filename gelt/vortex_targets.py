@@ -359,15 +359,25 @@ def _compact_neighbour_table(v_np):
     return ids, coords, nbr
 
 
-def local_component_size(v, R, verbose=False):
+def local_component_size(v, R, max_hops=None, verbose=False):
     """``(B, n_pairs, *Λ)`` int64 — the vortex line length reachable within ``R``.
 
     For each vortex plaquette, the number of vortex plaquettes connected to it
     by a path in the dual graph **whose plaquettes all lie inside the L1-ball of
     radius R around its base site** (periodic distance). Connectivity is
-    computed from ball-internal information only: no global label is consulted,
-    so this is a method a bounded-reach architecture could in principle learn,
-    and its accuracy is the honest classical ceiling.
+    computed from ball-internal information only: no global label is consulted.
+
+    ``max_hops`` additionally caps the path *length*, and it is the parameter
+    that makes this a fair ceiling rather than an unreachable one. With it
+    unset the BFS runs to convergence inside the ball — it follows the line for
+    as many steps as the line is long — while a ``k``-layer network gets exactly
+    ``k`` rounds of message passing. A vortex line of length 50 inside the ball
+    needs ~50 sequential steps, so the uncapped arm is not in the function class
+    of a 4-layer network at all, and comparing against it measures depth rather
+    than inductive bias. **Matched depth means ``max_hops = n_layers``.**
+    ``notes/where_attention_can_win.md`` §6 criterion 3 says "at the
+    architecture's own reach"; reach has two dimensions and the spatial one was
+    the only one checked.
 
     Per-seed BFS rather than a propagation, because the quantity is *reachable
     set size from one node*, which no per-node relaxation computes. The frontier
@@ -385,16 +395,20 @@ def local_component_size(v, R, verbose=False):
         for k in range(len(coords)):
             origin = sites[k]
             seen = {k}
-            stack = [k]
-            while stack:
-                i = stack.pop()
-                for j in nbr[i]:
-                    if j < 0 or j in seen:
-                        continue
-                    d = np.abs((sites[j] - origin + L // 2) % L - L // 2).sum()
-                    if d <= R:
-                        seen.add(int(j))
-                        stack.append(int(j))
+            frontier = [k]
+            hops = 0
+            while frontier and (max_hops is None or hops < max_hops):
+                nxt = []
+                for i in frontier:
+                    for j in nbr[i]:
+                        if j < 0 or j in seen:
+                            continue
+                        d = np.abs((sites[j] - origin + L // 2) % L - L // 2).sum()
+                        if d <= R:
+                            seen.add(int(j))
+                            nxt.append(int(j))
+                frontier = nxt
+                hops += 1
             sizes[k] = len(seen)
         if len(coords):
             out[b][tuple(torch.from_numpy(coords).T)] = torch.from_numpy(sizes)
@@ -403,11 +417,13 @@ def local_component_size(v, R, verbose=False):
     return out
 
 
-def local_size_site_feature(v, R):
+def local_size_site_feature(v, R, max_hops=None):
     """V1's own reduction applied to :func:`local_component_size`.
 
     ``log(1 + max over the three plaquettes at x)`` — the same shape as V1, so
     the classical arm and the target are compared site by site with no extra
     convention in between.
     """
-    return torch.log1p(_to_site(local_component_size(v, R).to(torch.float64), v))
+    return torch.log1p(
+        _to_site(local_component_size(v, R, max_hops=max_hops).to(torch.float64), v)
+    )

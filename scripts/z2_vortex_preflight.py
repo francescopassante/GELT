@@ -129,8 +129,18 @@ N_CONFIGS = env_int("Z2V_N_CONFIGS", 100)
 LOCAL_CONFIGS = env_int("Z2V_LOCAL_CONFIGS", 24)
 REACH = env_int("Z2V_REACH", 8)
 CHUNK = env_int("Z2V_CHUNK", 2)
+# Hop caps for the classical arm. ``LAYERS`` of the probe is 4, so the 4-hop row
+# is the matched-depth ceiling and the uncapped one (None) is what the first
+# version of this pre-flight reported — an arm with unbounded iteration inside
+# the ball, which no bounded-depth network can be expected to reach.
+LAYERS_MATCHED = env_int("Z2V_LAYERS", 4)
+HOP_CAPS = [None if x in ("none", "inf", "") else int(x)
+            for x in env_str("Z2V_HOP_CAPS", "2,4,8,none").split(",")]
 SMOKE = env_flag("Z2V_SMOKE", False)
 VERBOSE = env_flag("Z2V_VERBOSE", True)
+
+
+MATCHED_ARM = f"+ local size, {LAYERS_MATCHED} hops"
 
 
 def _jack_block(n_test):
@@ -468,12 +478,16 @@ def run_beta(beta):
     tr_l, va_l, te_l = splits(n_loc)
     jack_l = _jack_block(len(te_l))
     print(f"\n      local classical arm, first {n_loc} configurations "
-          f"(train {len(tr_l)} / test {len(te_l)}), BFS truncated at reach {REACH}:")
-    loc_feat = local_size_site_feature(v[:n_loc], REACH)
+          f"(train {len(tr_l)} / test {len(te_l)}), BFS at reach {REACH}:")
+    print(f"      **hop caps** {HOP_CAPS} — a k-layer network gets k rounds of"
+          f" message passing, so the uncapped arm is not in its function class.")
     y1_loc, _, _ = standardize(y1_raw[:n_loc], tr_l)
+    arms = [("linear radial (same subset)", None)]
+    for cap in HOP_CAPS:
+        label = "unlimited hops" if cap is None else f"+ local size, {cap} hops"
+        arms.append((label, local_size_site_feature(v[:n_loc], REACH, max_hops=cap)))
     local_rows = {}
-    for name, extra in (("linear radial (same subset)", None),
-                        ("+ local component size", loc_feat)):
+    for name, extra in arms:
         (stats, _), (stats_m, pred_m) = fit_linear_filter(
             v[:n_loc], y1_loc, tr_l, te_l, "radial", REACH, extra=extra,
             mask=site_has_vortex[:n_loc],
@@ -489,8 +503,10 @@ def run_beta(beta):
 
     # The gates read the *masked* numbers, for the reason above.
     r2_lin = lin["radial"][2]
-    r2_loc = local_rows["+ local component size"][2]
+    r2_loc = local_rows[MATCHED_ARM][2]
     r2_lin_sub = local_rows["linear radial (same subset)"][2]
+    print(f"\n      the gate below reads the **matched-depth** arm "
+          f"({MATCHED_ARM}); the uncapped row is context, not a ceiling.")
     verdict["linear_headroom"] = (r2_lin <= LINEAR_CEILING_GATE) and (
         spread >= MIN_RELATIVE_SPREAD
     )
