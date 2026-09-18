@@ -335,6 +335,13 @@ implementation (MIT, Favoni et al. 2012.12901), layer sources only, tracked so
   design and pre-registered readings in `notes/lcnn_shootout.md`.
   `scripts/bench_lcnn_reference.py` times our block against
   `lge-cnn-master/`'s at the production shape.
+  **`conv_init_scale`** (default 1.0, so every existing caller is bit-identical)
+  multiplies the L-Conv weight init. Unit scale per *layer* is not unit scale
+  per *stack* at `nc = 1`: L-Act is `g(Re Tr W/nc)·W`, so at one colour the gate
+  multiplies by its own argument instead of damping it and four layers reach
+  1e21. The Z₂ probe arms use **0.5**, the largest value on the stable plateau
+  and the one that gives the Z₂ stack the output magnitude SU(2) gets for free —
+  giving the baseline the same starting scale, not a handicap.
   **`normalize_shifts`** (off by default) reparameterises ω as
   `g[i,j]·ω̂[i,j,s]` with `Σ_s |ω̂| = 1`, bounding the aggregation over offsets
   the way a softmax does while the per-channel magnitude stays free — the M2
@@ -417,8 +424,8 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   run; `--proj-eps` cuts the span's Gram, `--out-tag` names the artifacts.
 - **`probe_common.py` / `probe_preflight.py` / `probe_transport_gate.py` /
   `train_probe.py` / `probe_readings.py` / `probe_batch.sh`** — the M1 probe
-  (`notes/m1_probe.md`). `probe_common.py` holds ensemble, timeslice
-  extraction, splits, inputs, standardisation, the five `ARMS` and the R²
+  (`notes/m1_probe.md`). `probe_common.py` holds ensemble, sample
+  extraction, splits, inputs, standardisation, the `ARMS` and the R²
   sufficient statistics, so the arms cannot drift — the same discipline that
   makes the two attention scripts share one estimator. It **samples nothing**:
   the ensembles are `train_glueball.py`'s cached ones, by the identical cache
@@ -438,6 +445,22 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   not the L-CNN's transport. `probe_transport_gate.py` is their own pre-flight,
   a necessary-condition gate (do the two transports differ on production
   configurations at all?) rather than a ceiling.
+  **`PROBE_GROUP=z2` switches the whole probe to the Z₂ vortex candidate**
+  (`notes/where_attention_can_win.md` §9.5): group, cache key (β, not an
+  ensemble seed), loader (a Z₂ configuration is *already* 3D, so it is fed
+  whole with a length-1 slice axis and there is no timeslice extraction),
+  targets V1/V2, and a **supervision mask** — ~90% of sites carry no vortex, so
+  an unmasked loss would score "is there a vortex here" instead of the cluster
+  size, and `standardize` takes its moments over the masked sites for the same
+  reason. `R`, `LAYERS`, `LCNN_K`, `MLP_HIDDEN`, the splits and the R²
+  statistics are shared by construction; the SU(2) path is bit-identical,
+  checked against a worktree at the previous commit. Two things the switch
+  forced: `GEMHSA` now takes a **per-axis lattice extent** (the Z₂ box is
+  48 × 24 × 24; an int is still the cubic shorthand and builds bit-identical
+  maps), and **the matched L-CNN has no usable forward pass in Z₂ at 4 layers**
+  (§9.5.1 — 1.4e21 at initialisation, `inf` at the production volume, while
+  GELT's field stays at 1: M2, visible before any training). Hence
+  `conv_init_scale = 0.5` on the Z₂ arms.
 - **`z2_vortex_preflight.py`** — `probe_preflight.py`'s sibling for the Z₂
   vortex candidate (`notes/where_attention_can_win.md` §9.4), and the gate that
   must be read before any training code exists. Five gates (closure,
@@ -665,6 +688,7 @@ python scripts/probe_preflight.py            # §5's gate (offline, seconds)
 python scripts/probe_transport_gate.py       # the transport arms' gate (CPU, minutes)
 PROBE_ARM=frozen PROBE_TARGET=T2 python scripts/train_probe.py
 python scripts/probe_readings.py             # R-A…R-E (offline, seconds)
+PROBE_GROUP=z2 PROBE_ARM=gelt PROBE_TARGET=V1 python scripts/train_probe.py
 python scripts/z2_vortex_preflight.py        # the Z₂ vortex gate (offline, minutes)
 Z2V_SMOKE=1 python scripts/z2_vortex_preflight.py  # …off a fresh short chain
 PROFILE_DIAGNOSTICS=1 python scripts/profile_glueball_step.py
