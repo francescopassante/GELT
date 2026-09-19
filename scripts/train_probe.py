@@ -241,6 +241,32 @@ def main():
     print(f"trainable: {sum(p.numel() * (2 if p.is_complex() else 1) for p in params)}"
           f" of {dofs} real DOFs")
 
+    # Refuse to overwrite a dump that was produced with different settings.
+    # The learning rate is **not** in the stem — the batch puts it in the run
+    # tag, a hand-written loop easily does not — so three rates under one tag
+    # silently overwrite each other and the survivor is whichever finished last.
+    # Nothing downstream could tell; the dump records the rate it was run with,
+    # so the collision is invisible in the output as well as in the filenames.
+    if os.path.exists(dump_path := f"{OUT_DIR}/{STEM}_stats.pt"):
+        prev = torch.load(dump_path, map_location="cpu", weights_only=False)
+        differs = {
+            k: (prev.get(k), cur)
+            for k, cur in (("lr", LR), ("epochs_run", EPOCHS), ("null", NULL),
+                           ("transport", transport))
+            if prev.get(k) is not None and prev.get(k) != cur
+            # epochs_run is what the previous run *reached*, which is ≤ EPOCHS
+            # when it stopped early, so only a larger value is a real conflict
+            and not (k == "epochs_run" and prev.get(k) <= cur)
+        }
+        if differs:
+            raise SystemExit(
+                f"{dump_path} already exists and was produced with different "
+                f"settings: "
+                + ", ".join(f"{k} {a} → {b}" for k, (a, b) in differs.items())
+                + f"\nGive this run its own --run-tag (the rate is not in the "
+                f"stem), or delete the dump if it is superseded."
+            )
+
     optimizer = torch.optim.AdamW(params, lr=LR, weight_decay=WEIGHT_DECAY)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
     os.makedirs(OUT_DIR, exist_ok=True)
