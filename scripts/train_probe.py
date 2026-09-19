@@ -42,6 +42,7 @@ from probe_common import (  # noqa: E402
     ARMS,
     validate_argv,
     BETA,
+    Z2_LCNN_CONV_INIT,
     GROUP,
     IS_Z2,
     JACK_BLOCK,
@@ -227,6 +228,9 @@ def main():
     transport = arm_transport(ARM)
     model = model.to(device)
     dofs = real_dofs(model)
+    # None for every arm the scale does not reach, so a GELT dump does not
+    # claim a setting it never had.
+    conv_init = Z2_LCNN_CONV_INIT if (IS_Z2 and arch == "lcnn") else None
     print(f"arm {ARM}: {arch}, {dofs} real DOFs, {ARMS[ARM]}")
 
     if NULL:
@@ -252,7 +256,8 @@ def main():
         differs = {
             k: (prev.get(k), cur)
             for k, cur in (("lr", LR), ("epochs_run", EPOCHS), ("null", NULL),
-                           ("transport", transport), ("batch", BATCH_CONFIGS))
+                           ("transport", transport), ("batch", BATCH_CONFIGS),
+                           ("conv_init_scale", conv_init))
             if prev.get(k) is not None and prev.get(k) != cur
             # epochs_run is what the previous run *reached*, which is ≤ EPOCHS
             # when it stopped early, so only a larger value is a real conflict
@@ -342,6 +347,7 @@ def main():
         "real_dofs": dofs, "null": NULL,
         "ensemble_seed": ENSEMBLE_SEED, "init_seed": INIT_SEED, "run_tag": RUN_TAG,
         "lr": LR, "weight_decay": WEIGHT_DECAY, "batch": BATCH_CONFIGS,
+        "conv_init_scale": conv_init,
         "epochs_run": len(history),
         "best_epoch": best_epoch, "best_val": best_val, "history": history,
         "diverged": diverged, "divergence_val": DIVERGENCE_VAL,
