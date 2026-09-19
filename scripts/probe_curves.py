@@ -48,7 +48,14 @@ STILL_IMPROVING = env_float("PROBE_CURVES_TAIL", 0.02)
 # arm-vs-arm differences say, so the comparison belongs next to the numbers
 # rather than in someone's memory. 0.671 is the β = 0.752 pre-flight value;
 # β = 0.745 is 0.747. Set to 0 to switch the column off.
-CEILING = env_float("PROBE_CEILING", 0.671)
+# The **matched-depth** bar, not the uncapped BFS. A k-layer network gets k
+# rounds of message passing; a GELT layer aggregates over the radius-2 ball, so
+# four layers trace a path of up to ~8 dual links if it is straight and fewer if
+# it wiggles. The honest bar is therefore the interval [4 hops, 8 hops] — at
+# β = 0.752, [0.404, 0.577]. Flagging below the *lower* edge is the only
+# unambiguous verdict; inside the interval is reported as such.
+CEILING = env_float("PROBE_CEILING", 0.404)       # BFS at 4 hops, β = 0.752
+CEILING_HI = env_float("PROBE_CEILING_HI", 0.577)  # BFS at 8 hops, β = 0.752
 # PROBE_FILTER, not PROBE_CURVES_FILTER: the flag derived from the name is
 # what the docstring promises (--filter=), and a flag that does not match its
 # documentation is the same silent no-op validate_argv now refuses.
@@ -129,8 +136,13 @@ def main():
             flags.append("DIVERGED")
         if d.get("collapsed"):
             flags.append("COLLAPSED")
-        if CEILING and d.get("target") == "V1" and r2 == r2 and r2 < CEILING:
-            flags.append(f"below the classical ceiling {CEILING:.3f}")
+        if CEILING and d.get("target") == "V1" and r2 == r2:
+            if r2 < CEILING:
+                flags.append(f"** below the matched-depth arm {CEILING:.3f} **")
+            elif r2 < CEILING_HI:
+                flags.append(f"inside [{CEILING:.3f}, {CEILING_HI:.3f}]")
+            else:
+                flags.append(f"above the 8-hop arm {CEILING_HI:.3f}")
         print(f"{d.get('arm', '?'):16s} {d.get('target', '?'):4s} "
               f"{d.get('lr', float('nan')):7.1e} {n:3d} {best:4d} "
               f"{(val[-1] if val else float('nan')):9.4f} "

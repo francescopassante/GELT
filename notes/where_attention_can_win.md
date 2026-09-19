@@ -537,12 +537,21 @@ neighbour is switched off exactly when a vortex line pierces the square between
 > and this paragraph originally said the opposite.** The task is to *follow the
 > vortex line*; the mask switches a neighbour off exactly where the line
 > crosses, so it blinds the network to the structure it has to trace. Same α,
-> same parameters, only `T` differs: `gelt` reaches R² = 0.216 on V1 where
-> `gelt_single` — the identical network with the mask absent — reaches 0.556.
-> The original wording ("sparse, and precisely on the objects this task is
-> about") had the sign of its own argument backwards: being concentrated on the
-> objects is what makes deleting them expensive. M3 is real, large and
-> **negative** — still a result about the transport, just not the proposed one.
+> same parameters, only `T` differs. The original wording ("sparse, and
+> precisely on the objects this task is about") had the sign of its own argument
+> backwards: being concentrated on the objects is what makes deleting them
+> expensive.
+>
+> **How large, twice — and the first answer was wrong.** This note first put the
+> cost at −0.34, from `gelt` 0.216 against `gelt_single` 0.556. Those were
+> *different learning rates*: `gelt` was at 1e-2, picked by a sweep whose
+> horizon had not converged, and the same paragraph that quoted the number had
+> already said the rates were unreliable. With GELT's rate bracketed at 120
+> epochs (1e-2 → 0.216, **3e-3 → 0.500**, 1e-3 → 0.256, 3e-4 → 0.199) the
+> comparison at matched rate is **`gelt` 0.500 against `gelt_single` 0.556: M3
+> costs 0.056, not 0.34.** Real, in the direction opposite to §9.3's original
+> claim, and small. Both arms were still improving at 120 epochs, so it is not
+> final either.
 
 Three consequences, and the third is the one that matters:
 
