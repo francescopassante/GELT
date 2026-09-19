@@ -116,7 +116,7 @@ def main():
     print("'tail' is the relative fall of val over the last quarter; a run whose")
     print("best epoch is its last AND whose tail is still falling was cut off.")
     print("=" * 100)
-    print(f"{'arm':16s} {'tgt':4s} {'lr':>7s} {'ep':>3s} {'best':>4s} "
+    print(f"{'arm':16s} {'tgt':4s} {'lr':>7s} {'b':>2s} {'ep':>3s} {'best':>4s} "
           f"{'val':>9s} {'R²':>8s} {'tail':>7s}  curve")
 
     cut, rows = [], []
@@ -143,8 +143,13 @@ def main():
                 flags.append(f"inside [{CEILING:.3f}, {CEILING_HI:.3f}]")
             else:
                 flags.append(f"above the 8-hop arm {CEILING_HI:.3f}")
+        # ``batch`` predates nothing — dumps written before it was recorded
+        # have no key, and '?' is the honest reading rather than a default that
+        # would claim a run used a batch size nobody stored.
+        batch = d.get("batch")
         print(f"{d.get('arm', '?'):16s} {d.get('target', '?'):4s} "
-              f"{d.get('lr', float('nan')):7.1e} {n:3d} {best:4d} "
+              f"{d.get('lr', float('nan')):7.1e} "
+              f"{(str(batch) if batch else '?'):>2s} {n:3d} {best:4d} "
               f"{(val[-1] if val else float('nan')):9.4f} "
               f"{r2:+8.4f} {gain:+7.1%}  "
               f"{sparkline(val)}  " + "  ".join(flags))
