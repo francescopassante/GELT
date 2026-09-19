@@ -117,7 +117,7 @@ def main():
     print("best epoch is its last AND whose tail is still falling was cut off.")
     print("=" * 100)
     print(f"{'arm':16s} {'tgt':4s} {'lr':>7s} {'b':>2s} {'ep':>3s} {'best':>4s} "
-          f"{'val':>9s} {'R²':>8s} {'tail':>7s}  curve")
+          f"{'val':>9s} {'R²':>8s} {'±':>6s} {'tail':>7s}  curve")
 
     cut, rows = [], []
     for path in paths:
@@ -128,6 +128,7 @@ def main():
         n = len(hist)
         gain = tail_gain(val)
         r2 = d.get("r2", float("nan"))
+        err = d.get("r2_err", float("nan"))
         cut_off = n > 0 and best == n and gain > STILL_IMPROVING
         flags = []
         if cut_off:
@@ -151,7 +152,7 @@ def main():
               f"{d.get('lr', float('nan')):7.1e} "
               f"{(str(batch) if batch else '?'):>2s} {n:3d} {best:4d} "
               f"{(val[-1] if val else float('nan')):9.4f} "
-              f"{r2:+8.4f} {gain:+7.1%}  "
+              f"{r2:+8.4f} {err:6.4f} {gain:+7.1%}  "
               f"{sparkline(val)}  " + "  ".join(flags))
         rows.append((os.path.basename(path), d.get("arm"), d.get("target"),
                      d.get("lr"), n, best, d.get("r2"), gain, cut_off))
