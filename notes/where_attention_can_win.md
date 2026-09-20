@@ -15,13 +15,30 @@ implied and did not: GELT against GELT with the softmax frozen. See §1.1, and
 is a physics observable *and* clears §6's four criteria. Proposed and
 pre-flighted 2026-09-18; not built.
 
-**Attempt 5 is `notes/beta_transfer.md`** — built 2026-09-20, nothing measured.
-It is not a new task: it is §9's task and §9.9's own checkpoints, evaluated at
-the three *other* cached couplings. The observation behind it is that all four
-attempts trained and tested at one coupling, one volume, one input
-distribution, which is exactly the setting in which an input-dependent
-reweighting over offsets has nothing to earn — so no attempt so far has put M1
-in a position to pay on physics. It trains nothing.
+**Attempt 5 is `notes/beta_transfer.md`, and it is RUN and CLOSED** (§9,
+2026-09-20): §9's task and §9.9's own frozen checkpoints, evaluated at the three
+*other* cached couplings, no retraining, an hour of forward passes. The
+observation behind it was that all four earlier attempts trained *and* tested at
+one coupling, which is the setting in which an input-dependent reweighting over
+offsets has nothing to earn. **X-B fails as pre-registered**: the contrast
+favours GELT at 3 of 3 couplings (+0.007, +0.310, +0.013) and p is 0.485, 0.240,
+0.240 — none below the 0.05 the claim required. Two things it did establish:
+
+- **§9.9's dispersion result is a property of the training coupling, not of the
+  architectures.** The 6.2× spread against GELT becomes 1.5× / 1.3× / 1.0× one
+  coupling away — GELT's spread is roughly unchanged and the L-CNN's is *created
+  by the shift* (17× at β = 0.7560). Quote the 6.2× with "at the coupling both
+  arms were trained on" from here on.
+- **Transfer failure is invisible in distribution.** GELT's one collapsing seed
+  is its 2nd best operator at β₀; the L-CNN's three are ranked 3rd, 5th and 6th.
+  Selecting on val loss does not select a transferable operator, for either arm.
+
+The M2-shaped count — cells losing more than 0.2 of R²: 1 of 6 seeds for GELT
+against 3 of 6 for the L-CNN — is the **third** appearance of that shape and is
+worth nothing alone: Fisher p = 0.545, the threshold was chosen after the fact,
+and the study's own pre-existing criterion (cells below the matched-depth bar)
+reads **6 of 18 for each arm**, dead even. What the run does do is **validate
+§8's third stressor**, which §8 proposed and never ran.
 
 The question this note tracks: **is there a task where GELT's attention beats a
 matched-parameter L-CNN, and can it be run here?**

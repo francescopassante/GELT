@@ -1,9 +1,11 @@
 # Attempt 5 — β-transfer: the axis four attempts never varied
 
-**Status (2026-09-20): built, nothing measured.** Everything below is a design
-and a set of readings fixed in writing before the first evaluation, which is
-what §5 of `notes/where_attention_can_win.md` exists to enforce. No number in
-this note is a result.
+**Status (2026-09-20): run and closed. X-B fails as pre-registered — §9.**
+§§1–8 are the design and the readings as they were fixed in writing *before*
+the first evaluation, which is what §5 of `notes/where_attention_can_win.md`
+exists to enforce; they are left untouched. **§9 is the result.** The verbatim
+output of every phase is tracked at `notes/beta_transfer_readout_2026-09-20.txt`,
+because `results/z2_vortex/` is gitignored and lives only on the V100.
 
 Read `notes/where_attention_can_win.md` §9.9 first — this study consumes its
 checkpoints and inherits its caveats.
@@ -244,3 +246,138 @@ consumes work already done, it varies the one axis the programme has held fixed
 throughout, and both of its outcomes are publishable — a positive X-B is the
 first physics-task win attention has had, and a null closes the last cheap M1
 bet and hands the programme to §8's M2 experiment with the ground cleared.
+
+
+---
+
+## 9. The result — measured 2026-09-20
+
+**X-B fails on the half that was pre-registered as the claim.** §4 fixed it as
+*"a positive contrast at two of three couplings, with p < 0.05 at at least
+one"*. The contrast is positive at **three** of three — +0.0067, +0.3101,
++0.0133 — and p is 0.485, 0.240, 0.240. **No p is below 0.05, so the claim is
+not made.** X-C, the raw column, is the same shape and weaker: +0.0049,
++0.0045, +0.0339 at p ≥ 0.24.
+
+The falsification clause of §4 therefore fires, and this section is written to
+that clause rather than around it.
+
+### 9.1 X-D is the one clean pre-registered finding, and it qualifies §9.9
+
+> **The dispersion asymmetry that closed attempt 4 does not survive leaving the
+> training coupling.**
+
+| β | sd(gelt) | sd(lcnn) | ratio |
+|---|---|---|---|
+| **0.7520 (anchor, §9.9)** | 0.1223 | 0.0203 | **6.2× against GELT** |
+| 0.7450 | 0.1128 | 0.0749 | 1.5× |
+| 0.7560 | 0.2704 | 0.3480 | 1.3× (against the L-CNN) |
+| 0.7585 | 0.2642 | 0.2562 | 1.0× |
+
+GELT's spread is roughly what it was; the **L-CNN's is created by the shift**,
+rising 3.7× at 0.7450 and 17× at 0.7560. `where_attention_can_win.md` §9.9
+states the 6.2× as the study's one significant separation and this note's §1
+repeats it. It has to be read with a qualifier now: *at the coupling both arms
+were trained on*. One coupling away it is gone, and at 0.7560 it points the
+other way.
+
+### 9.2 What the per-seed tables show, and why no statistic here captures it
+
+The means hide the structure. Off-coupling the runs are bimodal — a seed either
+holds its R² to within a few hundredths or falls to ≈ 0 — and the **failures
+are one seed for GELT and three for the L-CNN**:
+
+| | cells with Δ < −0.2 | seeds affected |
+|---|---|---|
+| `gelt` | 3 of 18 | **1 of 6** — seed 0, at all three couplings |
+| `lcnn` | 5 of 18 | **3 of 6** — seeds 1, 3, 4 |
+
+That is the third independent appearance of the shape M2 predicts
+(`lcnn_shootout.md` §9.2's 0-of-14 vs 3-of-9; `m1_probe.md` §0's all-six-above
+0.81 against three-of-six below 0.25). **It is also not significant and not
+pre-registered**: Fisher exact on 1/6 against 3/6 is **p = 0.545**, and §4 fixed
+no collapse criterion, so the −0.2 threshold was chosen after seeing the table.
+
+**And the study's own pre-existing criterion disagrees with it.** Counting cells
+at or below the matched-depth classical bar — W-E's criterion, already in use,
+printed by the reader — gives **6 of 18 for each arm**. Dead even. The two
+criteria differ because GELT's below-bar cells are one *chronically mediocre*
+seed (5, which scores ≈ 0.3 everywhere including the anchor, and transfers
+perfectly well) plus one collapsing seed, while all six of the L-CNN's are
+collapses. Which criterion is right is exactly the thing that should have been
+fixed in advance and was not.
+
+So: directional, in the predicted direction, for the third time, and worth
+nothing on its own.
+
+### 9.3 The finding neither arm can spin, and the most useful one here
+
+> **Transfer failure is invisible at the training coupling.**
+
+| collapsing run | its rank at the anchor |
+|---|---|
+| `gelt` seed 0 | **2nd of 6** |
+| `lcnn` seed 4 | 3rd of 6 |
+| `lcnn` seed 1 | 5th of 6 |
+| `lcnn` seed 3 | 6th of 6 |
+
+GELT's one collapsing seed is its *second best* operator at β₀, and the L-CNN's
+best seed (0, 0.6467) transfers fine everywhere. Selecting on in-distribution
+score — which is what every model-selection rule in this repo does, val loss
+included — does not select a transferable operator. For a scan across couplings
+that is a practical statement independent of which architecture wins, and it
+holds for both.
+
+### 9.4 X-B′ was aimed at the wrong confound
+
+The pre-registered sensitivity check drops seeds whose anchor R² is below the
+matched-depth bar. It removed `gelt` seed 5 — the chronically mediocre one,
+which transfers fine — and kept seed 0, which is healthy at the anchor and
+collapses at all three transfer couplings. The contrasts barely move
+(+0.0082, +0.3121, +0.0148). Regression to the mean was the confound §6 named;
+the one that actually bit is an initialisation that is fine in distribution and
+not out of it, which §6 did not anticipate.
+
+### 9.5 X-E does not isolate an amplitude piece, and the reason is instructive
+
+`affine − raw` is +0.006/+0.011 at 0.7450, **−0.161/−0.364** at 0.7560 and
++0.100/+0.045 at 0.7585. A negative value means a recalibration fitted on the
+new coupling's train split makes the *test* R² worse, which is what happens when
+the prediction being recalibrated is near-garbage — the collapsed runs dominate
+the mean. The reading was designed on the assumption that transfer degrades
+gracefully; it does not, it degrades bimodally, and a mean over a bimodal
+sample measures neither mode. **What X-E does say** is that at the anchor the
+affine fit is the identity to three decimals (a ∈ [1.005, 1.029]), which is the
+independent check that the physical-units mapping is right.
+
+### 9.6 What this closes, and what it hands on
+
+**Closed.** The adaptation hypothesis — that an input-dependent reweighting over
+offsets buys accuracy when the input distribution moves — is **not supported on
+this task**. Five attempts; M1 has now failed to produce a physics-task win in
+every one of them, and the one place it pays remains a constructed target.
+
+**Handed on, and this is the part worth acting on.** §4's falsification points
+at `where_attention_can_win.md` §8 — M2 on a tail-dominated metric — and this
+run has incidentally *validated §8's third stressor*. §8 proposes coupling
+transfer as its most expensive stressor and had never run one; it is now run, on
+Z₂ instead of SU(2), and it produced catastrophic failures in the predicted
+direction at 8 of 36 cells. The stressor works. What it lacks is **statistics**:
+1/6 against 3/6 is p = 0.545, and a failure-rate claim at that effect size needs
+either more seeds or the pooling across stressors that §8 already specifies.
+
+**What should not be run**: phases 2 and 3 of §7 as written. Phase 3 (`frozen`
+at six seeds, then transferred) was there to attribute a positive X-B to
+attention rather than to GELT. There is no positive X-B to attribute, and
+spending ~6 trainings to decompose a null is the mistake §5's pre-flight rule
+exists to prevent. Phase 2 (the V2 calibration control) is only worth running if
+§8 is run and wants a matched control.
+
+### 9.7 The honest scope
+
+One target, one source coupling, three transfer couplings, two arms, six seeds,
+and **no retraining anywhere** — every operator is frozen at the weights §9.9
+selected. A version in which each arm is retuned at each coupling would answer a
+different and more favourable question for both, and is not this. The cost of
+the whole study was about an hour of forward passes on work already done, which
+is the only reason a null of this size is worth having written down.

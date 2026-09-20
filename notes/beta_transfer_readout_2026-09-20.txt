@@ -1,0 +1,181 @@
+Verbatim output of the β-transfer study, V100, 2026-09-20.
+
+Kept in the repo for the same reason notes/m1_probe_readout_2026-09-16.txt and
+notes/z2_vortex_readout_2026-09-20.txt are: results/z2_vortex/ is gitignored
+and lives only on the V100, so without this file the numbers in
+notes/beta_transfer.md §9 cannot be checked against anything.
+
+Produced by, in order:
+  Z2V_BETAS=0.7450,0.7520,0.7560,0.7585 python scripts/z2_vortex_preflight.py
+  PROBE_GROUP=z2 PROBE_Z2_BETA=<β> python scripts/probe_transfer.py --filter=_seed
+      for β in 0.7520 (anchor, first), 0.7450, 0.7560, 0.7585
+  python scripts/probe_transfer_readings.py --group=z2
+
+The anchor run is at commit 0d13aba; the first attempt at it was at 97bafeb and
+failed the gate on the two rows whose R² is −66.8 and −259.2, on an absolute
+tolerance. They agreed to seven digits. See that commit's message.
+
+================================================================================
+1. PRE-FLIGHT — the classical bars, four cached ensembles
+================================================================================
+R² columns are the masked reading — vortex-carrying sites only, and
+the local arm is the **matched-depth** one (+ local size, 4 hops):
+a k-layer network gets k rounds of message passing, so an uncapped
+BFS is not a ceiling it can be asked to clear (§9.4).
+       β   p_neg   base            R² lin          R² local  headroom  routing  gates
+  0.7450  0.0544  0.587   +0.1063 ± 0.0068   +0.4497 ± 0.0096   +0.5503  +0.3434  all pass
+  0.7520  0.0440  0.428   +0.1520 ± 0.0135   +0.4038 ± 0.0407   +0.5962  +0.2518  all pass
+  0.7560  0.0364  0.314   +0.1561 ± 0.0278   +0.5149 ± 0.0260   +0.4851  +0.3588  all pass
+  0.7585  0.0324  0.212   +0.2798 ± 0.0179   +0.4999 ± 0.0120   +0.5001  +0.2201  all pass
+
+the full hop ladder per coupling:
+       β        2h        4h        8h     unlim
+  0.7450   +0.1885   +0.4497   +0.6681   +0.7470
+  0.7520   +0.1963   +0.4038   +0.5769   +0.6709
+  0.7560   +0.3383   +0.5149   +0.6936   +0.8060
+  0.7585   +0.3201   +0.4999   +0.6683   +0.7615
+
+VERDICT: every coupling clears the pre-flight — the candidate is a go, and the
+β ladder of §9.6 can be fixed from the table above.
+
+================================================================================
+2. ANCHOR — probe_transfer.py at β = 0.7520, the gate
+================================================================================
+arm        seed      R² raw        ±   R² affine        ±        a        b     loo
+gelt          0     +0.6090   0.0070     +0.6084   0.0072    1.005   -0.010  +0.613  ✓
+gelt          1     +0.5534   0.0079     +0.5529   0.0080    1.006   -0.011  +0.557  ✓
+gelt          2     +0.6116   0.0080     +0.6097   0.0085    1.023   -0.061  +0.613  ✓
+gelt          3    -66.7630  67.5799    -70.6463  71.4743    1.028   -0.064  +0.596  ✓
+gelt          4     +0.5821   0.0071     +0.5803   0.0075    1.018   -0.045  +0.584  ✓
+gelt          5     +0.2952   0.0055     +0.2947   0.0054    1.011   -0.040  +0.297  ✓
+lcnn          0     +0.6438   0.0063     +0.6434   0.0064    1.008   -0.032  +0.647  ✓
+lcnn          1   -259.1967 258.9157   -262.1223 261.8309    1.006   -0.012  +0.602  ✓
+lcnn          2     +0.6083   0.0090     +0.6078   0.0090    1.007   -0.015  +0.612  ✓
+lcnn          3     +0.5897   0.0045     +0.5893   0.0045    1.007   -0.015  +0.592  ✓
+lcnn          4     +0.6110   0.0104     +0.6099   0.0105    1.029   -0.119  +0.615  ✓
+lcnn          5     +0.6313   0.0042     +0.6309   0.0043    1.006   -0.014  +0.634  ✓
+
+anchor gate: PASSED
+
+(The ✓ column is from the re-run at 0d13aba. The raw column reproduces §9.9's
+W-D table entry for entry, and the two rows at −66.76 / −259.20 are its two
+bracketed ones. The affine fit at the anchor is a ∈ [1.005, 1.029],
+b ∈ [−0.119, −0.010] — essentially the identity, which is what it must be
+where the model was trained, and an independent check that the mapping back
+into physical units through the source run's (μ, σ) is right.)
+
+================================================================================
+3. READINGS — probe_transfer_readings.py
+================================================================================
+==============================================================================
+β-transfer — target V1, trained at β = 0.752
+primary column: affine (leave-worst-one-out), secondary: raw
+==============================================================================
+
+X-A  anchor gate: PASSED — every checkpoint reproduces its source dump's R².
+
+─── β = 0.745 ──────────────────────────────────────────────
+    classical at this coupling: linear +0.106,  matched depth (+ local size, 4 hops) +0.450
+    seed                  gelt                  lcnn
+       0   +0.3279 (Δ -0.2848)   +0.4487 (Δ -0.1980)
+       1   +0.5471 (Δ -0.0096)   +0.5954 (Δ -0.0064)
+       2   +0.6067 (Δ -0.0066)   +0.6040 (Δ -0.0081)
+       3   +0.5921 (Δ -0.0041)   +0.5739 (Δ -0.0181)
+       4   +0.5775 (Δ -0.0067)   +0.5628 (Δ -0.0518)
+       5   +0.2810 (Δ -0.0164)   +0.6228 (Δ -0.0116)
+          gelt  mean +0.4887  sd 0.1449  above the matched-depth bar: 4/6
+          lcnn  mean +0.5679  sd 0.0622  above the matched-depth bar: 5/6
+
+─── β = 0.752  [anchor] ──────────────────────────────────────────────
+    classical at this coupling: linear +0.152,  matched depth (+ local size, 4 hops) +0.404
+    seed                  gelt                  lcnn
+       0   +0.6127 (Δ +0.0000)   +0.6467 (Δ +0.0000)
+       1   +0.5567 (Δ +0.0000)   +0.6018 (Δ +0.0000)
+       2   +0.6133 (Δ +0.0000)   +0.6121 (Δ +0.0000)
+       3   +0.5961 (Δ +0.0000)   +0.5920 (Δ +0.0000)
+       4   +0.5842 (Δ +0.0000)   +0.6146 (Δ +0.0000)
+       5   +0.2974 (Δ +0.0000)   +0.6344 (Δ +0.0000)
+          gelt  mean +0.5434  sd 0.1223  above the matched-depth bar: 5/6
+          lcnn  mean +0.6169  sd 0.0203  above the matched-depth bar: 6/6
+
+─── β = 0.756 ──────────────────────────────────────────────
+    classical at this coupling: linear +0.156,  matched depth (+ local size, 4 hops) +0.515
+    seed                  gelt                  lcnn
+       0   -0.0721 (Δ -0.6848)   +0.6212 (Δ -0.0255)
+       1   +0.5418 (Δ -0.0149)   -0.0726 (Δ -0.6743)
+       2   +0.5888 (Δ -0.0245)   +0.5870 (Δ -0.0251)
+       3   +0.5756 (Δ -0.0205)   -0.0705 (Δ -0.6626)
+       4   +0.5731 (Δ -0.0112)   -0.0251 (Δ -0.6397)
+       5   +0.2531 (Δ -0.0443)   +0.6134 (Δ -0.0210)
+          gelt  mean +0.4101  sd 0.2685  above the matched-depth bar: 4/6
+          lcnn  mean +0.2756  sd 0.3639  above the matched-depth bar: 3/6
+
+─── β = 0.7585 ──────────────────────────────────────────────
+    classical at this coupling: linear +0.280,  matched depth (+ local size, 4 hops) +0.500
+    seed                  gelt                  lcnn
+       0   +0.0043 (Δ -0.6084)   +0.6765 (Δ +0.0298)
+       1   +0.5962 (Δ +0.0395)   +0.6356 (Δ +0.0338)
+       2   +0.6564 (Δ +0.0430)   +0.6390 (Δ +0.0269)
+       3   +0.6387 (Δ +0.0426)   +0.0068 (Δ -0.5852)
+       4   +0.6333 (Δ +0.0491)   +0.3458 (Δ -0.2688)
+       5   +0.3144 (Δ +0.0169)   +0.6630 (Δ +0.0286)
+          gelt  mean +0.4739  sd 0.2634  above the matched-depth bar: 4/6
+          lcnn  mean +0.4945  sd 0.2692  above the matched-depth bar: 4/6
+
+X-B  degradation contrast on the affine column — Δ = R²(β′) − R²(0.752), per seed
+           β      gelt Δ med      lcnn Δ med    contrast       p
+      0.7450         -0.0081         -0.0149     +0.0067   0.485
+      0.7560         -0.0225         -0.3326     +0.3101   0.240
+      0.7585         +0.0410         +0.0278     +0.0133   0.240
+    contrast = median Δ(gelt) − median Δ(lcnn); p is an exact two-sided Mann–Whitney on the two sets of Δ.
+
+X-C  degradation contrast on the raw column — Δ = R²(β′) − R²(0.752), per seed
+           β      gelt Δ med      lcnn Δ med    contrast       p
+      0.7450         -0.0558         -0.0607     +0.0049   0.310
+      0.7560         +0.0265         +0.0220     +0.0045   0.818
+      0.7585         -0.1275         -0.1614     +0.0339   0.240
+    contrast = median Δ(gelt) − median Δ(lcnn); p is an exact two-sided Mann–Whitney on the two sets of Δ.
+
+X-B′ the same contrast over seeds that clear the matched-depth bar (+0.404) at the anchor
+    gelt: 5/6 seeds [0, 1, 2, 3, 4], lcnn: 6/6 seeds [0, 1, 2, 3, 4, 5]
+    β = 0.7450  gelt -0.0067 (n=5)  lcnn -0.0149 (n=6)   contrast +0.0082
+    β = 0.7560  gelt -0.0205 (n=5)  lcnn -0.3326 (n=6)   contrast +0.3121
+    β = 0.7585  gelt +0.0426 (n=5)  lcnn +0.0278 (n=6)   contrast +0.0148
+
+X-D  dispersion of the degradation over initialisations (§9.9 measured 6.2× against GELT *at* the anchor)
+    β = 0.7450  sd(gelt) 0.1128  sd(lcnn) 0.0749   ratio 1.5×
+    β = 0.7560  sd(gelt) 0.2704  sd(lcnn) 0.3480   ratio 1.3×
+    β = 0.7585  sd(gelt) 0.2642  sd(lcnn) 0.2562   ratio 1.0×
+
+X-E  how much of the transfer deficit is scale alone (affine − raw, per arm, mean over seeds)
+    β = 0.7450  gelt +0.0063  lcnn +0.0109
+    β = 0.7520  gelt -0.0013  lcnn -0.0006   [anchor]
+    β = 0.7560  gelt -0.1606  lcnn -0.3642
+    β = 0.7585  gelt +0.1001  lcnn +0.0448
+    A large gap is an operator whose *shape* transfers and whose amplitude does not — M2's fingerprint, not M1's.
+
+================================================================================
+4. POST-HOC ARITHMETIC quoted in §9, recomputed from the table above
+================================================================================
+collapse criterion Δ < −0.2 (loss of more than 0.2 of R²), affine column:
+  gelt: 3/18 cells, seeds [0]       -> 1/6 seeds
+      β=0.745  seed 0  Δ -0.2848
+      β=0.756  seed 0  Δ -0.6848
+      β=0.7585 seed 0  Δ -0.6084
+  lcnn: 5/18 cells, seeds [1, 3, 4] -> 3/6 seeds
+      β=0.756  seed 1  Δ -0.6744
+      β=0.756  seed 3  Δ -0.6625
+      β=0.756  seed 4  Δ -0.6397
+      β=0.7585 seed 3  Δ -0.5852
+      β=0.7585 seed 4  Δ -0.2688
+  Fisher exact, seeds affected 1/6 vs 3/6: p = 0.545
+
+the study's own pre-existing criterion — cells at or below the matched-depth bar:
+  gelt  2/6 + 2/6 + 2/6 =  6/18
+  lcnn  1/6 + 3/6 + 2/6 =  6/18
+
+is the collapse predictable from the anchor?
+  gelt seed 0: anchor +0.6127 (rank 2/6) -> collapses
+  lcnn seed 1: anchor +0.6018 (rank 5/6) -> collapses
+  lcnn seed 3: anchor +0.5920 (rank 6/6) -> collapses
+  lcnn seed 4: anchor +0.6146 (rank 3/6) -> collapses

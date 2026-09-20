@@ -86,8 +86,23 @@ or "removed in the 2026-09-09 cleanup", that is where it went.
   (`T_Δ² = (1 + P_enclosed)/2 ∈ {0,1}`) while the L-CNN's axis transport acts as
   the identity, which is a *third* input-dependent weighting (M3) and forces a
   2 × 2 design, `{softmax, frozen} × {average, single}`, rather than an A/B.
-- `notes/beta_transfer.md` — **attempt 5, built 2026-09-20 and not yet
-  measured.** The axis the four closed attempts never varied: every A/B here
+- `notes/beta_transfer.md` — **attempt 5, run and closed 2026-09-20 (§9):
+  X-B fails as pre-registered.** The contrast favours GELT at 3 of 3 couplings
+  (+0.007, +0.310, +0.013) but p = 0.485 / 0.240 / 0.240, none under the 0.05
+  the claim required, so the adaptation hypothesis is **not supported**. Two
+  findings survive: **§9.9's 6.2× dispersion result is a property of the
+  training coupling** — one β away it is 1.5× / 1.3× / 1.0×, GELT's spread
+  unchanged and the L-CNN's *created by the shift* — so quote it as "at the
+  coupling both arms were trained on"; and **transfer failure is invisible in
+  distribution** (GELT's one collapsing seed is its 2nd best operator at β₀,
+  the L-CNN's three are ranked 3rd, 5th, 6th), so selecting on val loss does
+  not select a transferable operator, for either arm. The M2-shaped count
+  (1 of 6 seeds against 3 of 6) is the third appearance of that shape and is
+  worth nothing alone — Fisher p = 0.545, the threshold is post-hoc, and the
+  study's own pre-existing criterion reads 6 of 18 each, dead even. It does
+  **validate §8's third stressor**. Readings verbatim at
+  `notes/beta_transfer_readout_2026-09-20.txt`. The axis the four closed
+  attempts never varied: every A/B here
   trained *and* tested at one coupling, which is precisely the setting in which
   an input-dependent reweighting over offsets has nothing to earn. It crosses
   §9.9's twelve V1 checkpoints with the four cached Z₂ ensembles — **no
