@@ -1,0 +1,153 @@
+Z₂ vortex candidate — verbatim readings, 2026-09-19/20
+=======================================================================
+notes/where_attention_can_win.md §9.9 is the analysis. This file is the
+raw output it was computed from, tracked in git for the same reason
+notes/m1_probe_readout_2026-09-16.txt is: **the dumps under
+results/z2_vortex/probe/ are gitignored and live only on the V100**, so
+without this the numbers in §9.9 cannot be checked against anything.
+
+All runs: PROBE_GROUP=z2, β = 0.7520, target V1 unless noted, lattice
+48 × 24 × 24, 100 configs (70 train / 10 val / 20 test, contiguous and
+chain-ordered), masked supervision, 240 epochs, batch = 1, cosine to
+zero at T_max = EPOCHS, AdamW wd = 1e-3.
+
+The '±' column is the blocked jackknife over the 20 test configurations.
+It is NOT a seed error: the seed-to-seed spread is an order of magnitude
+larger and is the reason §9.9's reading is taken over six seeds.
+
+
+-----------------------------------------------------------------------
+1. The learning-rate bracket (one seed per cell, seed 0)
+-----------------------------------------------------------------------
+Runs tagged _b1_e240_lr<rate>[_ci<scale>]. The three rows with b = '?'
+predate the commit that records the batch size in the dump; they are
+batch = 1 runs, tagged _b1_e240_lr3e-3.
+
+arm              tgt       lr  b  ep best       val       R²      ±    tail
+frozen           V1   1.0e-02  1 240   75 1643845982248932352.0000  +0.5254 0.0103  +65.2%  COLLAPSED
+frozen           V1   1.0e-03  1 240  240    0.4667  +0.5426 0.0077   +1.4%
+frozen           V1   3.0e-03  ? 240  240    0.3758  +0.3992 0.2230   +0.6%
+gelt             V1   1.0e-02  1 240  240    0.7909  +0.2193 0.0074   +1.7%
+gelt             V1   1.0e-03  1 240  240    0.4552  +0.5493 0.0074   +0.6%
+gelt             V1   3.0e-03  ? 240  240    0.3793  +0.6090 0.0070   +0.8%
+gelt_single      V1   1.0e-02  1 240    7       nan  +0.0055 0.0002   +0.0%   NaN at epoch 7
+gelt_single      V1   1.0e-03  1 240  240    0.4155  +0.5907 0.0109   +0.7%
+gelt_single      V1   3.0e-03  ? 240  170    0.4171  +0.5788 0.0054   -2.3%
+lcnn             V1   1.0e-03  1 240  240    0.3947  +0.6163 0.0035   +2.3%  still improving   (ci 0.1)
+lcnn             V1   1.0e-04  1 240  240    0.5923  +0.4155 0.0064   +1.8%                    (ci 0.1)
+lcnn             V1   3.0e-04  1 240  240    0.3613  +0.6438 0.0063   +0.8%                    (ci 0.1)
+lcnn             V1   3.0e-04  1 240  240    0.3664  +0.6320 0.0062   +1.0%                    (ci 0.2)
+lcnn             V2   1.0e-04  1 240  237    0.0074  +0.9923 0.0002   +5.5%                    (ci 0.1)
+lcnn             V2   3.0e-04  1 240  239    0.0040  +0.9958 0.0002  +12.9%                    (ci 0.1)
+
+lcnn at lr = 3e-3 (ci 0.1) diverged and was stopped; no dump.
+
+Per-arm optima, all with an interior maximum:
+    gelt         3e-3
+    lcnn         3e-4 at conv_init_scale 0.1
+    gelt_single  1e-3
+    frozen       1e-3
+The L-CNN's optimum is an order of magnitude below GELT's. Running it at
+GELT's rate diverges — reading that as a defeat would have been a straw
+man, which is why it was bracketed separately.
+
+W-A health half: lcnn on V2 (a convolution, the L-CNN's own primitive)
+reaches R² = 0.9958. The arm is configured correctly; a V1 deficit
+against it is real.
+
+
+-----------------------------------------------------------------------
+2. Six seeds, each arm at its own best rate  (--run-tag=_seed)
+-----------------------------------------------------------------------
+gelt at lr 3e-3; lcnn at lr 3e-4, conv_init_scale 0.1. Same ensemble,
+same splits, same 20 held-out configurations. Row order is init seed
+0…5 (confirmed against the two dump filenames below).
+
+arm              tgt       lr  b  ep best       val       R²      ±    tail
+gelt             V1   3.0e-03  1 240  240    0.3793  +0.6090 0.0070   +0.8%
+gelt             V1   3.0e-03  1 240  240    0.4466  +0.5534 0.0079   +2.1%  still improving
+gelt             V1   3.0e-03  1 240  202    0.3799  +0.6116 0.0080   +0.4%
+gelt             V1   3.0e-03  1 240  171    0.4002 -66.7630 67.5799  -0.7%  ← one config, see §3
+gelt             V1   3.0e-03  1 240  204    0.4148  +0.5821 0.0071   +1.1%
+gelt             V1   3.0e-03  1 240  240    0.7140  +0.2952 0.0055   +0.5%
+lcnn             V1   3.0e-04  1 240  240    0.3613  +0.6438 0.0063   +0.8%
+lcnn             V1   3.0e-04  1 240  240    0.4004 -259.1966 258.9157 +1.4% ← one config, see §3
+lcnn             V1   3.0e-04  1 240  240    0.3973  +0.6083 0.0090   +0.8%
+lcnn             V1   3.0e-04  1 240  240    0.4151  +0.5897 0.0045   +1.2%
+lcnn             V1   3.0e-04  1 240  176    0.4443  +0.6110 0.0104  -13.0%
+lcnn             V1   3.0e-04  1 240  240    0.3668  +0.6313 0.0042   +0.9%
+
+With the leave-one-out repair of §3 applied symmetrically:
+
+    seed      gelt      lcnn
+    0       0.6090    0.6438
+    1       0.5534   (0.6023)
+    2       0.6116    0.6083
+    3      (0.5985)   0.5897
+    4       0.5821    0.6110
+    5       0.2952    0.6313
+    mean    0.5416    0.6144
+    sd      0.1226    0.0198
+
+    W-D   ΔR²(gelt − lcnn) = −0.073 ± 0.051   t = 1.4   p ≈ 0.21
+    disp  variance ratio F = 38 on (5,5) df   p < 0.002
+          below the matched-depth bar 0.577: gelt 3/6, lcnn 0/6
+
+Mechanism readings, single seed, at each arm's own best rate —
+directional only, the seed dispersion on gelt is 0.12:
+    W-B   M1 = gelt − frozen       = +0.066 ± 0.010
+    W-C   M3 = gelt − gelt_single  = +0.018 ± 0.013
+
+W-E, the classical gate (§9.4, matched-depth BFS at β = 0.7520):
+    4 hops 0.404, 8 hops 0.577, uncapped 0.671 (retired as a bar).
+    Both architectures are above the 8-hop arm on their mean.
+
+
+-----------------------------------------------------------------------
+3. The two catastrophic seeds — one configuration each
+-----------------------------------------------------------------------
+scripts/probe_outliers.py --group=z2 --filter=_seed
+
+probe_gelt_V1_b0.752_init3_seed_stats.pt
+  arm gelt  seed 3  R² -66.7630 ± 67.5799  over 20 test configs
+    config 80 +0.6261   config 85 +0.6001   config 90 +0.5547   config 95 +0.5349
+    config 81 +0.5666   config 86 +0.5760   config 91 +0.6591   config 96 +0.6162
+    config 82 +0.6254   config 87 +0.6443   config 92 +0.5400   config 97 +0.6242
+    config 83 +0.6103   config 88 +0.5857   config 93 +0.5989   config 98 +0.5723
+    config 84 +0.5622   config 89 -1205.1484  ←   config 94 +0.6401   config 99 +0.5418
+  without config 89: R² = +0.5985
+
+probe_lcnn_V1_b0.752_init1_seed_stats.pt
+  arm lcnn  seed 1  R² -259.1966 ± 258.9157  over 20 test configs
+    config 80 +0.6165   config 85 +0.5829   config 90 +0.6034   config 95 +0.5684
+    config 81 +0.6611   config 86 +0.5836   config 91 +0.6729   config 96 +0.6270
+    config 82 +0.5847   config 87 +0.6609   config 92 +0.5635   config 97 +0.6345
+    config 83 -4729.8769  ←   config 88 +0.5784   config 93 +0.6246   config 98 +0.5169
+    config 84 +0.5528   config 89 +0.5687   config 94 +0.6016   config 99 +0.5555
+  without config 83: R² = +0.6023
+
+Different configurations for the two arms, nineteen of twenty healthy in
+both, once in six seeds for each architecture. So this is not a hard
+configuration in the ensemble and not a pathology of either block: it is
+a rare initialisation × configuration interaction that R²'s unbounded
+tail turns into a number that swamps the statistic.
+
+
+-----------------------------------------------------------------------
+4. The training configuration, and what it cost to find
+-----------------------------------------------------------------------
+- 120 epochs: no arm converged. Doubling to 240 moved every arm and
+  FLIPPED THE SIGN OF M1 (+0.039 → −0.009), so the 120-epoch ranking was
+  an artefact of the budget. The cosine has T_max = EPOCHS, so every
+  horizon is a different experiment and rate optima do not transfer.
+- The binding constraint was gradient STEPS, not epochs: 70 training
+  configurations at batch = 4 is 18 steps per epoch. batch = 1 gives 70
+  at the same wall clock and changed every reading by more than any rate
+  did — frozen alone moved 0.17, from 0.5696 to 0.3992.
+- Neither the batch size nor the L-CNN's conv_init_scale was recorded in
+  any dump, stem or overwrite guard until this run. Two runs differing
+  in them were indistinguishable in their artifacts. Both are recorded
+  now (commits 'The batch size was an experiment axis no artifact
+  recorded' and 'The L-CNN's init scale was in no dump either').
+- conv_init_scale = 0.2 is a forward-only gate verdict, not an optimum;
+  on V1 the L-CNN reads 0.6438 at 0.1 and 0.6320 at 0.2, within 2σ.
