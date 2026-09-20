@@ -40,11 +40,15 @@ IN_DIR = env_str("PROBE_TRANSFER_DIR", "results/z2_vortex/transfer")
 PRE_DIR = env_str("PROBE_PREFLIGHT_DIR", "results/z2_vortex")
 TARGET = env_str("PROBE_TARGET", "V1" if IS_Z2 else "T2")
 FILTER = env_str("PROBE_FILTER", "")
-# The matched-depth classical bar at the anchor coupling
-# (notes/where_attention_can_win.md §9.4, BFS capped at 4 hops). Used only by
-# X-B′, and only as a *pre-registered* health criterion for which seeds are
-# operators at all — it is not a filter chosen after seeing the transfer.
-HEALTH_BAR = float(env_str("PROBE_HEALTH_BAR", "0.440"))
+# The matched-depth classical bar at the anchor coupling — BFS capped at 4
+# hops, the bar §9.9's W-E actually used, whose interval is [0.404, 0.577].
+# Reproduced by the production pre-flight of 2026-09-20 at +0.4038 ± 0.0407.
+# **0.440 was wrong here**: that is §9.4's inset, measured at the time of the
+# hop-cap correction on different statistics, and §9.9 did not use it. Fixed
+# before any transfer number existed. Used only by X-B′, and only as a
+# *pre-registered* health criterion for which seeds are operators at all — it
+# is not a filter chosen after seeing the transfer.
+HEALTH_BAR = float(env_str("PROBE_HEALTH_BAR", "0.404"))
 # Which column the summaries are built from. "affine" is the primary reading:
 # it is the kinder one for the arm with a scale problem, so a GELT advantage
 # there is about routing and not about amplitude.

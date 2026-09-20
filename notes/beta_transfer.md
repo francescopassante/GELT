@@ -131,8 +131,12 @@ helps is not. Both columns are dumped either way.
   two-sided Mann–Whitney on the two sets of six. **A positive contrast at two of
   three couplings, with p < 0.05 at at least one, is the claim.**
 - **X-B′ — the pre-registered sensitivity check.** X-B restricted to seeds whose
-  anchor R² clears the matched-depth classical bar at β₀ (0.440, §9.4). This
-  exists because of the confound in §6, it is fixed here rather than chosen
+  anchor R² clears the matched-depth classical bar at β₀ — **0.404**, the lower
+  end of §9.9's own W-E interval [0.404, 0.577], reproduced by the production
+  pre-flight of 2026-09-20 at +0.4038 ± 0.0407. (This note first wrote 0.440,
+  which is §9.4's inset from the hop-cap correction on different statistics and
+  is not the number §9.9 used; corrected before any transfer number existed.)
+  It exists because of the confound in §6, it is fixed here rather than chosen
   after seeing the transfer, and it is tied to a number that already existed.
 - **X-C — the harsher reading.** X-B on the raw column.
 - **X-D — dispersion.** Spread over initialisations of `Δ`, per arm, and the
@@ -143,11 +147,24 @@ helps is not. Both columns are dumped either way.
   fingerprint, not M1's. Reported at the anchor too, where it is the baseline.
 
 **Context, not a reading:** the matched-depth classical bar at each β′ (BFS
-capped at 4 hops, §9.4). The pre-flight must be re-run at the transfer couplings
-to have it — the dumps in `results/z2_vortex/` predate the hop cap and carry
-only the uncapped arm, which §9.4 established is **not** a bar a four-layer
-network can be asked to clear. The readings script says so rather than
-displaying the uncapped number as if it were the bar.
+capped at 4 hops, §9.4), measured on all four ensembles 2026-09-20:
+
+| β | linear (M1-free) | **matched depth, 4 hops** | 8 hops | unlimited |
+|---|---|---|---|---|
+| 0.7450 | +0.106 | **+0.450** | +0.668 | +0.747 |
+| **0.7520** (anchor) | +0.152 | **+0.404** | +0.577 | +0.671 |
+| 0.7560 | +0.156 | **+0.515** | +0.694 | +0.806 |
+| 0.7585 | +0.280 | **+0.500** | +0.668 | +0.762 |
+
+**The bar is higher at all three transfer couplings than at the anchor**
+(0.45, 0.51, 0.50 against 0.40), so an operator that merely holds its R²
+off-coupling has still lost ground against the classical method. That moves the
+absolute difficulty of the task between couplings, and it moves it for both
+arms — which is the reason X-B is a difference of differences and not a
+comparison of levels. The readings script reads these from the pre-flight
+dumps; where a dump predates the hop cap it says so rather than displaying the
+uncapped number as if it were the bar, because §9.4 established that an
+uncapped BFS is not a ceiling a four-layer network can be asked to clear.
 
 **Falsification.** If X-B is consistent with zero at all three couplings, the
 adaptation hypothesis is dead for this task, and the remaining route is M2 on a
