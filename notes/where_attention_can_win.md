@@ -15,6 +15,14 @@ implied and did not: GELT against GELT with the softmax frozen. See §1.1, and
 is a physics observable *and* clears §6's four criteria. Proposed and
 pre-flighted 2026-09-18; not built.
 
+**Attempt 5 is `notes/beta_transfer.md`** — built 2026-09-20, nothing measured.
+It is not a new task: it is §9's task and §9.9's own checkpoints, evaluated at
+the three *other* cached couplings. The observation behind it is that all four
+attempts trained and tested at one coupling, one volume, one input
+distribution, which is exactly the setting in which an input-dependent
+reweighting over offsets has nothing to earn — so no attempt so far has put M1
+in a position to pay on physics. It trains nothing.
+
 The question this note tracks: **is there a task where GELT's attention beats a
 matched-parameter L-CNN, and can it be run here?**
 

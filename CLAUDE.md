@@ -86,6 +86,20 @@ or "removed in the 2026-09-09 cleanup", that is where it went.
   (`T_Δ² = (1 + P_enclosed)/2 ∈ {0,1}`) while the L-CNN's axis transport acts as
   the identity, which is a *third* input-dependent weighting (M3) and forces a
   2 × 2 design, `{softmax, frozen} × {average, single}`, rather than an A/B.
+- `notes/beta_transfer.md` — **attempt 5, built 2026-09-20 and not yet
+  measured.** The axis the four closed attempts never varied: every A/B here
+  trained *and* tested at one coupling, which is precisely the setting in which
+  an input-dependent reweighting over offsets has nothing to earn. It crosses
+  §9.9's twelve V1 checkpoints with the four cached Z₂ ensembles — **no
+  training**, forward passes only — and reads the degradation per seed, so
+  §9.9's 6.2× dispersion cancels instead of drowning the comparison. Two
+  columns, *raw* and *affine* (a two-parameter recalibration fitted at the new
+  coupling, given to both arms): the primary reading is the affine one, because
+  a GELT advantage that survives a recalibration is about **routing** and not
+  about amplitude, and their difference is the amplitude piece, which is M2's
+  fingerprint rather than M1's. Readings X-A…X-E are pre-registered in §4, the
+  falsification hands the programme back to `where_attention_can_win.md` §8,
+  and §6 names the confounds — regression to the mean first.
 - `notes/m1_probe_status.md` — **the plain-language orientation for the M1
   probe: read it before `m1_probe.md`.** What is being tested and why, the
   arms and targets in one table each, the findings so far, what is running,
@@ -495,6 +509,22 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   *and* whose val curve is still falling over its final quarter was cut off, and
   a sweep read on such runs picks the rate that converges fastest at that
   horizon rather than the best rate. Works for either group.
+- **`probe_transfer.py` / `probe_transfer_readings.py`** — attempt 5
+  (`notes/beta_transfer.md`). Evaluates trained probe checkpoints at a coupling
+  they never saw; **one β per invocation**, because `probe_common.BETA` is the
+  cache key and a second β in one process would be a second meaning for one
+  name. Checkpoints are found by **glob, not by a constructed stem** — the
+  learning rate is not in the stem and §9.9's campaign carries a run tag — and
+  two checkpoints for one (arm, seed) is a refusal with both candidates listed,
+  not a silent pick. Models are grouped by `(arch, transport)` so the transport
+  is built once per configuration instead of once per checkpoint. Its first
+  gate is the **anchor**: evaluated at the source coupling it must reproduce
+  each source dump's own `r2`, which is a different route to the same number
+  (R² is invariant under a common affine map of prediction and target), so a
+  mismatch means the splits, the mask or the targets have drifted since the
+  checkpoints were written. The reader refuses to print without it. Z₂ only —
+  SU(2)'s second ensemble is a second chain at one fixed β, which is not a
+  distribution shift.
 - **`z2_init_gate.py`** — the Z₂ arms' initialisation gate, forward-only on
   cached configurations at the production volume: does the matched L-CNN's field
   survive 4 layers at each `conv_init_scale`? It exists because the first value
@@ -734,6 +764,9 @@ PROBE_GROUP=z2 PROBE_ARM=gelt PROBE_TARGET=V1 python scripts/train_probe.py
 python scripts/z2_vortex_preflight.py        # the Z₂ vortex gate (offline, minutes)
 python scripts/z2_init_gate.py               # the Z₂ arms' init gate (forward-only)
 python scripts/probe_curves.py --group=z2    # did the runs converge? (offline)
+PROBE_GROUP=z2 PROBE_Z2_BETA=0.7520 python scripts/probe_transfer.py  # the anchor gate
+PROBE_GROUP=z2 PROBE_Z2_BETA=0.7450 python scripts/probe_transfer.py  # …and a transfer β
+python scripts/probe_transfer_readings.py --group=z2   # X-A…X-E (offline, seconds)
 PROBE_DRY_RUN=1 PROBE_PARTS=z-gate,z-sweep bash scripts/probe_batch.sh
 Z2V_SMOKE=1 python scripts/z2_vortex_preflight.py  # …off a fresh short chain
 PROFILE_DIAGNOSTICS=1 python scripts/profile_glueball_step.py
