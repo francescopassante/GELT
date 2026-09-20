@@ -929,6 +929,140 @@ that the task is not detection but comparison of extended objects, and a cluster
 size is not a local template — but that is an argument, and W-D is the
 measurement.
 
+### 9.9 The result — measured 2026-09-19/20, and it is negative for GELT
+
+**W-D is a tie and the dispersion reading is not.** The candidate is closed on
+§9.8's third branch, with one addition that branch did not anticipate.
+
+**What was run.** Not the 88-run `z-sweep` of `probe_batch.sh` — at the training
+configuration this took four rounds to find, that is tens of GPU-hours. A
+reduced grid at the primary coupling β = 0.7520 on V1: a learning-rate bracket
+per arm, then six initialisation seeds on the two arms W-D compares.
+
+**The training configuration, and why it is not a detail.** Every reading below
+is at **240 epochs, `--batch=1`**, and both numbers were found the hard way:
+
+- At 120 epochs no arm had converged; doubling to 240 moved every arm and
+  **flipped the sign of M1**, so the ranking at 120 was an artefact of the
+  budget. A cosine annealed to `T_max = EPOCHS` makes every horizon a different
+  experiment, so "still improving" is not comparable across horizons.
+- The binding constraint was not the horizon but the **number of gradient
+  steps**: 70 training configurations at `batch = 4` is *18 steps per epoch*.
+  `batch = 1` gives 70 at the same wall clock, and it changed every reading by
+  more than any rate did — `frozen` alone moved by 0.17.
+
+Neither was recorded anywhere until this run: the batch size and the L-CNN's
+`conv_init_scale` were absent from the dumps, the stems and the overwrite
+guard, so two runs that differed in them were indistinguishable in their
+artifacts. Both are recorded now. **This is the same silent-variation defect as
+three rates under one run tag, found twice more.**
+
+**Per-arm rates, all bracketed with an interior maximum** (an arm whose optimum
+sits at an edge of the grid is not measured, §9.6's own rule):
+
+| arm | 1e-4 | 3e-4 | 1e-3 | 3e-3 | 1e-2 | best |
+|---|---|---|---|---|---|---|
+| `gelt` | — | — | 0.549 | **0.609** | 0.219 | 3e-3 |
+| `lcnn` (ci 0.1) | 0.416 | **0.644** | 0.616 | diverged | — | 3e-4 |
+| `gelt_single` | — | — | **0.591** | 0.579 | NaN | 1e-3 |
+| `frozen` | — | — | **0.543** | 0.399 | collapsed | 1e-3 |
+
+The L-CNN's optimum is **an order of magnitude below GELT's**, which is why it
+had to be bracketed separately: running it at GELT's rate diverges, and reading
+that as a defeat would have been the straw man this repo has already had to
+audit once for the SU(2) claim.
+
+**W-A, the calibration gate — passed, in its health half.** `lcnn` on V2 reaches
+**R² = 0.9958** (lr 3e-4, ci 0.1) and 0.9923 at 1e-4. V2 is a convolution, i.e.
+the L-CNN's own primitive, so this says the arm is configured correctly and any
+V1 deficit against it is real rather than a broken baseline. The ΔR² half of
+W-A — `gelt` and `frozen` on V2 — **was not run**, so W-A is passed as a health
+check and not as the pre-registered comparison.
+
+**W-D, the thesis reading — a tie.** Six seeds per arm, each at its own best
+rate, same ensemble, same splits, same 20 held-out configurations:
+
+| seed | `gelt` | `lcnn` |
+|---|---|---|
+| 0 | 0.6090 | 0.6438 |
+| 1 | 0.5534 | (0.6023) |
+| 2 | 0.6116 | 0.6083 |
+| 3 | (0.5985) | 0.5897 |
+| 4 | 0.5821 | 0.6110 |
+| 5 | 0.2952 | 0.6313 |
+| **mean** | **0.5416** | **0.6144** |
+| **sd** | **0.1226** | **0.0198** |
+
+> **ΔR²(`gelt` − `lcnn`) = −0.073 ± 0.051 on V1, t = 1.4, p ≈ 0.21.**
+
+Not a difference. The single-seed reading that preceded it was −0.035 ± 0.009,
+apparently 3.7σ; six seeds put the seed-to-seed spread an order of magnitude
+above the jackknife error on any one of them, which is the M1 probe's closing
+recommendation (n = 6) earning itself again.
+
+**The bracketed entries are a stated repair, applied symmetrically.** One seed
+per arm returned an R² of −66.8 (`gelt`, seed 3) and −259.2 (`lcnn`, seed 1)
+with error bars the size of the value and healthy validation curves. The
+per-configuration decomposition (`scripts/probe_outliers.py`) says each is **one
+held-out configuration** — config 89 at −1205 for GELT, config 83 at −4730 for
+the L-CNN — with the other nineteen between 0.52 and 0.67. Different
+configurations for the two arms, so it is not a hard configuration in the
+ensemble; it is a rare initialisation × configuration interaction, it happens
+**once in six to both architectures**, and R²'s unbounded tail converts it into
+a number that swamps the statistic. The table uses each run's leave-one-out
+value; the raw means are −10.5 and −42.6 and are not informative about anything.
+
+**W-E, the classical gate — cleared by both.** Against §9.4's matched-depth bar
+at this coupling, the interval [0.404, 0.577] (BFS capped at 4 and 8 hops —
+a GELT layer aggregates over the radius-2 ball, so four layers trace up to ~8
+dual links), the L-CNN's mean 0.614 is above the 8-hop arm and GELT's best
+seeds are too. This is the one unambiguously positive statement the study makes:
+**both learned architectures beat the best bounded-reach classical algorithm on
+a physics observable**, which is what §5's pre-flight rule was built to test and
+what the topology attempt failed.
+
+**W-B and W-C, the mechanism decomposition — single seed, so directional only.**
+At each arm's own best rate: M1 = `gelt` − `frozen` = **+0.066 ± 0.010**,
+M3 = `gelt` − `gelt_single` = **+0.018 ± 0.013**. The softmax pays, on a physics
+observable, for the first time — and it pays less than the gap to the L-CNN, so
+it does not add up to an architecture win. With one seed each and a seed
+dispersion of 0.12 on `gelt`, neither survives as a number; both need the six
+seeds that W-D got.
+
+**The reading the design did not pre-register, and the one that is significant.**
+
+> **`gelt`'s spread over initialisations is 6.2× the L-CNN's** — sd 0.123
+> against 0.020, a variance ratio of F = 38 on (5,5) degrees of freedom,
+> **p < 0.002**. GELT falls below the matched-depth classical bar in 3 of 6
+> initialisations; the L-CNN in 0 of 6 (1 of 6 before the symmetric repair).
+
+§9.6 lists dispersion "as a count and not a test", following §1.2 point 7. Here
+it is the only thing that separates the arms at all, and it **reverses the sign
+of the one asymmetry that still favoured GELT**: `notes/lcnn_shootout.md` §9.2's
+robustness result on the SU(2) glueball task (0 of 14 GELT operators putting
+>1% of C(0) on a single configuration, against 3 of 9 for the L-CNN). On this
+task the fragile architecture is GELT. That claim now has to be stated as
+task-dependent wherever it appears — CLAUDE.md's "what attention buys"
+paragraph included — and not as a property of the architecture.
+
+**What this does and does not close.**
+
+Closed: W-D at β = 0.7520 on V1, and the dispersion reading. Four attempts, and
+the fourth lands on §9.8's third branch — *"the L-CNN learns connectivity as
+well as attention selects it"* — which that section already committed to
+treating as the thesis's answer rather than as a failure.
+
+Not run, and each is a real gap rather than a formality: the β = 0.7450
+replication; V2 for every arm but `lcnn` (so W-A's comparison half); six seeds
+for `frozen`, `frozen_matched`, `gelt_single` and `frozen_single` (so W-B and
+W-C as numbers); `frozen_single`, the 2 × 2's fourth cell, at all; and W-F, the
+frozen-at-initialisation null. The honest scope of the result is **one coupling,
+one target, two arms at six seeds** — and what makes it worth reporting at that
+scope is that the two arms are the two the thesis is about, both at their own
+measured optimum, both above the classical bar, and separated by nothing.
+
+---
+
 ---
 
 ## 10. Consequences for `PLANS.md`

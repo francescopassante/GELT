@@ -54,15 +54,28 @@ or "removed in the 2026-09-09 cleanup", that is where it went.
   M2 directly (§8). §5's pre-flight rule is the cheap gate that stopped topology for
   ~4 h instead of ~60–100: **measure the best classical method at the
   architecture's own reach before building any training code.**
-  **§9 (2026-09-18) is attempt 4, proposed and pre-flighted, not built**: vortex-
-  cluster geometry in 3D Z₂ on the cached ensembles, the first candidate that is
-  a physics observable and clears all four criteria. **The pre-flight passes all
+  **§9 is attempt 4, and it is RUN and CLOSED (§9.9, 2026-09-20): a tie.**
+  Vortex-cluster geometry in 3D Z₂ on the cached ensembles, the first
+  candidate that is a physics observable and clears all four criteria.
+  **ΔR²(GELT − L-CNN) = −0.073 ± 0.051 on V1 at β = 0.7520** (six seeds
+  each, every arm at its own bracketed learning rate, 240 epochs,
+  batch = 1) — no difference, t = 1.4. Both architectures clear the
+  matched-depth classical bar [0.404, 0.577], which is the study's one
+  unambiguously positive statement. **The significant reading is
+  dispersion, and it goes the other way**: GELT's spread over
+  initialisations is 6.2× the L-CNN's (sd 0.123 vs 0.020, F = 38 on
+  (5,5) df, p < 0.002), below the classical bar in 3 of 6 seeds against
+  0 of 6 — see the robustness caveat under the L-CNN heading below.
+  M1 (`gelt` − `frozen`) = +0.066 and M3 (`gelt` − `gelt_single`) =
+  +0.018 at one seed, directional only. **The pre-flight passes all
   five gates on all four cached ensembles** (2026-09-18;
   `scripts/z2_vortex_preflight.py`, `gelt/vortex_targets.py`,
   `tests/test_vortex_targets.py`). At the chosen primary coupling β = 0.7520 the
   best linear filter at Manhattan 8 reaches R² = 0.152 against 0.671 for the
-  best *local* classical algorithm and 1.0 for the target, so the difficulty is
-  routing, not density. **The β ladder is fixed in §9.6: primary 0.7520,
+  best *local* classical algorithm at **uncapped** BFS depth and 1.0 for the
+  target, so the difficulty is routing, not density. 0.671 is **not** the bar
+  a 4-layer network is asked to clear — that is the matched-depth interval
+  [0.404, 0.577], the same BFS capped at 4 and 8 hops (§9.4). **The β ladder is fixed in §9.6: primary 0.7520,
   replication 0.7450** — the two that rank first and second on headroom, on a
   low linear ceiling and on a balanced cluster competition. Note the tension
   §9.4 records: the linear ceiling *rises* towards β_c (0.106 → 0.280), so the
@@ -161,7 +174,11 @@ attention artefact — and what attention buys has to be said precisely: the
 within-layer L1-ball reach, an attention field that is itself a measurable
 operator, 3.9× the step cost, and **robustness** — 3 of 9 L-CNN operators put
 36–98% of C(0) on a single configuration where 0 of 14 GELT ones exceed 1.0%
-(`notes/lcnn_shootout.md` §9–§9.2).
+(`notes/lcnn_shootout.md` §9–§9.2). **The robustness claim is
+task-dependent, not architectural** — on the Z₂ vortex task it reverses,
+GELT being 6.2× more dispersed over initialisations than the L-CNN
+(`notes/where_attention_can_win.md` §9.9). Say "on the SU(2) glueball
+task" wherever this is quoted.
 
 **The two audits.** (i) *Is the classical comparator a straw man?* Against the
 input-matched strengthened arm (`deep`), the spectroscopy claim survives:
@@ -755,12 +772,15 @@ Ranked in `notes/audit_2026-09-06.md` §4, and unchanged by the cleanup:
    measure the best classical method at the architecture's own reach.** §8
    proposes the one experiment aimed at the mechanism that *has* been observed
    (boundedness, 0-of-14 vs 3-of-9), which costs a dozen short runs on data
-   already on disk. **§9 is attempt 4** — vortex-cluster geometry in 3D Z₂,
-   proposed and pre-flighted 2026-09-18, with pre-registered readings W-A…W-F.
-   The supervision, the gate and their tests exist; **what it needs next is
-   `python scripts/z2_vortex_preflight.py` on the four cached ensembles** (no
-   GPU, minutes) to fix the β ladder, and then the `PROBE_GROUP=z2` switch
-   inside `probe_common.py` — never a sibling module, or the arms drift.
+   already on disk. ~~**§9 is attempt 4**~~ — vortex-cluster geometry in 3D Z₂,
+   **run and closed 2026-09-20 on a tie** (§9.9): ΔR²(GELT − L-CNN) =
+   −0.073 ± 0.051 on V1 at β = 0.7520, six seeds each at bracketed per-arm
+   rates, both architectures above the matched-depth classical bar, and the
+   only significant separation is **dispersion, 6.2× against GELT**. What is
+   *not* run and is the cheap way to finish it: the β = 0.7450 replication,
+   V2 for every arm but `lcnn` (W-A's comparison half), and six seeds for
+   `frozen` / `gelt_single` / `frozen_single`, which would turn M1 = +0.066
+   and M3 = +0.018 from directions into numbers.
 7. ~~Run the M1 probe~~ — **done and complete** 2026-09-16, 132 runs, and it is
    the first of three attempts in which M1 was measured to pay
    (`notes/m1_probe.md` §0). Three cheap follow-ups, none needing new data:
