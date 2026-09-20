@@ -116,8 +116,8 @@ def main():
     print("'tail' is the relative fall of val over the last quarter; a run whose")
     print("best epoch is its last AND whose tail is still falling was cut off.")
     print("=" * 100)
-    print(f"{'arm':16s} {'tgt':4s} {'lr':>7s} {'b':>2s} {'ep':>3s} {'best':>4s} "
-          f"{'val':>9s} {'R²':>8s} {'±':>6s} {'tail':>7s}  curve")
+    print(f"{'arm':16s} {'tgt':4s} {'lr':>7s} {'b':>2s} {'sd':>2s} {'ep':>3s} "
+          f"{'best':>4s} {'val':>9s} {'R²':>8s} {'±':>6s} {'tail':>7s}  curve")
 
     cut, rows = [], []
     for path in paths:
@@ -150,7 +150,8 @@ def main():
         batch = d.get("batch")
         print(f"{d.get('arm', '?'):16s} {d.get('target', '?'):4s} "
               f"{d.get('lr', float('nan')):7.1e} "
-              f"{(str(batch) if batch else '?'):>2s} {n:3d} {best:4d} "
+              f"{(str(batch) if batch else '?'):>2s} "
+              f"{d.get('init_seed', -1):2d} {n:3d} {best:4d} "
               f"{(val[-1] if val else float('nan')):9.4f} "
               f"{r2:+8.4f} {err:6.4f} {gain:+7.1%}  "
               f"{sparkline(val)}  " + "  ".join(flags))
