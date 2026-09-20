@@ -67,7 +67,9 @@ or "removed in the 2026-09-09 cleanup", that is where it went.
   (5,5) df, p < 0.002), below the classical bar in 3 of 6 seeds against
   0 of 6 — see the robustness caveat under the L-CNN heading below.
   M1 (`gelt` − `frozen`) = +0.066 and M3 (`gelt` − `gelt_single`) =
-  +0.018 at one seed, directional only. **The pre-flight passes all
+  +0.018 at one seed, directional only. The verbatim readings for every
+  run are tracked at `notes/z2_vortex_readout_2026-09-20.txt`, because
+  the dumps they come from are gitignored and live only on the V100. **The pre-flight passes all
   five gates on all four cached ensembles** (2026-09-18;
   `scripts/z2_vortex_preflight.py`, `gelt/vortex_targets.py`,
   `tests/test_vortex_targets.py`). At the chosen primary coupling β = 0.7520 the
