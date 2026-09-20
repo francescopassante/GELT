@@ -1061,6 +1061,16 @@ seeds that W-D got.
 > **p < 0.002**. GELT falls below the matched-depth classical bar in 3 of 6
 > initialisations; the L-CNN in 0 of 6 (1 of 6 before the symmetric repair).
 
+> **Qualified 2026-09-20 by attempt 5** (`notes/beta_transfer.md` §9.1): this
+> holds **at the coupling both arms were trained on, and one β away it is
+> gone** — 1.5× at 0.7450, 1.3× at 0.7560 (the other way), 1.0× at 0.7585.
+> GELT's spread is roughly unchanged across all four; the L-CNN's is *created
+> by the shift*, rising 17× at 0.7560. So the 6.2× is not "GELT is the
+> dispersed architecture on the Z₂ vortex task" — it is "GELT is the dispersed
+> architecture **in distribution**, and the ordering does not survive leaving
+> it." Every quotation of it needs the coupling named, exactly as the paragraph
+> below asks for the task to be named.
+
 §9.6 lists dispersion "as a count and not a test", following §1.2 point 7. Here
 it is the only thing that separates the arms at all, and it **reverses the sign
 of the one asymmetry that still favoured GELT**: `notes/lcnn_shootout.md` §9.2's

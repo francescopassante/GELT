@@ -372,8 +372,25 @@ configuration):
 | **L-CNN untrained, seed 0, ens0** | **35.9%** | 1.2 × 10⁶ |
 | **L-CNN untrained, seed 0, ens1** | **97.9%** | 3.2 × 10⁶ |
 
-0 of 14 GELT operators, 3 of 9 L-CNN ones. That is not bad luck with a seed, it
-is the architecture: an L-CB stack is a raw matrix polynomial in the plaquettes —
+0 of 14 GELT operators, 3 of 9 L-CNN ones.
+
+> **"It is the architecture" has been qualified twice since, and both
+> qualifications are measurements** (added 2026-09-20). First,
+> `notes/where_attention_can_win.md` §9.9: on the 3D Z₂ vortex task the
+> ordering **reverses** — GELT is 6.2× the more dispersed arm. Second,
+> `notes/beta_transfer.md` §9.1: that reversal itself holds only at the
+> coupling both arms were trained on, and one β away the ratio is 1.5 / 1.3 /
+> 1.0. What survives all three measurements is narrower and still worth having:
+> **a failure-rate asymmetry that appears in the predicted direction whenever
+> the input distribution is stressed** — here, in `m1_probe.md` §0 (all six
+> GELT runs above R² 0.81, three of six L-CNN below 0.25), and in
+> `beta_transfer.md` §9.2 (1 of 6 seeds against 3 of 6 under coupling
+> transfer, Fisher p = 0.545). Three directional observations, none
+> significant on its own, is what `where_attention_can_win.md` §8 exists to
+> turn into one measurement. Read the sentence below as the *mechanism* being
+> proposed, not as a result it has earned.
+
+The mechanism: an L-CB stack is a raw matrix polynomial in the plaquettes —
 degree ≤ 16 after four layers — aggregated by L-Conv with unbounded weights, so a
 configuration in the tail of the input distribution is amplified without limit.
 GEMHSA aggregates over its neighbourhood with a **softmax**: a convex combination
