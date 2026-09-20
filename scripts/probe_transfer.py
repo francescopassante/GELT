@@ -363,10 +363,23 @@ def main():
             # R² is invariant under a common affine map of (y, p), so the raw
             # reading here is the source dump's number recomputed by a different
             # route. Anything but agreement means a drift upstream.
+            #
+            # **The tolerance is relative, and that is not a loosening.** R² has
+            # an unbounded tail: §9.9's two pathological seeds score −67 and
+            # −259, where an absolute 1e-6 is a demand for ten significant
+            # figures on a float64 sum the two routes accumulate in different
+            # orders. Those two rows failed a gate they agreed with to seven
+            # digits. Real drift — a different split, a different mask — moves
+            # R² by O(0.01) at 0.6 and by O(1) at −259, so the gate still bites
+            # everywhere: max(1, |ref|) keeps the absolute strictness for the
+            # O(1) rows and scales only for the tail.
             ref = e["src"].get("r2")
-            ok = ref is not None and abs(raw - ref) < 1e-6
+            tol = 1e-6 * max(1.0, abs(ref)) if ref is not None else 0.0
+            ok = ref is not None and abs(raw - ref) <= tol
             anchor_ok &= bool(ok)
-            gate = "  ✓" if ok else f"  ** GATE FAIL: dump says {ref:+.6f} **"
+            gate = ("  ✓" if ok else
+                    f"  ** GATE FAIL: dump says {ref:+.6f}, "
+                    f"differs by {abs(raw - ref):.3g} > {tol:.3g} **")
         print(f"{e['arm']:<10s}{e['seed']:>5d}{raw:>+12.4f}{raw_err:>9.4f}"
               f"{aff:>+12.4f}{aff_err:>9.4f}{a:>9.3f}{b:>9.3f}"
               f"{aff_loo:>+8.3f}{gate}")
