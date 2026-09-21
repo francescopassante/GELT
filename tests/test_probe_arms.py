@@ -74,7 +74,9 @@ def test_every_arm_has_a_zero_initialised_readout():
 
     for name in pc.available_arms():
         model, arch = pc.build_arm(name, grad_checkpoint=False)
-        last = model.head_fc2 if arch == "lcnn" else model.mlp.fc2
+        last = (
+            model.head_fc2 if arch in ("lcnn", "lcnn_ref") else model.mlp.fc2
+        )
         assert torch.count_nonzero(last.weight) == 0, name
         assert torch.count_nonzero(last.bias) == 0, name
 

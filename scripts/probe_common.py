@@ -49,6 +49,7 @@ from gelt import probe_targets, vortex_targets
 from gelt.blocks import GELT
 from gelt.lattice import SU, Z2, build_transport_average, plaquette_tensor
 from gelt.lcnn import LCNN, build_axis_transports
+from gelt.lcnn_reference import LCNNRef
 from gelt.probe_targets import BALL_RADIUS, action_density
 
 
@@ -179,6 +180,18 @@ JACK_BLOCK = env_int("PROBE_JACK_BLOCK", 5)  # blocked jackknife, in configs
 # 8³ box, which is not a proxy for a 54× larger one. Run the gate, not the
 # small box (notes/where_attention_can_win.md §9.5.1).
 Z2_LCNN_CONV_INIT = env_float("PROBE_Z2_LCNN_CONV_INIT", 0.2)
+# The same knob for the authors' implementation. **Not yet gated** — 1.0 is
+# their own default and is here so the arm is constructible; z2_init_gate.py
+# must measure it at the production volume before a Z₂ run, exactly as it did
+# for ours (where the first value, chosen on an 8³ box, was falsified).
+Z2_LCNN_REF_INIT_W = env_float("PROBE_Z2_LCNN_REF_INIT_W", 1.0)
+
+# Per-layer channels for the reference arm, per group, chosen to land inside
+# DOF_TOLERANCE of GELT's own count (SU(2) 16461 / 15405 = 1.069, Z₂
+# 8661 / 8253 = 1.049). Recompute with gelt.lcnn_reference.reference_dof_count
+# if LAYERS, LCNN_K, MLP_HIDDEN or the input width ever change — the match is
+# the whole basis for reading a ΔR² against this arm as architecture.
+LCNN_REF_CHANNELS = {"su2": [5, 4, 4, 4], "z2": [4, 3, 3, 3]}
 
 R = 2  # GELT's per-layer L1-ball radius
 LAYERS = 4  # both architectures
@@ -386,7 +399,13 @@ def probe_inputs(U3_batch, arch, device, transport="average"):
     """
     U = U3_batch.to(device)
     W = plaquette_tensor(U, gaugegroup)  # (b, 3, L,L,L, nc,nc)
-    if arch == "lcnn":
+    if arch == "lcnn_ref":
+        # The authors' LConvBilin transports its own field one step at a time
+        # inside the layer, so there is nothing to precompute: the second slot
+        # carries the raw links. LCNNRef.forward refuses an axis-transport
+        # tensor rather than flattening it into the channel axis.
+        T = U
+    elif arch == "lcnn":
         T = build_axis_transports(U, LCNN_K, gaugegroup)
     else:
         T = build_transport_average(U, R, gaugegroup, mode=transport)
@@ -404,6 +423,16 @@ ARMS = {
     "frozen_matched": dict(arch="gelt", alpha_mode="frozen", d_model=16, d_qkv=10),
     "lcnn": dict(arch="lcnn", c_hidden=6, normalize_shifts=False),
     "lcnn_norm": dict(arch="lcnn", c_hidden=6, normalize_shifts=True),
+    # The authors' own implementation (gelt/lcnn_reference.py), not ours. Their
+    # merged bilinear kernel is quadratic in the input width — (2c+1)·(26c+1)
+    # per output channel at D = 3, K = 2 — so the *first* layer carries most of
+    # the budget and a single uniform width steps over the tolerance band in one
+    # hop (SU(2): 4 → 0.90, 5 → 1.61; Z₂ has no integer inside it at all, since
+    # GELT's own count halves at nc = 1 while theirs, whose weights are real,
+    # does not). Widening only layer 1 is the fine adjustment, and a per-layer
+    # channel list is their own idiom — `conv_ch` in their models. The two
+    # widths are set in LCNN_REF_CHANNELS above.
+    "lcnn_ref": dict(arch="lcnn_ref"),
     # The two signed arms (notes/m1_probe.md §8). Identical geometry and
     # therefore identical parameter count to `gelt` — they are one nonlinearity
     # removed, so "matched-parameter" is not an argument that has to be made for
@@ -475,10 +504,23 @@ def build_arm(name, seed=0, grad_checkpoint=True):
         mlp_hidden=MLP_HIDDEN, mlp_out=1, reduction="none", in_channels=3,
         grad_checkpoint=grad_checkpoint,
     )
-    if arch == "lcnn":
-        if IS_Z2:
-            spec.setdefault("conv_init_scale", Z2_LCNN_CONV_INIT)
-        model = LCNN(K=LCNN_K, n_layers=LAYERS, gate="softplus", **spec, **common)
+    if arch in ("lcnn", "lcnn_ref"):
+        if arch == "lcnn_ref":
+            # init_w is their init-scale knob, the analogue of our
+            # conv_init_scale. An L-CB stack is a matrix polynomial of degree
+            # 2^LAYERS whatever implements it, so the Z₂ cliff of
+            # notes/where_attention_can_win.md §9.5 exists here too — but their
+            # parametrisation is not ours, so the 0.2 measured for ours carries
+            # no information about this one and scripts/z2_init_gate.py has to
+            # measure it again before any Z₂ run.
+            if IS_Z2:
+                spec.setdefault("init_w", Z2_LCNN_REF_INIT_W)
+            spec.setdefault("c_hidden", LCNN_REF_CHANNELS[GROUP])
+            model = LCNNRef(K=LCNN_K, n_layers=LAYERS, **spec, **common)
+        else:
+            if IS_Z2:
+                spec.setdefault("conv_init_scale", Z2_LCNN_CONV_INIT)
+            model = LCNN(K=LCNN_K, n_layers=LAYERS, gate="softplus", **spec, **common)
         with torch.no_grad():
             model.head_fc2.weight.zero_()
             model.head_fc2.bias.zero_()

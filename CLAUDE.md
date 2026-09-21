@@ -66,6 +66,11 @@ or "removed in the 2026-09-09 cleanup", that is where it went.
   initialisations is 6.2× the L-CNN's (sd 0.123 vs 0.020, F = 38 on
   (5,5) df, p < 0.002), below the classical bar in 3 of 6 seeds against
   0 of 6 — see the robustness caveat under the L-CNN heading below.
+  **Qualified by attempt 5** (`notes/beta_transfer.md` §9.1): that holds
+  *in distribution only* — at the three other cached couplings the ratio
+  is 1.5× / 1.3× / 1.0×, GELT's spread barely moving and the L-CNN's
+  created by the shift (17× at β = 0.7560). Quote it with the coupling
+  named, not just the task.
   M1 (`gelt` − `frozen`) = +0.066 and M3 (`gelt` − `gelt_single`) =
   +0.018 at one seed, directional only. The verbatim readings for every
   run are tracked at `notes/z2_vortex_readout_2026-09-20.txt`, because
@@ -209,7 +214,18 @@ operator, 3.9× the step cost, and **robustness** — 3 of 9 L-CNN operators put
 task-dependent, not architectural** — on the Z₂ vortex task it reverses,
 GELT being 6.2× more dispersed over initialisations than the L-CNN
 (`notes/where_attention_can_win.md` §9.9). Say "on the SU(2) glueball
-task" wherever this is quoted.
+task" wherever this is quoted. **And the reversal is itself
+coupling-dependent** (`notes/beta_transfer.md` §9.1, 2026-09-20): one β
+away from the training coupling the ratio is 1.5× / 1.3× / 1.0×, so the
+Z₂ result is "GELT is the dispersed arm *in distribution*", not "on this
+task". What survives all three measurements is narrower than either
+sentence: a **failure-rate** asymmetry in the predicted direction
+whenever the input distribution is stressed — 0-of-14 vs 3-of-9 (SU(2)),
+6-of-6 vs 3-of-6 (`m1_probe.md` §0), 1-of-6 vs 3-of-6 seeds under
+coupling transfer (Fisher p = 0.545) — directional three times,
+significant none. `where_attention_can_win.md` §8 is the experiment that
+would turn it into one measurement, and attempt 5 has now validated its
+third stressor.
 
 **The two audits.** (i) *Is the classical comparator a straw man?* Against the
 input-matched strengthened arm (`deep`), the spectroscopy claim survives:
@@ -399,6 +415,24 @@ implementation (MIT, Favoni et al. 2012.12901), layer sources only, tracked so
   the way a softmax does while the per-channel magnitude stays free — the M2
   control arm of `notes/m1_probe.md` (R-D). It is the identity at
   initialisation, so the arm starts from the reference distribution.
+- **`lcnn_reference.py`** — **the authors' own L-CNN**, not ours: their
+  `LConvBilin` + `LActPoly` loaded verbatim out of `lge-cnn-master/` and wrapped
+  so `LCNNRef` presents `gelt.lcnn.LCNN`'s I/O. Selected as `lcnn_ref` in
+  `probe_common.ARMS` and as `GLUEBALL_ARCH=lcnn_ref`. Design record and the
+  pre-registered readings: `notes/lcnn_reference_switch.md`. Three things it
+  exists to get right: **their `kernel_size` is our `K + 1`** (their range is
+  `[-(k-1), k-1]`, so passing K would halve the baseline's receptive field per
+  layer with every other check still passing); their layout is
+  `[B, N^D, N_C, nc, nc, 2]` with the links packed into the field tensor; and
+  their layers are complex throughout, so a Z₂ arm is promoted and costs 2× the
+  memory. `forward(W, U)` takes **raw links** — their block transports
+  internally — and refuses an axis-transport tensor. `reference_dof_count`
+  gives the parameter count from their shapes without building the model,
+  because their kernel is quadratic in the input width and the matched width is
+  therefore *not* ours (a per-layer channel list, their own `conv_ch` idiom).
+  **Measured**: our `LCB` reproduces their kernel exactly (1.9e-15) once the
+  L-Conv width reaches `2·c_in·(1+2DK)`, so ours is a low-rank member of their
+  family — and the production widths are 8% and 1.6% of that.
 - **`cnn_baseline.py`** — `LatticeCNN`: non-equivariant baseline; `Conv2d`/
   `Conv3d` for D=2/3 and a roll-based `_RollConvND` for D≥4.
 
@@ -608,6 +642,14 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   (1e-12, complex128), the **support of a layer** — that the kernel reaches
   `x − k·μ̂` as well as `x + k·μ̂` — and `normalize_shifts`: the identity at
   init, L1-bounded over offsets after any update, equivariance untouched.
+- **`test_lcnn_reference.py`** — the authors' L-CNN as an arm: the layout
+  round-trip bit-exact both ways *and* against their own `shift`; gauge
+  invariance of the per-site readout (SU(2) complex128, Z₂ float64, stacked
+  multi-level inputs); the `kernel_size = K + 1` convention and the support of
+  one layer as integer set arithmetic; the parameter formula against the built
+  model; checkpoint exactness; and the constructive reduction of their merged
+  kernel to our L-Conv + L-Bilin, with the two bases matched numerically rather
+  than by re-implementing their shift ordering.
 - **`test_probe_targets.py`** — the M1 probe's premise: `f` is gauge invariant
   (SU(2), Z₂) and non-negative; the shell sums and the ball max against a
   brute-force enumeration of `[-R,R]^D` filtered by the L1 norm (independent of
@@ -761,6 +803,8 @@ python scripts/fit_glueball_overlap.py [dump]      # cosh fits + A₀ (offline)
 bash   scripts/overnight_replication.sh      # fresh ensemble + retraining (~24 h)
 bash   scripts/curve_batch.sh                # the curve's random trace + 3 trainings
 GLUEBALL_ARCH=lcnn python scripts/train_glueball.py  # the matched-parameter L-CNN
+GLUEBALL_ARCH=lcnn_ref python scripts/train_glueball.py  # ...the authors' own
+Z2GATE_ARM=lcnn_ref python scripts/z2_init_gate.py   # their init_w, at production volume
 LCNN_DRY_RUN=1 bash scripts/lcnn_shootout.sh # the L-CNN batch: what would run
 python scripts/bench_lcnn_reference.py       # our L-CNN block vs lge-cnn's
 python scripts/operator_decomposition.py     # O = P + r (offline, seconds)
@@ -826,7 +870,16 @@ Ranked in `notes/audit_2026-09-06.md` §4, and unchanged by the cleanup:
    **run and closed 2026-09-20 on a tie** (§9.9): ΔR²(GELT − L-CNN) =
    −0.073 ± 0.051 on V1 at β = 0.7520, six seeds each at bracketed per-arm
    rates, both architectures above the matched-depth classical bar, and the
-   only significant separation is **dispersion, 6.2× against GELT**. What is
+   only significant separation is **dispersion, 6.2× against GELT** — which
+   **attempt 5 has since shown to be a property of the training coupling**
+   (`notes/beta_transfer.md` §9.1: 1.5× / 1.3× / 1.0× at the other three).
+   ~~**Attempt 5**~~ — β-transfer of these same frozen checkpoints — is
+   **run and closed 2026-09-20 on a null** (§9): X-B favours GELT at 3 of 3
+   couplings and at p ≥ 0.24, so the claim is not made, and the falsification
+   clause hands the programme to §8, whose third stressor attempt 5 has
+   incidentally validated. Note that the β = 0.7450 **replication** below
+   means a *retrain* there and is still not run — attempt 5 only evaluated
+   0.7520-trained nets at that coupling. What is
    *not* run and is the cheap way to finish it: the β = 0.7450 replication,
    V2 for every arm but `lcnn` (W-A's comparison half), and six seeds for
    `frozen` / `gelt_single` / `frozen_single`, which would turn M1 = +0.066

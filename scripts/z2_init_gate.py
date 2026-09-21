@@ -33,6 +33,11 @@ so its field is the control that says the box is not the problem.
     python scripts/z2_init_gate.py
 
 Environment overrides (each also ``--name=value`` in argv):
+    Z2GATE_ARM       which implementation to gate: ``lcnn`` (ours, the
+                     default) or ``lcnn_ref`` (the authors'). They carry
+                     different knobs — conv_init_scale and init_w — written
+                     against different fan-ins, so a value measured for one
+                     says nothing about the other.
     Z2GATE_BETAS     couplings to check; default §9.6's two chosen ones.
     Z2GATE_SCALES    L-Conv init scales; must contain the arms' configured
                      value or the gate refuses to run (it would pass vacuously).
@@ -42,7 +47,7 @@ Environment overrides (each also ``--name=value`` in argv):
                      (default 10.0 — the SU(2) reference is 0.05 … 0.19, so
                      this is two decades of slack, not a tight bound).
 
-Writes ``results/z2_vortex/init_gate.pt``. Exit status is 1 if the scale the
+Writes ``results/z2_vortex/init_gate_<arm>.pt``. Exit status is 1 if the scale the
 arms are configured with fails, so a batch can stop on it.
 """
 
@@ -63,6 +68,7 @@ from probe_common import (  # noqa: E402
     LATTICE,
     LAYERS,
     Z2_LCNN_CONV_INIT,
+    Z2_LCNN_REF_INIT_W,
     arm_transport,
     build_arm,
     cache_path,
@@ -76,7 +82,23 @@ from probe_common import (  # noqa: E402
 import probe_common as pc  # noqa: E402
 
 BETAS = [float(b) for b in env_str("Z2GATE_BETAS", "0.7520,0.7450").split(",")]
-SCALES = [float(x) for x in env_str("Z2GATE_SCALES", "0.1,0.2,0.3,0.5").split(",")]
+
+# Which implementation's initialisation is being gated. The two are *different
+# parametrisations of the same layer family* — ours factors the bilinear kernel
+# through L-Conv's c_out, theirs carries it whole — and their init variances are
+# written against different fan-ins, so the 0.2 measured for ours says nothing
+# about theirs. Each carries its own knob and its own grid.
+ARM = env_str("Z2GATE_ARM", "lcnn")
+if ARM not in ("lcnn", "lcnn_ref"):
+    raise SystemExit(f"Z2GATE_ARM must be 'lcnn' or 'lcnn_ref' (got {ARM!r})")
+_IS_REF = ARM == "lcnn_ref"
+_SCALE_KNOB = "init_w" if _IS_REF else "conv_init_scale"
+_SCALE_ENV = (
+    "PROBE_Z2_LCNN_REF_INIT_W" if _IS_REF else "PROBE_Z2_LCNN_CONV_INIT"
+)
+_CONFIGURED = Z2_LCNN_REF_INIT_W if _IS_REF else Z2_LCNN_CONV_INIT
+_DEFAULT_SCALES = "0.2,0.5,1.0,1.5" if _IS_REF else "0.1,0.2,0.3,0.5"
+SCALES = [float(x) for x in env_str("Z2GATE_SCALES", _DEFAULT_SCALES).split(",")]
 SEEDS = env_int("Z2GATE_SEEDS", 3)
 N_CONFIGS = env_int("Z2GATE_CONFIGS", 3)
 GATE_MAX = env_float("Z2GATE_MAX", 10.0)
@@ -114,6 +136,28 @@ def lcnn_layer_profile(model, W, T):
     return prof, out.abs().max().item()
 
 
+def lcnn_ref_layer_profile(model, W, U):
+    """The same walk through the authors' stack, in their layout.
+
+    Their block keeps the links and the field in one tensor and transports
+    internally, so the walk unpacks the field after each layer rather than
+    threading a separate transport. The magnitude is the complex modulus, not
+    the max over the split re/im components.
+    """
+    from gelt.lcnn_reference import reference_layers, to_ref_layout
+
+    ref = reference_layers()
+    prof = []
+    with torch.no_grad():
+        x = ref.repack_x(to_ref_layout(U), to_ref_layout(W))
+        for conv, act in zip(model.convs, model.acts):
+            x = act(conv(x))
+            w = ref.unpack_x(x, len(model.dims))[1]
+            prof.append(torch.view_as_complex(w.contiguous()).abs().max().item())
+        out = model(W, U)
+    return prof, out.abs().max().item()
+
+
 def gelt_layer_profile(model, W, T):
     """The same walk for GELT — the control that says the box is not at fault."""
     prof = []
@@ -136,16 +180,17 @@ def main():
     print("=" * 78)
     print(f"device: {dev} | lattice {LATTICE} ({LATTICE[0] * LATTICE[1] * LATTICE[2]} "
           f"sites) | {LAYERS} layers | {N_CONFIGS} configs × {SEEDS} seeds")
-    print(f"the arms are configured with conv_init_scale = {Z2_LCNN_CONV_INIT}")
+    print(f"arm: {ARM}  ({'the authors' + chr(39) + ' implementation' if _IS_REF else 'our implementation'})")
+    print(f"the arms are configured with {_SCALE_KNOB} = {_CONFIGURED}")
     print(f"gate: the field entering the head must stay below {GATE_MAX}")
 
-    if Z2_LCNN_CONV_INIT not in SCALES:
+    if _CONFIGURED not in SCALES:
         # Otherwise the verdict below is vacuous: it would report PASS having
         # never tested the scale the arms actually use.
         raise SystemExit(
-            f"the arms' conv_init_scale ({Z2_LCNN_CONV_INIT}) is not in "
+            f"the {ARM} arm's {_SCALE_KNOB} ({_CONFIGURED}) is not in "
             f"Z2GATE_SCALES ({SCALES}) — this gate exists to test *that* value, "
-            f"so add it to the grid or point PROBE_Z2_LCNN_CONV_INIT at one of "
+            f"so add it to the grid or point {_SCALE_ENV} at one of "
             f"the scales being scanned."
         )
 
@@ -171,17 +216,24 @@ def main():
         del W, T
 
         for scale in SCALES:
-            os.environ["PROBE_Z2_LCNN_CONV_INIT"] = str(scale)
-            pc.Z2_LCNN_CONV_INIT = scale
+            os.environ[_SCALE_ENV] = str(scale)
+            if _IS_REF:
+                pc.Z2_LCNN_REF_INIT_W = scale
+            else:
+                pc.Z2_LCNN_CONV_INIT = scale
             for seed in range(SEEDS):
-                model, arch = build_arm("lcnn", seed=seed, grad_checkpoint=False)
+                model, arch = build_arm(ARM, seed=seed, grad_checkpoint=False)
                 model = model.to(dev)
                 for c in range(N_CONFIGS):
                     W, T = probe_inputs(configs[c : c + 1], arch, dev,
-                                        transport=arm_transport("lcnn"))
-                    prof, out = lcnn_layer_profile(model, W, T)
+                                        transport=arm_transport(ARM))
+                    prof, out = (
+                        lcnn_ref_layer_profile(model, W, T) if _IS_REF
+                        else lcnn_layer_profile(model, W, T)
+                    )
                     finite = all(torch.isfinite(torch.tensor(v)) for v in prof)
-                    rows.append(dict(beta=beta, scale=scale, seed=seed, config=c,
+                    rows.append(dict(arm=ARM, beta=beta, scale=scale,
+                                     seed=seed, config=c,
                                      profile=prof, out=out, finite=finite))
                     key = (beta, scale)
                     worst[key] = max(worst.get(key, 0.0),
@@ -197,30 +249,33 @@ def main():
     ok_configured = True
     for (beta, scale), v in sorted(worst.items()):
         passed = v < GATE_MAX
-        if scale == Z2_LCNN_CONV_INIT and not passed:
+        if scale == _CONFIGURED and not passed:
             ok_configured = False
         print(f"{beta:8.4f} {scale:7.2f} {v:34.4g}   "
               f"{'PASS' if passed else '** FAIL **'}"
-              + ("   ← the arms' setting" if scale == Z2_LCNN_CONV_INIT else ""))
+              + ("   ← the arms' setting" if scale == _CONFIGURED else ""))
 
     os.makedirs("results/z2_vortex", exist_ok=True)
-    out = "results/z2_vortex/init_gate.pt"
+    # Per arm: the two implementations' gates are different measurements and
+    # must not overwrite each other.
+    out = f"results/z2_vortex/init_gate_{ARM}.pt"
     torch.save({"rows": rows, "worst": {f"{b}_{s}": v for (b, s), v in worst.items()},
-                "configured": Z2_LCNN_CONV_INIT, "gate_max": GATE_MAX,
+                "arm": ARM, "knob": _SCALE_KNOB,
+                "configured": _CONFIGURED, "gate_max": GATE_MAX,
                 "betas": BETAS, "scales": SCALES, "seeds": SEEDS,
                 "n_configs": N_CONFIGS, "lattice": LATTICE}, out)
     print(f"\nwrote {out}")
 
     if ok_configured:
-        print(f"\nVERDICT: conv_init_scale = {Z2_LCNN_CONV_INIT} holds at the "
+        print(f"\nVERDICT: {ARM} {_SCALE_KNOB} = {_CONFIGURED} holds at the "
               f"production volume — the sweep may run.")
         return 0
     survivors = sorted({s for (b, s), v in worst.items() if v < GATE_MAX})
-    print(f"\nVERDICT: conv_init_scale = {Z2_LCNN_CONV_INIT} FAILS at the "
+    print(f"\nVERDICT: {ARM} {_SCALE_KNOB} = {_CONFIGURED} FAILS at the "
           f"production volume. 8³ was not a proxy for 48 × 24 × 24, and §9.5.1 "
           f"has to be re-stated.\n"
           + (f"  Scales that survive here: {survivors} — set "
-             f"PROBE_Z2_LCNN_CONV_INIT and re-run before anything trains."
+             f"{_SCALE_ENV} and re-run before anything trains."
              if survivors else
              "  No scale in the grid survives. Widen Z2GATE_SCALES downward "
              "before concluding the arm is unusable."))

@@ -44,30 +44,57 @@
 #   LCNN_PARTS=0,1     profile + sweep (the default)
 #   LCNN_PARTS=2,3     the trainings and the untrained control
 #   LCNN_LR=1e-3 LCNN_INIT=1.0   the settings part 2 uses (defaults below)
+#
+# LCNN_ARCH picks the implementation: `lcnn` (ours, the default and the
+# 2026-09-14 campaign) or `lcnn_ref` (the authors' own layers — see
+# notes/lcnn_reference_switch.md). Everything is stemmed and logged by arch, so
+# the two campaigns are independent and neither can overwrite the other:
+#   LCNN_ARCH=lcnn_ref LCNN_PARTS=0,1 bash scripts/lcnn_shootout.sh
 
 set -u
 cd "$(dirname "$0")/.."
 mkdir -p logs
 
 PARTS="${LCNN_PARTS:-0,1}"
+# Which implementation. `lcnn` is ours (the 2026-09-14 shootout); `lcnn_ref` is
+# the authors' own layers — notes/lcnn_reference_switch.md. Stems, tags and logs
+# all carry it, so the two campaigns cannot overwrite each other and a restart
+# still resumes correctly.
+ARCH="${LCNN_ARCH:-lcnn}"
+case "${ARCH}" in lcnn|lcnn_ref) ;; *) echo "LCNN_ARCH must be lcnn|lcnn_ref"; exit 2;; esac
 LR="${LCNN_LR:-3e-3}"
 INIT="${LCNN_INIT:-1.0}"
+# The authors' L-Conv init scale. Theirs, not ours: gate it with
+# scripts/glueball_init_gate.py before part 1 and set it here.
+INIT_W="${LCNN_INIT_W:-1.0}"
+REF_FLAG=""
+[ "${ARCH}" = "lcnn_ref" ] && REF_FLAG="--lcnn-ref-init-w=${INIT_W}"
 LEVELS=0,2,4,6           # the 4-level ladder of the d_model=16 GELT net
 # Gradient checkpointing off for this arm: one L-CNN block peaks at 2.6 GiB, so
 # the whole step fits in 7.86 GiB of the card's 32 and the recompute is pure
 # cost (1.56 s/step with it, 1.29 s without). L-CNN-only — GELT OOMs at batch 4
 # without it.
 CKPT_FLAG=--grad-checkpoint=0
-STEM=results/glueball/best_glueball_lcnn_sm0-2-4-6
+STEM=results/glueball/best_glueball_${ARCH}_sm0-2-4-6
 
 stamp() { date "+%F %T"; }
 wants() { case ",${PARTS}," in *",$1,"*) return 0;; *) return 1;; esac; }
 
+# The interpreter every phase runs under. Bare `python` is not necessarily the
+# venv's on a cluster node, and because need_cuda runs *before* run_phase's
+# redirect, a wrong interpreter kills the whole batch leaving only the driver
+# log — no per-phase log at all, which is a confusing way to fail.
+#   PY=.venv/bin/python bash scripts/lcnn_shootout.sh
+PY="${PY:-python}"
+
 need_cuda() {
-  if ! python -c "import sys, torch; sys.exit(0 if torch.cuda.is_available() else 1)"; then
-    echo "[$(stamp)] ** CUDA is not available — stopping the batch rather than"
-    echo "   training on the CPU. Check nvidia-smi, then re-run: finished phases"
-    echo "   are skipped."
+  if ! "${PY}" -c "import sys, torch; sys.exit(0 if torch.cuda.is_available() else 1)"; then
+    echo "[$(stamp)] ** ${PY} cannot import torch, or CUDA is not available —"
+    echo "   stopping the batch rather than training on the CPU. The line above"
+    echo "   this one is the interpreter's own error. Check nvidia-smi and"
+    echo "   \`${PY} -c 'import torch; print(torch.__version__,"
+    echo "   torch.cuda.is_available())'\`, or set PY=.venv/bin/python."
+    echo "   Re-run afterwards: finished phases are skipped."
     exit 1
   fi
 }
@@ -96,10 +123,12 @@ export TQDM_MININTERVAL=30
 
 # ── part 0: does a step fit, and what does it cost? ──────────────────────────
 if wants 0; then
-  echo "[$(stamp)] ══ part 0: profile one L-CNN step at BATCH_CONFIGS=6"
-  run_phase lcnn_profile "" \
-    python -u scripts/profile_glueball_step.py --arch=lcnn
-  echo "[$(stamp)]    read logs/lcnn_profile.log: peak memory and s/step. If"
+  echo "[$(stamp)] ══ part 0: profile one ${ARCH} step at BATCH_CONFIGS=6"
+  run_phase "${ARCH}_gate" "" \
+    "${PY}" -u scripts/glueball_init_gate.py --archs=${ARCH}
+  run_phase "${ARCH}_profile" "" \
+    "${PY}" -u scripts/profile_glueball_step.py --arch=${ARCH}
+  echo "[$(stamp)]    read logs/${ARCH}_profile.log: peak memory and s/step. If"
   echo "[$(stamp)]    batch 6 OOMs, the fix is c_hidden or the L-Bilin path —"
   echo "[$(stamp)]    NOT BATCH_CONFIGS (it changes the VEV estimate)."
 fi
@@ -110,8 +139,8 @@ if wants 1; then
   for CFG in "3e-3 1.0" "1e-3 1.0" "3e-3 1e-4" "1e-3 1e-4"; do
     set -- ${CFG}; SLR="$1"; SINIT="$2"
     TAG="_sweep_lr${SLR}_is${SINIT}"
-    run_phase "lcnn_sweep_lr${SLR}_is${SINIT}" "${STEM}${TAG}_test_obars.pt" \
-      python -u scripts/train_glueball.py --arch=lcnn --resume=0 ${CKPT_FLAG} \
+    run_phase "${ARCH}_sweep_lr${SLR}_is${SINIT}" "${STEM}${TAG}_test_obars.pt" \
+      "${PY}" -u scripts/train_glueball.py --arch=${ARCH} --resume=0 ${CKPT_FLAG} ${REF_FLAG} \
       --ensemble-seed=0 --input-smear-levels=${LEVELS} --epochs=10 \
       --lr=${SLR} --lcnn-init-scale=${SINIT} --run-tag=${TAG}
   done
@@ -124,8 +153,8 @@ if wants 2; then
   echo "[$(stamp)] ══ part 2: full trainings at lr=${LR}, init_scale=${INIT}"
   for ENS in 0 1; do
     E=$([ "${ENS}" = 0 ] && echo "" || echo "_ens${ENS}")
-    run_phase "lcnn_train_ens${ENS}" "${STEM}${E}_test_obars.pt" \
-      python -u scripts/train_glueball.py --arch=lcnn --resume=0 ${CKPT_FLAG} \
+    run_phase "${ARCH}_train_ens${ENS}" "${STEM}${E}_test_obars.pt" \
+      "${PY}" -u scripts/train_glueball.py --arch=${ARCH} --resume=0 ${CKPT_FLAG} ${REF_FLAG} \
       --ensemble-seed=${ENS} --input-smear-levels=${LEVELS} \
       --lr=${LR} --lcnn-init-scale=${INIT}
   done
@@ -137,13 +166,13 @@ if wants 3; then
   for ENS in 0 1; do
     E=$([ "${ENS}" = 0 ] && echo "" || echo "_ens${ENS}")
     for SEED in 0 1 2; do
-      run_phase "lcnn_rnd_ens${ENS}_s${SEED}" "${STEM}${E}_rnd${SEED}_test_obars.pt" \
-        python -u scripts/train_glueball.py --arch=lcnn --random-init=1 ${CKPT_FLAG} \
+      run_phase "${ARCH}_rnd_ens${ENS}_s${SEED}" "${STEM}${E}_rnd${SEED}_test_obars.pt" \
+        "${PY}" -u scripts/train_glueball.py --arch=${ARCH} --random-init=1 ${CKPT_FLAG} ${REF_FLAG} \
         --ensemble-seed=${ENS} --init-seed=${SEED} \
         --input-smear-levels=${LEVELS} --lcnn-init-scale=${INIT}
     done
   done
 fi
 
-echo "[$(stamp)] batch done. L-CNN dumps:"
-ls -l results/glueball/best_glueball_lcnn*_test_obars.pt 2>/dev/null
+echo "[$(stamp)] batch done. ${ARCH} dumps:"
+ls -l "${STEM}"*_test_obars.pt 2>/dev/null

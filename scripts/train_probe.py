@@ -43,6 +43,7 @@ from probe_common import (  # noqa: E402
     validate_argv,
     BETA,
     Z2_LCNN_CONV_INIT,
+    Z2_LCNN_REF_INIT_W,
     GROUP,
     IS_Z2,
     JACK_BLOCK,
@@ -231,6 +232,9 @@ def main():
     # None for every arm the scale does not reach, so a GELT dump does not
     # claim a setting it never had.
     conv_init = Z2_LCNN_CONV_INIT if (IS_Z2 and arch == "lcnn") else None
+    # Their init knob is a different number against a different fan-in, so it
+    # is recorded under its own key rather than folded into conv_init.
+    init_w = Z2_LCNN_REF_INIT_W if (IS_Z2 and arch == "lcnn_ref") else None
     print(f"arm {ARM}: {arch}, {dofs} real DOFs, {ARMS[ARM]}")
 
     if NULL:
@@ -238,7 +242,7 @@ def main():
         # only the per-site readout learns. Nothing in the stack requires grad,
         # so the graph starts at the head and the pass is forward-only through
         # the expensive part.
-        head = "head_fc1" if arch == "lcnn" else "mlp"
+        head = "head_fc1" if arch in ("lcnn", "lcnn_ref") else "mlp"
         for name, p in model.named_parameters():
             p.requires_grad_(name.startswith(head) or name.startswith("head_fc2"))
     params = [p for p in model.parameters() if p.requires_grad]
@@ -257,7 +261,8 @@ def main():
             k: (prev.get(k), cur)
             for k, cur in (("lr", LR), ("epochs_run", EPOCHS), ("null", NULL),
                            ("transport", transport), ("batch", BATCH_CONFIGS),
-                           ("conv_init_scale", conv_init))
+                           ("conv_init_scale", conv_init),
+                           ("init_w", init_w))
             if prev.get(k) is not None and prev.get(k) != cur
             # epochs_run is what the previous run *reached*, which is ≤ EPOCHS
             # when it stopped early, so only a larger value is a real conflict
@@ -347,7 +352,7 @@ def main():
         "real_dofs": dofs, "null": NULL,
         "ensemble_seed": ENSEMBLE_SEED, "init_seed": INIT_SEED, "run_tag": RUN_TAG,
         "lr": LR, "weight_decay": WEIGHT_DECAY, "batch": BATCH_CONFIGS,
-        "conv_init_scale": conv_init,
+        "conv_init_scale": conv_init, "init_w": init_w,
         "epochs_run": len(history),
         "best_epoch": best_epoch, "best_val": best_val, "history": history,
         "diverged": diverged, "divergence_val": DIVERGENCE_VAL,

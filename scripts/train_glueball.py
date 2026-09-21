@@ -66,6 +66,7 @@ from gelt.glueball import (
 )
 from gelt.lattice import SU, build_transport_average, plaquette_tensor
 from gelt.lcnn import LCNN, build_axis_transports
+from gelt.lcnn_reference import LCNNRef
 from gelt.sampler import heatbath_overrelaxation_sweep, mcmc_ensemble
 
 # Output artifacts are grouped by study under results/; create the dirs the
@@ -180,9 +181,12 @@ CACHE = (
 # identical by construction, or the comparison silently stops being one. Only
 # the model and its transport change.
 ARCH = _env_str("GLUEBALL_ARCH", "gelt").lower()
-if ARCH not in ("gelt", "lcnn"):
-    raise SystemExit(f"GLUEBALL_ARCH must be 'gelt' or 'lcnn' (got {ARCH!r})")
-NET = "GELT" if ARCH == "gelt" else "L-CNN"
+if ARCH not in ("gelt", "lcnn", "lcnn_ref"):
+    raise SystemExit(
+        f"GLUEBALL_ARCH must be 'gelt', 'lcnn' or 'lcnn_ref' (got {ARCH!r})"
+    )
+IS_LCNN = ARCH in ("lcnn", "lcnn_ref")
+NET = {"gelt": "GELT", "lcnn": "L-CNN", "lcnn_ref": "L-CNN (authors')"}[ARCH]
 
 # GELT / training hyperparameters.
 R = 2  # L1-ball radius of the (3D) transport — the "smearing level" budget (§7)
@@ -230,6 +234,25 @@ LCNN_K = _env_int("GLUEBALL_LCNN_K", 2)
 LCNN_C_HIDDEN = _env_int("GLUEBALL_LCNN_C_HIDDEN", 5)
 LCNN_LAYERS = _env_int("GLUEBALL_LCNN_LAYERS", 4)
 LCNN_INIT_SCALE = _env_float("GLUEBALL_LCNN_INIT_SCALE", 1.0)
+
+# ARCH="lcnn_ref" — the authors' own layers (gelt/lcnn_reference.py) rather than
+# ours. Their merged bilinear kernel is quadratic in the input width, so the
+# matched width is a different number and a *per-layer* list: at 4 smear levels
+# (12 input channels) [2,2,2,2] is 17457 real DOFs against GELT's 15693, 1.112×.
+# The selection rule, applied to every group in notes/lcnn_reference_switch.md
+# §3: among shapes inside the tolerance take the one whose *narrowest* layer is
+# widest, ties broken by closeness to 1.0 — [1,4,4,4] is nearer at 1.024 but
+# squeezes 12 channels through 1, a bottleneck GELT's ChannelLift does not have,
+# and a handicapped baseline is the failure mode this arm exists to remove.
+# Recompute with gelt.lcnn_reference.reference_dof_count for other input widths
+# (7 levels wants [1,1,1,1], 1.009×).
+LCNN_REF_CHANNELS = [
+    int(c) for c in _env_str("GLUEBALL_LCNN_REF_CHANNELS", "2,2,2,2").split(",")
+]
+# Their init-scale knob, the analogue of our conv_init_scale — NOT the same
+# number: the two variances are written against different fan-ins. It has to be
+# gated at the production geometry before a run (scripts/z2_init_gate.py).
+LCNN_REF_INIT_W = _env_float("GLUEBALL_LCNN_REF_INIT_W", 1.0)
 # The reference init is scale-agnostic (the paper's losses are supervised), and
 # the Rayleigh ratios are invariant under Ō → λŌ, so only the (log C(0))² pin
 # sees λ — but it sees it loudly: a probe batch starts at C(0) ~ 1e10, i.e. a pin
@@ -334,6 +357,12 @@ ARCH_TAG = (
         if (LCNN_K, LCNN_C_HIDDEN, LCNN_LAYERS) == (2, 5, 4)
         else f"_k{LCNN_K}c{LCNN_C_HIDDEN}l{LCNN_LAYERS}"
     )
+    if ARCH == "lcnn"
+    else (
+        ""
+        if LCNN_REF_CHANNELS == [2, 2, 2, 2] and LCNN_K == 2
+        else f"_k{LCNN_K}c" + "-".join(str(c) for c in LCNN_REF_CHANNELS)
+    )
 )
 RUN_TAG = (
     ARCH_TAG
@@ -398,7 +427,13 @@ def config_inputs(U4_batch, device):
             U3_first = U3  # least-smeared level — supplies the transport below
         Ws.append(plaquette_tensor(U3, gaugegroup))  # (b·Lt, 3, L,L,L, nc,nc) spatial planes
     W = torch.cat(Ws, dim=1)  # (b·Lt, 3·n_levels, L,L,L, nc,nc)
-    if ARCH == "lcnn":
+    if ARCH == "lcnn_ref":
+        # Their LConvBilin transports its own field one step at a time inside
+        # the layer, so there is nothing to precompute: the slot carries the
+        # raw links of the same least-smeared 3D slice the other two arms take
+        # their transport from, and the per-timeslice property is unchanged.
+        T = U3_first
+    elif ARCH == "lcnn":
         # The L-CNN's transport is the axis-aligned link product U^(k)_μ
         # (Favoni Eq. 5), not the L1-ball shortest-path average — that
         # substitution *is* the architecture under test. Built from the same
@@ -425,6 +460,8 @@ def network_obar(model, U4_batch, device):
 
 def _geometry_label():
     """One-line model geometry for plot titles — whichever architecture ran."""
+    if ARCH == "lcnn_ref":
+        return f"K={LCNN_K}, channels={LCNN_REF_CHANNELS} (authors')"
     if ARCH == "lcnn":
         return f"K={LCNN_K}, c_hidden={LCNN_C_HIDDEN}, layers={LCNN_LAYERS}"
     return f"R={R}, layers={GEMHSA_LAYERS}"
@@ -442,6 +479,23 @@ def _build_model():
     (audit item 3). GELT states that as ``mlp_zero_init=False``; the L-CNN's
     reference head init is already nonzero.
     """
+    if ARCH == "lcnn_ref":
+        return LCNNRef(
+            gaugegroup=gaugegroup,
+            L=L,
+            D=3,  # per-timeslice 3D operator (audit item 1)
+            K=LCNN_K,
+            c_hidden=LCNN_REF_CHANNELS,
+            n_layers=len(LCNN_REF_CHANNELS),
+            dtype=MODEL_DTYPE,
+            mlp_hidden=MLP_HIDDEN,
+            mlp_out=1,
+            reduction="none",
+            in_channels=3 * len(INPUT_SMEAR_LEVELS),
+            init_scale=LCNN_INIT_SCALE,
+            init_w=LCNN_REF_INIT_W,
+            grad_checkpoint=GRAD_CHECKPOINT,
+        )
     if ARCH == "lcnn":
         return LCNN(
             gaugegroup=gaugegroup,
@@ -688,7 +742,13 @@ def main():
     # the GELT↔L-CNN match is quoted in real DOFs (see the LCNN_* block).
     n_params = sum(p.numel() for p in model.parameters())
     n_real = sum(p.numel() * (2 if p.is_complex() else 1) for p in model.parameters())
-    if ARCH == "lcnn":
+    if ARCH == "lcnn_ref":
+        print(
+            f"L-CNN[authors'](D=3, K={LCNN_K}, channels={LCNN_REF_CHANNELS}, "
+            f"init_w={LCNN_REF_INIT_W}) | input smear levels "
+            f"{list(INPUT_SMEAR_LEVELS)} | params {n_params:,} ({n_real:,} real)"
+        )
+    elif ARCH == "lcnn":
         print(
             f"L-CNN(D=3, K={LCNN_K}, c_hidden={LCNN_C_HIDDEN}, "
             f"layers={LCNN_LAYERS}) | input smear levels "
@@ -879,6 +939,12 @@ def main():
                 "input_smear_levels": list(INPUT_SMEAR_LEVELS),
                 "checkpoint": CHECKPOINT,
                 "best_val_loss": best_val_loss,
+                # The whole val curve, not just its minimum. Reading a sweep
+                # needs to know whether the horizon was the binding constraint
+                # (notes/m1_probe.md §8), and a single best value cannot say —
+                # nor can it see a run that learns, blows up and settles back.
+                # scripts/glueball_sweep_read.py prefers this over the log.
+                "val_hist": list(val_hist),
                 "ensemble_seed": ENSEMBLE_SEED,
                 "init_seed": INIT_SEED,
                 "d_model": D_MODEL,
@@ -892,7 +958,11 @@ def main():
                 "arch": ARCH,
                 "lcnn_geometry": (
                     None
-                    if ARCH != "lcnn"
+                    if not IS_LCNN
+                    else {"K": LCNN_K, "channels": LCNN_REF_CHANNELS,
+                          "init_scale": LCNN_INIT_SCALE,
+                          "init_w": LCNN_REF_INIT_W}
+                    if ARCH == "lcnn_ref"
                     else {"K": LCNN_K, "c_hidden": LCNN_C_HIDDEN,
                           "n_layers": LCNN_LAYERS, "init_scale": LCNN_INIT_SCALE}
                 ),

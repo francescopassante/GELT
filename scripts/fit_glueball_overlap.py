@@ -155,7 +155,7 @@ def outlier_share(obar):
 def arch_label(meta):
     """How to name a dump's learned operator: the architecture that made it."""
     arch = str(meta.get("arch", "gelt")).lower()
-    name = "L-CNN" if arch == "lcnn" else "GELT"
+    name = {"lcnn": "L-CNN", "lcnn_ref": "L-CNN (authors')"}.get(arch, "GELT")
     return f"{name} (random init)" if meta.get("random_init") else f"{name} (learned)"
 
 

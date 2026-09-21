@@ -200,7 +200,12 @@ def breakdown_inputs(batch, device):
 
     _sync(device)
     t0 = time.perf_counter()
-    if tg.ARCH == "lcnn":
+    if tg.ARCH == "lcnn_ref":
+        # Their block transports internally, so this stage does not exist for
+        # that arm: the links go in raw. Timed as zero here rather than skipped,
+        # so the stage table still sums to the step.
+        t_label = "transport (inside the layer — not a separate stage)"
+    elif tg.ARCH == "lcnn":
         build_axis_transports(U3, tg.LCNN_K, tg.gaugegroup)
         t_label = f"build_axis_transports K={tg.LCNN_K}"
     else:
