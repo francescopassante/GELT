@@ -82,12 +82,13 @@ def _env(name, default):
 
 
 ARCHS = [a.strip() for a in _env("GIG_ARCHS", "gelt,lcnn,lcnn_ref").split(",")]
-# Upward, not downward. The first version of this grid was centred below 1 on
-# the assumption that the risk was the Z₂ one — an exploding field. At nc = 2
-# with their fan-in the stack *decays* instead, and the failure is the opposite
-# one: C(0) collapses onto the Rayleigh loss's floor and every batch comes back
-# non-finite (measured 2026-09-21, C(0) = 1.2e-10 at init_w = 1.0).
-INIT_WS = [float(x) for x in _env("GIG_INIT_WS", "1.0,2.0,4.0,8.0").split(",")]
+# Settled 2026-09-21: with the paper's architecture (no L-Act) the whole
+# pathology is gone and **init_w = 1.0 — their own default — passes on every
+# seed and with either head**. 0.5 collapses below the loss floor and 2.0
+# overflows the field gate, so the grid is a bracket around the answer, not a
+# search. It is kept scannable because the answer is per-task: the same knob on
+# the Z₂ arms has its own gate (scripts/z2_init_gate.py).
+INIT_WS = [float(x) for x in _env("GIG_INIT_WS", "0.5,1.0,2.0").split(",")]
 CONV_INITS = [float(x) for x in _env("GIG_CONV_INITS", "1.0").split(",")]
 # lcnn_ref only: the paper has no activation layer and a single linear head.
 ACTS = [x.strip() == "1" for x in _env("GIG_ACTS", "0").split(",")]

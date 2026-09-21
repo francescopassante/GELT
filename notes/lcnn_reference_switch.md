@@ -336,3 +336,38 @@ exactly the setting they warn about. GELT and our own `lcnn` arm train through
 it, so it is not fatal; it is a reason to read a non-converging `lcnn_ref` run
 as possibly *theirs* rather than *ours*, and to say so rather than quietly
 tuning until it goes away.
+
+---
+
+## 9. Settled — *measured 2026-09-21*. The activation was the whole problem.
+
+The gate, 8 configurations, 3 seeds, `act=False` (the paper's architecture),
+both heads:
+
+| `init_w` | field by layer (seed 0) | C(0), 3 seeds | C(0)/⟨Ō⟩² | verdict |
+|---|---|---|---|---|
+| 0.5 | 1.29 → 0.373 → 0.036 → 1.7e−4 | 1.7e−08 … 3.6e−05 | 1e−12 … 7e−08 | 2 of 3 seeds below the floor |
+| **1.0** | **2.58 → 2.98 → 4.57 → 5.52** | **0.03 … 7.6e+03** | **7e−07 … 2e−03** | **6 of 6 cells pass** |
+| 2.0 | 5.16 → 23.9 → 586 → 1.8e+05 | 1.8e+07 … 8e+12 | healthy | field gate, all seeds |
+
+**Removing `LActPoly` removes the pathology entirely.** The field no longer
+decays through the stack — it sits at O(1)…O(40) across four layers instead of
+falling to 5e−6 — and `init_w^198` is gone with it. `init_w = 1.0`, their own
+default, passes on every seed. §7's "the knob is not a knob" was a statement
+about an architecture that is not theirs.
+
+Both heads pass, so the ReLU was the second half of the mechanism, not the
+cause. **The primary arm keeps `head=mlp`**: it is what makes `lcnn_ref` differ
+from GELT in the equivariant stack *and nothing else*, which is the design
+principle of every arm here, and the paper's single `Linear` is a degenerate
+case of it. `--lcnn-ref-head=linear` is measured to work and is the fidelity
+check to run if the primary result ever looks odd.
+
+C(0) still spans 2.4e5 across three seeds at fixed `init_w`, which is what
+`--calibrate-c0` is for — and it is now the legitimate case, because the
+*relative* fluctuation is 7e−07 … 2e−03, four to eight orders above the
+round-off floor the guard refuses at.
+
+**Settings for the production runs**: `init_w = 1.0`, `use_act = False`,
+`head = mlp`, `--calibrate-c0`. All four are the shootout's defaults for this
+arm, so `LCNN_ARCH=lcnn_ref bash scripts/lcnn_shootout.sh` needs no extra flags.
