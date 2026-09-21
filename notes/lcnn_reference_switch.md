@@ -224,14 +224,35 @@ C(0) = 1.2e−10 against the loss's floor `EPS = 1e−8`, so every batch came ba
 non-finite. The scale-free quantity is `C(0)/⟨Ō⟩²`, and that is what the gate
 now reports alongside C(0).
 
-So the fix is not to hunt for an `init_w`: it is `--calibrate-c0`, one forward
-at initialisation that rescales the readout so C(0) starts at 1. **This is not
-a thumb on the scale.** λ is a gauge freedom of the objective — only
-`SCALE_REG`'s `(log C(0))²` pin sees it — and GELT fixes it by hand with
-`INIT_SCALE = 10`. The only asymmetry is that the authors' arm cannot use a
-hand-set constant, because no constant serves three seeds that span 471×; and
-the asymmetry runs in the baseline's favour, which is the direction this whole
-arm exists to guarantee.
+`--calibrate-c0` exists for that — one forward at initialisation that rescales
+the readout so C(0) starts at 1, fixing a gauge freedom the way GELT's
+hand-set `INIT_SCALE = 10` does. **But it is the wrong cure here, and the
+scale-free reading is what showed it.** Measured 2026-09-21 with 8
+configurations, `init_w = 1.0`:
+
+| seed | field @ layer 4 | ⟨Ō⟩ | C(0) | C(0)/⟨Ō⟩² |
+|---|---|---|---|---|
+| 0 | 4.8e−06 | 404 | 1.16e−10 | **7.1e−16** |
+| 1 | 1.4e−07 | −315 | **0** | 0 |
+| 2 | 3.0e−05 | −269 | 1.57e−10 | 2.2e−15 |
+
+⟨Ō⟩ is **large**. The operator is not small, it is **constant** — constant to
+float32 round-off, whose relative ε of 1.2e−7 floors `C(0)/⟨Ō⟩²` at ~1e−14, and
+one seed is exactly 0. The mechanism is the head: with the field at 5e−6,
+`relu(W·trace + b) ≈ relu(b)`, so the readout emits its own bias identically at
+every site and every configuration and the signal is lost in the rounding.
+Rescaling would multiply the round-off by 9e4 and buy a run that trains on
+noise for hours, so `--calibrate-c0` now **refuses** below
+`C(0)/⟨Ō⟩² = 1e−10`, with the diagnosis.
+
+The stack's scale therefore does have to move, and the window is narrow but
+may not be empty. Extrapolating the measured `init_w^198` from each seed's own
+field: the value that lands on O(1) is 1.054, 1.064 and 1.083 for the three
+seeds, and a single **`init_w ≈ 1.064` puts them at 0.03, 1.04 and 6.5** — a
+220× spread, but all three inside a range a linear head can work with. That is
+an extrapolation over a narrow interval and it is the next thing to *measure*,
+not to assume. Upward is settled and closed: 2.0, 4.0 and 8.0 all overflow to
+`nan` by layer 3 or 4, in every seed.
 
 Two things this does **not** settle, and neither should be quoted as settled:
 

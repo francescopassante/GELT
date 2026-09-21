@@ -781,13 +781,32 @@ def main():
         # every architecture here, so this changes nothing but λ.
         with torch.no_grad():
             probe = train_configs[: min(8, train_configs.shape[0])]
-            _, c0_before, _ = rayleigh_loss(held_out_obar(model, probe, device))
+            obar0 = held_out_obar(model, probe, device)
+            _, c0_before, _ = rayleigh_loss(obar0)
             c0_before = c0_before.item()
+            mean0 = obar0.double().mean().item()
+            rel0 = c0_before / mean0**2 if mean0 != 0 else float("inf")
             if not np.isfinite(c0_before) or c0_before <= 0:
                 raise SystemExit(
                     f"C(0) at initialisation is {c0_before} — not a scale that "
                     f"can be calibrated. The operator is degenerate before any "
                     f"training; run scripts/glueball_init_gate.py."
+                )
+            # A *small* operator is a scale and rescaling fixes it. A *constant*
+            # one is not: C(0) is then round-off — float32's relative ε is
+            # ~1.2e-7, so C(0)/⟨Ō⟩² bottoms out near 1e-14 — and multiplying the
+            # readout would scale the round-off, not the signal, and buy a run
+            # that trains on noise for hours. Measured 2026-09-21: the authors'
+            # arm at init_w = 1.0 sits at 7e-16 with ⟨Ō⟩ = 404, i.e. constant to
+            # machine precision because the head's bias dominates a 5e-6 field.
+            if rel0 < 1e-10:
+                raise SystemExit(
+                    f"C(0)/⟨Ō⟩² = {rel0:.2e} at initialisation: the operator is "
+                    f"constant to round-off (C(0) = {c0_before:.3e}, "
+                    f"⟨Ō⟩ = {mean0:.3g}), not merely small. Rescaling the "
+                    f"readout would amplify the round-off. The stack's own "
+                    f"scale has to move — see notes/lcnn_reference_switch.md §7 "
+                    f"and scripts/glueball_init_gate.py."
                 )
             lam = (CALIBRATE_TARGET / c0_before) ** 0.5
             head = model.head_fc2 if IS_LCNN else model.mlp.fc2
