@@ -479,3 +479,43 @@ The one task that appeared to satisfy it — flow-free topological charge densit
 was built, run and **stopped on a measurement** (§4 there), which added two
 criteria the rule was missing and turned the search toward §9.2's mechanism
 rather than this section's.
+
+---
+
+## §10. The rate was re-swept at the full grid — *measured 2026-09-21*. A null.
+
+Run by accident: a `lcnn_ref` batch launched against a V100 checkout that did
+not yet have the arch switch, so it re-ran **our** arm's part 1. Four 10-epoch
+runs, ens0, the 2 × 2 grid, best val Rayleigh loss (lower is better):
+
+| | init_scale 1.0 | init_scale 1e-4 |
+|---|---|---|
+| lr 3e-3 | −0.6128 (best @ ep 5) | **−0.6138** (best @ ep 8) |
+| lr 1e-3 | −0.6109 (best @ ep 8) | −0.6100 (best @ ep 5) |
+
+**It does not discriminate.** The four points lie inside **0.62%** of each
+other, and the differences are far below anything the shootout resolves (the
+published ΔA₀ is 0.012 ± 0.009).
+
+Three readings, and the third is the one that matters going forward:
+
+1. **`init_scale` is a null.** Its effect **flips sign** between the two LR
+   rows — −0.0010 at 3e-3, +0.0009 at 1e-3 — at a magnitude of 0.001. That is
+   the signature of noise, not of an effect, and it means half of every 2 × 2
+   grid of this shape is wasted.
+2. **The horizon was not binding**, for any of the four: best epochs are 5, 8,
+   5, 8 of 10 and no run had an excursion (`scripts/glueball_sweep_read.py`).
+   So §9's rate choice is **not** an instance of `notes/m1_probe.md` §8's defect
+   — the worry that our arm's rate "was never re-gated" closes here, with a
+   null: 3e-3 beats the 1e-3 the campaign used by 0.0019, inside the noise.
+   Nothing in §9 is invalidated.
+3. **The LR optimum is not bracketed.** The LR effect is consistent in sign
+   (3e-3 better on both rows) and 2–4× larger than the init_scale effect, and
+   3e-3 is the *top* of the grid. The sweep is pointing upward and was never
+   asked. Note the M1 probe found the opposite bound for the same family — both
+   L-CNN arms diverged at 1e-2 where every GELT arm had its optimum (§8 there) —
+   so the interval worth scanning is narrow and may be empty.
+
+Hence the part-1 default for a new arm (`lcnn_shootout.sh`, `LCNN_SWEEP`):
+**four points on LR at a fixed init_scale, including a rate above the old top** —
+`1e-2, 3e-3, 1e-3, 3e-4`. The old 2 × 2 is still one env var away.

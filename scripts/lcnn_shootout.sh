@@ -69,6 +69,24 @@ INIT="${LCNN_INIT:-1.0}"
 INIT_W="${LCNN_INIT_W:-1.0}"
 REF_FLAG=""
 [ "${ARCH}" = "lcnn_ref" ] && REF_FLAG="--lcnn-ref-init-w=${INIT_W}"
+
+# The part-1 grid, as "<lr> <init_scale>" pairs. The original 2 × 2 was read on
+# our arm on 2026-09-21 and did not discriminate: four points inside 0.62% of
+# each other, none cut off at the horizon, and the init_scale effect **flips
+# sign** between the two LR rows (−0.0010 at 3e-3, +0.0009 at 1e-3) at a
+# magnitude of 0.001 — the signature of noise, not of an effect. The LR effect
+# is consistent in sign and 2–4× larger, and it points at the *top* of the grid,
+# so the optimum was never bracketed. Hence the default for a new arm: spend all
+# four points on LR at a fixed init_scale, and include a rate above the old top.
+# Override with semicolon-separated "<lr> <init_scale>" pairs, e.g. the original
+# grid:  LCNN_SWEEP="3e-3 1.0;1e-3 1.0;3e-3 1e-4;1e-3 1e-4"
+if [ -n "${LCNN_SWEEP:-}" ]; then
+  IFS=';' read -ra SWEEP <<< "${LCNN_SWEEP}"
+elif [ "${ARCH}" = "lcnn_ref" ]; then
+  SWEEP=("1e-2 1.0" "3e-3 1.0" "1e-3 1.0" "3e-4 1.0")
+else
+  SWEEP=("3e-3 1.0" "1e-3 1.0" "3e-3 1e-4" "1e-3 1e-4")
+fi
 LEVELS=0,2,4,6           # the 4-level ladder of the d_model=16 GELT net
 # Gradient checkpointing off for this arm: one L-CNN block peaks at 2.6 GiB, so
 # the whole step fits in 7.86 GiB of the card's 32 and the recompute is pure
@@ -136,7 +154,7 @@ fi
 # ── part 1: the hyperparameter sweep (short runs, disposable tags) ───────────
 if wants 1; then
   echo "[$(stamp)] ══ part 1: LR / init-scale sweep, 10 epochs each"
-  for CFG in "3e-3 1.0" "1e-3 1.0" "3e-3 1e-4" "1e-3 1e-4"; do
+  for CFG in "${SWEEP[@]}"; do
     set -- ${CFG}; SLR="$1"; SINIT="$2"
     TAG="_sweep_lr${SLR}_is${SINIT}"
     run_phase "${ARCH}_sweep_lr${SLR}_is${SINIT}" "${STEM}${TAG}_test_obars.pt" \
