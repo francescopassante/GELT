@@ -67,8 +67,13 @@ INIT="${LCNN_INIT:-1.0}"
 # The authors' L-Conv init scale. Theirs, not ours: gate it with
 # scripts/glueball_init_gate.py before part 1 and set it here.
 INIT_W="${LCNN_INIT_W:-1.0}"
+# --calibrate-c0 for the authors' arm: their stack's field at four layers goes
+# as init_w^198, so three seeds span 471x in C(0) and no hand-set init_scale
+# serves them all — and a run starting below EPS produces nothing at all (every
+# batch non-finite). The Rayleigh loss is invariant under O -> lambda*O, so this
+# fixes a gauge freedom, it does not tilt the comparison.
 REF_FLAG=""
-[ "${ARCH}" = "lcnn_ref" ] && REF_FLAG="--lcnn-ref-init-w=${INIT_W}"
+[ "${ARCH}" = "lcnn_ref" ] && REF_FLAG="--lcnn-ref-init-w=${INIT_W} --calibrate-c0=1"
 
 # The part-1 grid, as "<lr> <init_scale>" pairs. The original 2 × 2 was read on
 # our arm on 2026-09-21 and did not discriminate: four points inside 0.62% of

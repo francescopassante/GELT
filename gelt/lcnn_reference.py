@@ -87,8 +87,30 @@ def reference_layers():
         spec = importlib.util.spec_from_file_location("_lge_layers", _REF_PATH)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
+        _undecorate_compiled(module)
         _ref_module = module
     return _ref_module
+
+
+def _undecorate_compiled(module):
+    """Strip ``@torch.compile`` from their helpers, in our copy of the module.
+
+    ``layers.py`` decorates ``unpack_x`` (and friends) with ``torch.compile``.
+    Under inductor that raised ``BackendCompilerFailed`` on the V100 — a
+    FakeTensor error from a ``uint8`` clone — and took the profiler with it,
+    while the plain training path happened to survive. Compiling a two-line
+    slice buys nothing here and the failure mode is a whole phase, so it is
+    unwrapped rather than worked around with a global ``TORCHDYNAMO_DISABLE``:
+    that would also silence ``PROFILE_COMPILE``, which is about *our* code.
+
+    Surgical and reversible — each wrapper carries the original callable, and
+    only this module's names are rebound. Vendored source is untouched.
+    """
+    for name in dir(module):
+        fn = getattr(module, name, None)
+        orig = getattr(fn, "_torchdynamo_orig_callable", None)
+        if orig is not None:
+            setattr(module, name, orig)
 
 
 # ── Layout conversion ────────────────────────────────────────────────────────

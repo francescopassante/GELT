@@ -194,3 +194,60 @@ On the V100, in this order — each stage's outcome gates the next:
 X-2 is the one to read first: if it is a null, the programme's conclusions are
 unchanged and the re-run has bought the baseline's provenance, which was the
 point.
+
+---
+
+## 7. The initialisation, measured — *2026-09-21*. The knob is not a knob.
+
+`glueball_init_gate.py`, 3 seeds, production shape, field entering the head:
+
+| `init_w` | seed 0 | seed 1 | seed 2 |
+|---|---|---|---|
+| 0.3 | — | 1.2e−31 | 1.6e−21 |
+| 0.5 | 1.6e−16 | 2.0e−23 | 8.4e−16 |
+| **1.0** | **5.2e−06** | **9.6e−08** | **4.5e−05** |
+| 1.5 | 3.5e+29 | 1.5e+21 | 4.3e+31 |
+
+**The field at four layers goes as `init_w^198`.** Fitting the two decades
+between 1.0 and 1.5 on seed 0 gives that exponent, and with it: a **1% change
+in `init_w` moves the field by 7.2×**, the value that would land on O(1) is
+≈ 1.064, and at fixed `init_w = 1.0` **three seeds already span 471×**. The
+usable window is narrower than the seed-to-seed spread, so `init_w` is not a
+tunable parameter here — it is a knife edge. That is the doubly-exponential
+degree growth of an L-CB stack with nothing normalising it, which is the same
+mechanism as the Z₂ cliff, with the sign reversed by their fan-in at `nc = 2`.
+
+**But a small field is not, by itself, fatal** — the head is linear, so a
+uniformly small operator is a *scale*, and the Rayleigh loss is invariant under
+`Ō → λŌ`. What killed the first run is that λ was left where the init put it:
+C(0) = 1.2e−10 against the loss's floor `EPS = 1e−8`, so every batch came back
+non-finite. The scale-free quantity is `C(0)/⟨Ō⟩²`, and that is what the gate
+now reports alongside C(0).
+
+So the fix is not to hunt for an `init_w`: it is `--calibrate-c0`, one forward
+at initialisation that rescales the readout so C(0) starts at 1. **This is not
+a thumb on the scale.** λ is a gauge freedom of the objective — only
+`SCALE_REG`'s `(log C(0))²` pin sees it — and GELT fixes it by hand with
+`INIT_SCALE = 10`. The only asymmetry is that the authors' arm cannot use a
+hand-set constant, because no constant serves three seeds that span 471×; and
+the asymmetry runs in the baseline's favour, which is the direction this whole
+arm exists to guarantee.
+
+Two things this does **not** settle, and neither should be quoted as settled:
+
+* whether the instability is a property of their architecture or of this
+  transplant. Their own models train a supervised fixed-point action with their
+  own depths, widths and input normalisation; four layers on 12 smeared channels
+  under a Rayleigh loss is our setting, not theirs. The honest statement is
+  about the transplant.
+* whether `degree_range = 2` with the relu term is the right `LActPoly`. Their
+  models take a per-layer list and allow 0 (no activation at all), so a milder
+  nonlinearity is inside *their* design space and is the first thing to vary if
+  calibration alone does not make the arm trainable.
+
+One unrelated defect fixed on the way: their `layers.py` decorates `unpack_x`
+and friends with `@torch.compile`, and inductor raised `BackendCompilerFailed`
+on the V100, taking `profile_glueball_step.py` with it while the training path
+survived. `reference_layers()` now unwraps those decorators in our copy of the
+module — surgical, reversible, vendored source untouched, and narrower than a
+global `TORCHDYNAMO_DISABLE` that would also silence `PROFILE_COMPILE`.

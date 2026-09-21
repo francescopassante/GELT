@@ -253,6 +253,19 @@ LCNN_REF_CHANNELS = [
 # number: the two variances are written against different fan-ins. It has to be
 # gated at the production geometry before a run (scripts/z2_init_gate.py).
 LCNN_REF_INIT_W = _env_float("GLUEBALL_LCNN_REF_INIT_W", 1.0)
+
+# Rescale the readout at initialisation so C(0) starts at O(1). Off by default;
+# the shootout turns it on for `lcnn_ref`, and notes/lcnn_reference_switch.md §7
+# says why it is not a thumb on the scale. The Rayleigh loss is invariant under
+# Ō → λŌ — only SCALE_REG's (log C(0))² pin sees λ — so λ is a gauge freedom of
+# the objective, and GELT fixes it by hand with INIT_SCALE = 10. What forces an
+# *automatic* choice for the authors' L-CNN is measurement: their stack's field
+# at four layers goes as init_w^198, so at a fixed init_w three seeds span 471×
+# in C(0) (scripts/glueball_init_gate.py, 2026-09-21). No single hand-set
+# constant serves three seeds, and a run whose C(0) starts below EPS = 1e-8
+# produces nothing at all — every batch is non-finite.
+CALIBRATE_C0 = _env_flag("GLUEBALL_CALIBRATE_C0", False)
+CALIBRATE_TARGET = _env_float("GLUEBALL_CALIBRATE_TARGET", 1.0)
 # The reference init is scale-agnostic (the paper's losses are supervised), and
 # the Rayleigh ratios are invariant under Ō → λŌ, so only the (log C(0))² pin
 # sees λ — but it sees it loudly: a probe batch starts at C(0) ~ 1e10, i.e. a pin
@@ -760,6 +773,29 @@ def main():
             f"input smear levels {list(INPUT_SMEAR_LEVELS)} | params {n_params:,} "
             f"({n_real:,} real)"
         )
+
+    if CALIBRATE_C0 and not RANDOM_INIT:
+        # One forward on a few training configs, then scale the readout so
+        # C(0) lands on CALIBRATE_TARGET. C(0) is quadratic in the output, so
+        # the factor is a square root. The head is the last linear map in
+        # every architecture here, so this changes nothing but λ.
+        with torch.no_grad():
+            probe = train_configs[: min(8, train_configs.shape[0])]
+            _, c0_before, _ = rayleigh_loss(held_out_obar(model, probe, device))
+            c0_before = c0_before.item()
+            if not np.isfinite(c0_before) or c0_before <= 0:
+                raise SystemExit(
+                    f"C(0) at initialisation is {c0_before} — not a scale that "
+                    f"can be calibrated. The operator is degenerate before any "
+                    f"training; run scripts/glueball_init_gate.py."
+                )
+            lam = (CALIBRATE_TARGET / c0_before) ** 0.5
+            head = model.head_fc2 if IS_LCNN else model.mlp.fc2
+            head.weight.mul_(lam)
+            head.bias.mul_(lam)
+            _, c0_after, _ = rayleigh_loss(held_out_obar(model, probe, device))
+        print(f"calibrated readout ×{lam:.3g}: C(0) {c0_before:.3e} → "
+              f"{c0_after.item():.3e} (target {CALIBRATE_TARGET:g})")
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
     # Cosine anneal over the (now short) run — StepLR(150) never fired at 40
