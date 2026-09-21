@@ -253,6 +253,15 @@ LCNN_REF_CHANNELS = [
 # number: the two variances are written against different fan-ins. It has to be
 # gated at the production geometry before a run (scripts/z2_init_gate.py).
 LCNN_REF_INIT_W = _env_float("GLUEBALL_LCNN_REF_INIT_W", 1.0)
+# The paper's architecture has **no activation layer**: PRL 128, 032003 Tables
+# V-VI are bare L-CB stacks + Trace + one Linear, and L-Act appears in the
+# Letter only under "Additional layers", never in a reported model. Default off,
+# therefore; on, it is their LActPoly. Measured why it matters:
+# notes/lcnn_reference_switch.md §7.
+LCNN_REF_ACT = _env_flag("GLUEBALL_LCNN_REF_ACT", False)
+# "mlp" is gelt.lcnn.LCNN's head, which the matched widths were chosen against;
+# "linear" is the paper's — one Linear per site, no hidden layer, no ReLU.
+LCNN_REF_HEAD = _env_str("GLUEBALL_LCNN_REF_HEAD", "mlp")
 
 # Rescale the readout at initialisation so C(0) starts at O(1). Off by default;
 # the shootout turns it on for `lcnn_ref`, and notes/lcnn_reference_switch.md §7
@@ -507,6 +516,8 @@ def _build_model():
             in_channels=3 * len(INPUT_SMEAR_LEVELS),
             init_scale=LCNN_INIT_SCALE,
             init_w=LCNN_REF_INIT_W,
+            use_act=LCNN_REF_ACT,
+            head_hidden=None if LCNN_REF_HEAD == "mlp" else 0,
             grad_checkpoint=GRAD_CHECKPOINT,
         )
     if ARCH == "lcnn":
@@ -758,7 +769,8 @@ def main():
     if ARCH == "lcnn_ref":
         print(
             f"L-CNN[authors'](D=3, K={LCNN_K}, channels={LCNN_REF_CHANNELS}, "
-            f"init_w={LCNN_REF_INIT_W}) | input smear levels "
+            f"init_w={LCNN_REF_INIT_W}, act={LCNN_REF_ACT}, "
+            f"head={LCNN_REF_HEAD}) | input smear levels "
             f"{list(INPUT_SMEAR_LEVELS)} | params {n_params:,} ({n_real:,} real)"
         )
     elif ARCH == "lcnn":
@@ -1033,7 +1045,8 @@ def main():
                     if not IS_LCNN
                     else {"K": LCNN_K, "channels": LCNN_REF_CHANNELS,
                           "init_scale": LCNN_INIT_SCALE,
-                          "init_w": LCNN_REF_INIT_W}
+                          "init_w": LCNN_REF_INIT_W,
+                          "use_act": LCNN_REF_ACT, "head": LCNN_REF_HEAD}
                     if ARCH == "lcnn_ref"
                     else {"K": LCNN_K, "c_hidden": LCNN_C_HIDDEN,
                           "n_layers": LCNN_LAYERS, "init_scale": LCNN_INIT_SCALE}

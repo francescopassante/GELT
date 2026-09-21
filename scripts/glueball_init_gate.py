@@ -45,6 +45,10 @@ Environment overrides (each also ``--name=value`` in argv, via train_glueball):
                    upward; see the note on the constant below).
     GIG_CONV_INITS conv_init_scale values for lcnn (default 1.0 — the value the
                    published runs used; widen it if this gate ever fails).
+    GIG_ACTS       lcnn_ref: 0/1, whether their LActPoly is applied (default 0,
+                   the paper's architecture — Tables V-VI carry no L-Act).
+    GIG_HEADS      lcnn_ref: mlp (ours, what the matched widths assume) or
+                   linear (theirs: one Linear per site, no hidden layer).
     GIG_SEEDS      initialisation seeds per cell (default 3).
     GIG_CONFIGS    configurations per cell (default 2).
     GIG_MAX        largest field magnitude that counts as O(1) (default 100.0 —
@@ -85,6 +89,9 @@ ARCHS = [a.strip() for a in _env("GIG_ARCHS", "gelt,lcnn,lcnn_ref").split(",")]
 # non-finite (measured 2026-09-21, C(0) = 1.2e-10 at init_w = 1.0).
 INIT_WS = [float(x) for x in _env("GIG_INIT_WS", "1.0,2.0,4.0,8.0").split(",")]
 CONV_INITS = [float(x) for x in _env("GIG_CONV_INITS", "1.0").split(",")]
+# lcnn_ref only: the paper has no activation layer and a single linear head.
+ACTS = [x.strip() == "1" for x in _env("GIG_ACTS", "0").split(",")]
+HEADS = [h.strip() for h in _env("GIG_HEADS", "mlp").split(",")]
 SEEDS = int(_env("GIG_SEEDS", "3"))
 N_CONFIGS = int(_env("GIG_CONFIGS", "2"))
 GATE_MAX = float(_env("GIG_MAX", "100.0"))
@@ -170,7 +177,17 @@ WALK = {"gelt": walk_gelt, "lcnn": walk_lcnn, "lcnn_ref": walk_lcnn_ref}
 def cells(arch):
     """(label, env) pairs: the scale knob this architecture actually has."""
     if arch == "lcnn_ref":
-        return [(w, {"GLUEBALL_LCNN_REF_INIT_W": w}) for w in INIT_WS]
+        # The activation and the head are scanned too, because both were
+        # measured to decide whether the stack has a usable scale at all
+        # (notes/lcnn_reference_switch.md §7-§8) and the paper's settings are
+        # act=off, head=linear.
+        return [
+            (f"init_w {w} act {a} head {h}",
+             {"GLUEBALL_LCNN_REF_INIT_W": w,
+              "GLUEBALL_LCNN_REF_ACT": int(a),
+              "GLUEBALL_LCNN_REF_HEAD": h})
+            for w in INIT_WS for a in ACTS for h in HEADS
+        ]
     if arch == "lcnn":
         return [(s, {"GLUEBALL_LCNN_INIT_SCALE": 1.0}) for s in CONV_INITS]
     return [(None, {})]
@@ -189,7 +206,7 @@ def main():
     for arch in ARCHS:
         for scale, env in cells(arch):
             mod = reload_tg(arch, **env)
-            label = f"{arch}" + ("" if scale is None else f"  scale {scale}")
+            label = f"{arch}" + ("" if scale is None else f"  {scale}")
             print(f"\n── {label}   levels {list(mod.INPUT_SMEAR_LEVELS)}   "
                   f"{mod._geometry_label()}")
             configs = batch(mod, N_CONFIGS).to(dev)

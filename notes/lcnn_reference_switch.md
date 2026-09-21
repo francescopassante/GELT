@@ -272,3 +272,67 @@ on the V100, taking `profile_glueball_step.py` with it while the training path
 survived. `reference_layers()` now unwraps those decorators in our copy of the
 module — surgical, reversible, vendored source untouched, and narrower than a
 global `TORCHDYNAMO_DISABLE` that would also silence `PROFILE_COMPILE`.
+
+---
+
+## 8. The paper, read — *2026-09-21*. Two of our choices were not theirs.
+
+`PhysRevLett.128.032003.pdf` and `sm.pdf`, Tables V–VI of the Supplemental
+Material, list every L-CNN architecture they report. In 1+1D and in 3+1D, every
+one of them is:
+
+    L-CB(K, n_in, n_out) × n  →  Trace  →  Linear(2·n_out, 1)
+
+**There is no activation layer anywhere.** The Letter introduces L-Act under
+"Additional layers" (Eq. 7, suggesting `g = ReLU(ReTr[W])`) and never uses it —
+"L-Bilins are already nonlinear". `LActPoly` does not appear in the Letter at
+all; it belongs to their later fixed-point-action code, which is the part of
+the repository we are *not* reproducing. We had it after every layer.
+
+That is almost certainly §7's catastrophe: a random polynomial multiplier per
+layer compounding the degree growth L-Bilin already has. `use_act` now defaults
+to **False**.
+
+**And their head is a single `Linear` per site** — no hidden layer, no ReLU
+(Table V: `Trace, Linear(4, 1)` for two channels). Ours is `Linear(2c, 32) →
+ReLU → Linear(32, 1)`, inherited from `gelt/lcnn.py` so that the head matches
+GELT's in the shootout. That is a defensible choice for the comparison and a
+poor one for §7's failure: a saturating ReLU on a hidden layer is exactly what
+turns a small field into an *exactly constant* output. `head_hidden=0` is the
+paper's, `--lcnn-ref-head=linear`.
+
+Three smaller divergences, all deliberate, all recorded here so nobody has to
+rediscover them:
+
+1. **Positive shifts only.** SM §III: "we restrict our convolutions to only
+   consider positive shifts along the lattice axes, i.e. we use 0 ≤ k ≤ K
+   unless explicitly specified otherwise", and SM Table VIII counts the loops
+   that choice *misses*. We pass `use_symmetric=True`, as our own `gelt/lcnn.py`
+   does, because the receptive field has to match GELT's — `notes/lcnn_shootout.md`
+   §8.1 is where that was decided. Their code supports both.
+2. **Kernel size grows with depth** in their four-layer models —
+   `L-CB(2,·), L-CB(2,·), L-CB(3,·), L-CB(3,·)` for `W^(4×4)`, and (3,3,4,4) for
+   the medium one. Ours is uniform `K = 2`. Matching depth and reach to GELT is
+   why; it is a difference, not a defect.
+3. **Their 3+1D four-layer models are 2109 and 14377 parameters**, so our
+   matched `[2,2,2,2]` at 17433 sits just above their largest reported 3+1D
+   architecture. The budget is not the problem.
+
+Two things the paper *confirms* rather than contradicts:
+
+* **Label rescaling is their own device.** SM Eq. (13): `q̃ = C·q` with `C = 100`
+  for the topological-charge regression, "similar to simple whitening
+  transformations… which normalize the domains of the output and input data".
+  `--calibrate-c0` is the same move made on the operator's scale instead of the
+  label's, and it is now precedented in their own work.
+* **Four L-CB layers is inside their range** — the Letter says "up to four
+  layers of L-Conv + L-Bilin and ≈40000 trainable parameters".
+
+And one warning that lands directly on the glueball task: SM §V, "we have found
+that leaving out the lattice average for L-CNNs led to much easier training in
+terms of convergence. **L-CNNs with global average pooling often did not
+converge at all.**" Our Ō is a zero-momentum projection, i.e. a lattice sum —
+exactly the setting they warn about. GELT and our own `lcnn` arm train through
+it, so it is not fatal; it is a reason to read a non-converging `lcnn_ref` run
+as possibly *theirs* rather than *ours*, and to say so rather than quietly
+tuning until it goes away.

@@ -35,14 +35,36 @@ Three things the wrapper has to get right, each of which is a trap:
    part is dropped on the way out, so a Z₂ arm costs 2× the memory here. That is
    a property of their parametrisation, not a defect.
 
-The activation is theirs too (``LActPoly``), not our ``LAct``: "the authors'
-L-CNN" stops meaning anything if half the stack is still ours. At
-``degree_range=2, use_relu=True`` it spans ``{W, (Re Tr W)·W, relu(Re Tr W)·W}``
-per channel, which contains our ``LAct(relu)`` as one of its three terms.
+**There is no activation layer, by default, because there is none in the
+paper.** PRL 128, 032003 Tables V–VI list every architecture they report, in
+1+1D and 3+1D, and each is a bare stack of L-CB followed by ``Trace`` and a
+single ``Linear``: no L-Act anywhere. The Letter introduces L-Act under
+"Additional layers" as something that *can* be applied (Eq. 7, with
+``g = ReLU(ReTr[W])`` as the suggested choice) and never uses it — "L-Bilins are
+already nonlinear". ``LActPoly`` is not in the Letter at all; it belongs to
+their later fixed-point-action code. So ``use_act`` is **False** by default and
+``degree_range`` / ``use_relu`` only matter when it is switched on.
 
-Only the per-site head is shared with :class:`gelt.lcnn.LCNN`, deliberately: it
-carries no gauge structure (it reads traces, which are already invariant) and
-matching it is what keeps the comparison about the equivariant stack.
+That default is not cosmetic. With ``LActPoly`` after every layer the glueball
+stack's field at four layers went as ``init_w^198`` and there was no usable
+initialisation scale at all (``notes/lcnn_reference_switch.md`` §7): a random
+polynomial multiplier per layer compounds the degree growth that L-Bilin already
+has.
+
+The per-site head is shared with :class:`gelt.lcnn.LCNN` by default — it carries
+no gauge structure, it reads traces which are already invariant, and matching it
+is what keeps the comparison about the equivariant stack. ``head_hidden=0``
+gives **their** head instead, the single per-site ``Linear`` of Tables V–VI with
+no hidden layer and no ReLU. Worth having as more than a fidelity option: a
+saturating ReLU on a hidden layer is what turned a small field into an exactly
+constant output in the first glueball run.
+
+Two further divergences from the paper, both deliberate and both recorded in
+``notes/lcnn_reference_switch.md`` §8: their convolutions use **positive shifts
+only** by default (SM §III), while this wrapper passes ``use_symmetric=True`` so
+the receptive field matches GELT's; and their deeper models **grow the kernel
+size with depth** (L-CB(2,·), L-CB(2,·), L-CB(3,·), L-CB(3,·)), while ``K`` here
+is uniform.
 
 See ``notes/m1_probe.md`` §4 and ``notes/lcnn_shootout.md`` for what is being
 compared and why. ``lge-cnn-master/`` is MIT-licensed third-party code and is
@@ -180,8 +202,10 @@ class LCNNRef(nn.Module):
         init_scale: float = 1.0,
         grad_checkpoint: bool = False,
         init_w: float = 1.0,
+        use_act: bool = False,
         degree_range: int = 2,
         use_relu: bool = True,
+        head_hidden: int | None = None,
         dilation: int = 1,
         use_unit_elements: bool = True,
         symmetric: bool = True,
@@ -248,6 +272,7 @@ class LCNNRef(nn.Module):
                 for i in range(n_layers)
             ]
         )
+        self.use_act = use_act
         self.acts = nn.ModuleList(
             [
                 ref.LActPoly(
@@ -258,6 +283,7 @@ class LCNNRef(nn.Module):
                     degree_range=degree_range,
                     use_relu=use_relu,
                 )
+                if use_act else nn.Identity()
                 for i in range(n_layers)
             ]
         )
@@ -275,8 +301,17 @@ class LCNNRef(nn.Module):
 
         # Head: shared with gelt.lcnn.LCNN, byte for byte. LTrace gives the
         # complex trace per channel, i.e. 2·c_hidden reals per site.
-        self.head_fc1 = nn.Linear(2 * self.c_hidden, mlp_hidden).to(real_dtype)
-        self.head_fc2 = nn.Linear(mlp_hidden, mlp_out).to(real_dtype)
+        # head_hidden=0 is the paper's head: one Linear per site, no hidden
+        # layer, no ReLU (Tables V-VI). None keeps gelt.lcnn.LCNN's, which is
+        # what the matched-parameter widths were chosen against.
+        hidden = mlp_hidden if head_hidden is None else head_hidden
+        self.head_hidden = hidden
+        if hidden:
+            self.head_fc1 = nn.Linear(2 * self.c_hidden, hidden).to(real_dtype)
+            self.head_fc2 = nn.Linear(hidden, mlp_out).to(real_dtype)
+        else:
+            self.head_fc1 = None
+            self.head_fc2 = nn.Linear(2 * self.c_hidden, mlp_out).to(real_dtype)
         if init_scale != 1.0:
             with torch.no_grad():
                 self.head_fc2.weight.mul_(init_scale)
@@ -291,6 +326,8 @@ class LCNNRef(nn.Module):
         ``LActPoly``, which allocates one and never uses it.
         """
         for m in list(self.convs) + list(self.acts):
+            if not hasattr(m, "unit_matrix"):
+                continue          # nn.Identity, when use_act is False
             m.unit_matrix = m.unit_matrix.to(real_dtype)
             m.unit_matrix_re = m.unit_matrix_re.to(real_dtype)
             m.unit_matrix_im = m.unit_matrix_im.to(real_dtype)
@@ -333,7 +370,7 @@ class LCNNRef(nn.Module):
         x = ref.repack_x(u, w)
 
         for conv, act in zip(self.convs, self.acts):
-            if self.grad_checkpoint and self.training and torch.is_grad_enabled():
+            if self.grad_checkpoint and self.training and torch.is_grad_enabled():  # noqa: E501
                 # Same trade as gelt.lcnn.LCNN: recompute in backward rather
                 # than keep the layer's (n_out, w_in, t_w) intermediate, which
                 # is this block's memory wall exactly as the channel-pair outer
@@ -348,7 +385,7 @@ class LCNNRef(nn.Module):
         B = tr.shape[0]
         trace = tr.reshape(B, *self.lattice, 2 * self.c_hidden)
 
-        h = F.relu(self.head_fc1(trace))
+        h = F.relu(self.head_fc1(trace)) if self.head_fc1 is not None else trace
         site_out = self.head_fc2(h).squeeze(-1)         # (B, *Λ)
 
         if self.reduction == "none":
@@ -362,7 +399,8 @@ class LCNNRef(nn.Module):
 def reference_dof_count(D: int, K: int, c_in: int, c_hidden: int, n_layers: int,
                         degree_range: int = 2, use_relu: bool = True,
                         mlp_hidden: int = 32, mlp_out: int = 1,
-                        use_unit_elements: bool = True) -> int:
+                        use_unit_elements: bool = True,
+                        use_act: bool = False, head_hidden=None) -> int:
     """Real parameter count, from their shapes, without building the model.
 
     Their kernel is quadratic in the input width — ``(2·c_in+1)·(2·c_in·(1+2DK)+1)``
@@ -386,7 +424,12 @@ def reference_dof_count(D: int, K: int, c_in: int, c_hidden: int, n_layers: int,
         w_in = 2 * widths[i] + (1 if use_unit_elements else 0)
         t_w = 2 * widths[i] * n_terms + (1 if use_unit_elements else 0)
         total += widths[i + 1] * w_in * t_w
-        total += widths[i + 1] * (degree_range + (1 if use_relu else 0))
-    total += 2 * hidden[-1] * mlp_hidden + mlp_hidden       # head_fc1
-    total += mlp_hidden * mlp_out + mlp_out                  # head_fc2
+        if use_act:
+            total += widths[i + 1] * (degree_range + (1 if use_relu else 0))
+    hh = mlp_hidden if head_hidden is None else head_hidden
+    if hh:
+        total += 2 * hidden[-1] * hh + hh                    # head_fc1
+        total += hh * mlp_out + mlp_out                      # head_fc2
+    else:
+        total += 2 * hidden[-1] * mlp_out + mlp_out          # the paper's head
     return total
