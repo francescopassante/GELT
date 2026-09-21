@@ -17,10 +17,19 @@ Two things make it necessary again for ``GLUEBALL_ARCH=lcnn_ref``:
   their activation is ``LActPoly`` (a polynomial in ``Re Tr W`` with random
   coefficients), not our ``LAct``. Nothing measured for ``conv_init_scale``
   transfers to ``init_w``.
-* **read the field, never the output.** The Rayleigh loss needs a nonzero
-  readout so no arm here is zero-initialised, but the head is still a small
-  linear map: a stack sitting at 1e12 can produce a perfectly ordinary-looking
-  Ō and then overflow on the first optimiser step.
+* **the gate is on C(0), not on the field.** The Rayleigh loss is
+  ``−mean_Δ C(Δ)/max(C(0), ε)`` and C(0) is the *connected* variance of Ō over
+  configurations — so what matters is the operator's **fluctuation**, not its
+  magnitude. On thermalised, smeared configurations W ≈ 𝟙 and the field's
+  magnitude is dominated by that constant part: an earlier version of this gate
+  reported ``|W|max`` and would have passed the run that then failed on every
+  single batch. C(0) is reported here alongside the scale-free ratio
+  ``C(0)/⟨Ō⟩²``, which is what separates the two cures — if the ratio is healthy
+  the operator is merely *small* and ``--lcnn-init-scale`` (a head multiplier,
+  C(0) ∝ its square) fixes it; if the ratio is itself ~0 the operator is
+  genuinely constant and the stack's own scale (``init_w``) has to move.
+* the field walk is kept as the diagnostic for the *other* end: a stack at 1e12
+  can still produce an ordinary-looking Ō and overflow on the first step.
 
 Forward-only, at initialisation, on configurations that already exist — no
 training, no gradients, no sampling. GELT runs on the same configurations as the
@@ -28,17 +37,19 @@ control: its aggregation is a convex combination, so if *its* field is O(1) the
 box and the inputs are not what is wrong.
 
     python scripts/glueball_init_gate.py
-    GIG_ARCHS=lcnn_ref GIG_INIT_WS=0.3,0.5,1.0 python scripts/glueball_init_gate.py
+    GIG_ARCHS=lcnn_ref GIG_INIT_WS=1.0,4.0 python scripts/glueball_init_gate.py
 
 Environment overrides (each also ``--name=value`` in argv, via train_glueball):
     GIG_ARCHS      architectures to walk (default gelt,lcnn,lcnn_ref).
-    GIG_INIT_WS    init_w values for lcnn_ref (default 0.3,0.5,1.0,1.5).
+    GIG_INIT_WS    init_w values for lcnn_ref (default 1.0,2.0,4.0,8.0 —
+                   upward; see the note on the constant below).
     GIG_CONV_INITS conv_init_scale values for lcnn (default 1.0 — the value the
                    published runs used; widen it if this gate ever fails).
     GIG_SEEDS      initialisation seeds per cell (default 3).
     GIG_CONFIGS    configurations per cell (default 2).
-    GIG_MAX        the gate: largest field magnitude that counts as O(1)
-                   (default 100.0 — GELT's own is the printed reference).
+    GIG_MAX        largest field magnitude that counts as O(1) (default 100.0 —
+                   GELT's own is the printed reference). Diagnostic only; the
+                   gate proper is on C(0), below.
 
 Writes ``results/glueball/init_gate.pt``. Exit status is 1 if any scanned arm's
 default setting fails, so a batch can stop on it.
@@ -67,7 +78,12 @@ def _env(name, default):
 
 
 ARCHS = [a.strip() for a in _env("GIG_ARCHS", "gelt,lcnn,lcnn_ref").split(",")]
-INIT_WS = [float(x) for x in _env("GIG_INIT_WS", "0.3,0.5,1.0,1.5").split(",")]
+# Upward, not downward. The first version of this grid was centred below 1 on
+# the assumption that the risk was the Z₂ one — an exploding field. At nc = 2
+# with their fan-in the stack *decays* instead, and the failure is the opposite
+# one: C(0) collapses onto the Rayleigh loss's floor and every batch comes back
+# non-finite (measured 2026-09-21, C(0) = 1.2e-10 at init_w = 1.0).
+INIT_WS = [float(x) for x in _env("GIG_INIT_WS", "1.0,2.0,4.0,8.0").split(",")]
 CONV_INITS = [float(x) for x in _env("GIG_CONV_INITS", "1.0").split(",")]
 SEEDS = int(_env("GIG_SEEDS", "3"))
 N_CONFIGS = int(_env("GIG_CONFIGS", "2"))
@@ -177,7 +193,7 @@ def main():
             print(f"\n── {label}   levels {list(mod.INPUT_SMEAR_LEVELS)}   "
                   f"{mod._geometry_label()}")
             configs = batch(mod, N_CONFIGS).to(dev)
-            worst = 0.0
+            bad = False
             for seed in range(SEEDS):
                 torch.manual_seed(seed)
                 model = mod._build_model().to(dev)
@@ -185,25 +201,47 @@ def main():
                     p.numel() * (2 if p.is_complex() else 1)
                     for p in model.parameters()
                 )
-                for c in range(N_CONFIGS):
-                    W, T = mod.config_inputs(configs[c : c + 1], dev)
-                    prof = WALK[arch](model, W, T)
-                    with torch.no_grad():
-                        obar = mod.network_obar(model, configs[c : c + 1], dev)
-                    finite = all(v == v and v != float("inf") for v in prof)
-                    worst = max(worst, max(prof) if finite else float("inf"))
-                    rows.append(dict(arch=arch, scale=scale, seed=seed, config=c,
-                                     profile=prof, obar=obar.abs().max().item(),
-                                     finite=finite, real_dofs=n_real))
-                    del W, T
+                # The field walk, on one configuration — a per-layer diagnostic.
+                W, T = mod.config_inputs(configs[:1], dev)
+                prof = WALK[arch](model, W, T)
+                del W, T
+                finite = all(v == v and v != float("inf") for v in prof)
+
+                # The gate: Ō over the WHOLE batch at once, because C(0) is a
+                # variance across configurations and one configuration cannot
+                # have one. train_glueball's own rayleigh_loss, so this cannot
+                # drift from what the run divides by.
+                with torch.no_grad():
+                    obar = mod.network_obar(model, configs, dev)
+                    loss, C0, R = mod.rayleigh_loss(obar)
+                C0 = C0.item()
+                mean = obar.double().mean().item()
+                rel = C0 / mean**2 if mean != 0 else float("inf")
+                ok = (
+                    finite and C0 == C0 and C0 > 10 * mod.EPS
+                    and max(prof) < GATE_MAX
+                )
+                bad = bad or not ok
+                rows.append(dict(arch=arch, scale=scale, seed=seed,
+                                 profile=prof, C0=C0, mean_obar=mean,
+                                 rel_fluctuation=rel, loss=loss.item(),
+                                 finite=finite, real_dofs=n_real, ok=ok))
                 print(f"   seed {seed}  field by layer: "
                       + "  ".join(f"{v:.3g}" for v in prof)
-                      + f"   |Ō|max {rows[-1]['obar']:.3g}"
-                      + ("" if finite else "   ** NOT FINITE **"))
-            if worst >= GATE_MAX:
+                      + f"\n            C(0) {C0:.3g}   ⟨Ō⟩ {mean:.3g}   "
+                      + f"C(0)/⟨Ō⟩² {rel:.3g}   loss {loss.item():.4g}   "
+                      + ("ok" if ok else "** FAIL **"))
+                if C0 <= 10 * mod.EPS:
+                    print(f"            ↳ C(0) is at or below the loss floor "
+                          f"({10 * mod.EPS:.1e}): every batch will be "
+                          f"non-finite. "
+                          + ("The operator is merely small — raise "
+                             "--lcnn-init-scale (C(0) ∝ its square)."
+                             if rel > 1e-6 else
+                             "The operator is genuinely constant — the stack's "
+                             "own scale must move, not the head's."))
+            if bad:
                 failed.append(label)
-            print(f"   worst field over seeds × configs: {worst:.4g}   "
-                  f"{'PASS' if worst < GATE_MAX else '** FAIL **'}")
 
     os.makedirs("results/glueball", exist_ok=True)
     out = "results/glueball/init_gate.pt"
@@ -213,9 +251,10 @@ def main():
     print(f"\nwrote {out}")
 
     if failed:
-        print(f"\nVERDICT: {failed} exceed the gate. Pick a surviving scale "
+        print(f"\nVERDICT: {failed} fail the gate. Pick a surviving scale "
               f"before training — a run that starts here does not fail at "
-              f"construction, it fails after the first optimiser step.")
+              f"construction, it fails on the first epoch, having spent the "
+              f"ensemble load and the smearing ladder first.")
         return 1
     print("\nVERDICT: every scanned setting holds. The sweep may run.")
     return 0

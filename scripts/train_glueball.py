@@ -846,6 +846,23 @@ def main():
                 )
             train_loss = run_loss / max(nb, 1)
             train_hist.append(train_loss)
+            # Every batch skipped means nb = 0, and the postfix and the collapse
+            # warning below both divide by it. Stop with the diagnosis rather
+            # than a ZeroDivisionError three lines later: an epoch in which not
+            # one batch was finite is not a run that can recover, and the two
+            # causes are opposite ends of the same knob (the operator's scale at
+            # init — C(0) far above the loss's dynamic range, or, as for the
+            # authors' L-CNN at their own init_w, collapsed onto the floor so
+            # the Rayleigh ratio divides by zero).
+            if nb == 0:
+                raise SystemExit(
+                    f"epoch {epoch + 1}: every one of {skipped} batches was "
+                    f"non-finite, so there is nothing to average. The usual "
+                    f"cause is the operator's scale at initialisation — check "
+                    f"C(0) with scripts/glueball_init_gate.py, which reports it "
+                    f"per architecture, and move --lcnn-ref-init-w (or "
+                    f"--init-scale for GELT) before training again."
+                )
 
             # Validation Rayleigh (whole val set at once, minibatched forward) —
             # this is the model-selection signal, kept off the reported test set.
