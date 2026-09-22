@@ -56,14 +56,19 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wilson_regression_common import (
     BATCH_SIZE,
     DUMP_DIR,
+    GELT_ARCHS,
+    GELT_LR,
     LCNN_NPARAM,
     PAPER_MSE_LCNN,
     TRAIN_HP,
+    build_gelt,
     build_lcnn,
+    build_transport,
     cfg,
     load_split,
     mse_pair,
     pick_device,
+    real_dofs,
     validate_argv,
 )
 
@@ -76,16 +81,22 @@ def make_batches(n, batch_size, shuffle):
 def run_split(model, data, batch_size, device, train_step=None):
     """One pass over a split. ``train_step`` makes it the training pass.
 
+    ``data`` is ``(W, aux, y)``. Both architectures are called as
+    ``model(W, aux)`` and differ only in what ``aux`` is: raw links for the
+    reference L-CB, which transports internally, and the shortest-path-averaged
+    L1-ball transport for GELT, which does not. Keeping the call signature
+    identical is what makes the two arms the same experiment.
+
     Returns ``(mean loss, predictions)``; predictions are only accumulated when
     there is no optimiser step, since that is the only time they are wanted.
     """
-    U, W, y = data
+    W, aux, y = data
     model.train() if train_step is not None else model.eval()
     tot, n, preds = 0.0, 0, []
     ctx = torch.enable_grad() if train_step is not None else torch.no_grad()
     with ctx:
-        for b in make_batches(U.shape[0], batch_size, train_step is not None):
-            out = model(W[b].to(device), U[b].to(device))
+        for b in make_batches(W.shape[0], batch_size, train_step is not None):
+            out = model(W[b].to(device), aux[b].to(device))
             loss = nn.functional.mse_loss(out, y[b].to(device))
             if train_step is not None:
                 train_step(loss)
@@ -133,18 +144,25 @@ def train(model, train_data, val_data, lr, epochs, patience, batch_size,
 
 def main():
     validate_argv()
+    arch = str(cfg("WR_ARCH", "lcnn")).lower()
+    if arch not in ("lcnn", "gelt"):
+        raise SystemExit(f"WR_ARCH must be 'lcnn' or 'gelt', got {arch!r}")
     target = str(cfg("WR_TARGET", "W11")).upper()
-    size = str(cfg("WR_SIZE", "small")).lower()
+    size = str(cfg("WR_SIZE", "small" if arch == "lcnn" else "matched")).lower()
     conv_impl = str(cfg("WR_CONV_IMPL", "exact")).lower()
     seed = int(cfg("WR_SEED", 0))
     L = int(cfg("WR_L", 8))
     init_w = float(cfg("WR_INIT_W", 1.0))
+    mlp_zero = str(cfg("WR_MLP_ZERO_INIT", "1")) not in ("0", "false", "False")
     tag = cfg("WR_RUN_TAG", "")
     extra_sizes = [int(s) for s in str(cfg("WR_TEST_SIZES", "")).split(",") if s]
     device = pick_device(cfg("WR_DEVICE", None))
 
     hp = TRAIN_HP[target]
-    lr = float(cfg("WR_LR", hp["lr"]))
+    # The paper's rate is the L-CNN's. GELT's head is zero-initialised, so the
+    # gradient reaches the attention only once the head has moved; GELT_LR is
+    # what train_gelt.py measured for that stall, not a value tuned here.
+    lr = float(cfg("WR_LR", hp["lr"] if arch == "lcnn" else GELT_LR))
     epochs = int(cfg("WR_EPOCHS", hp["epochs"]))
     patience = int(cfg("WR_PATIENCE", hp["patience"]))
     batch_size = int(cfg("WR_BATCH", BATCH_SIZE))
@@ -152,25 +170,44 @@ def main():
     os.makedirs(DUMP_DIR, exist_ok=True)
     torch.manual_seed(seed)
 
+    R = GELT_ARCHS[(target, size)]["R"] if arch == "gelt" else None
     splits = {}
     for name in ("train", "val", "test"):
         U, W, y, beta, _meta = load_split(name, L=L, target=target)
-        splits[name] = (U, W, y)
+        if arch == "gelt":
+            print(f"  building transport R={R} for {name} "
+                  f"({U.shape[0]} configurations)", flush=True)
+            aux = build_transport(U, R=R, device=device, progress=False)
+        else:
+            aux = U
+        splits[name] = (W, aux, y)
         if name == "test":
             test_beta = beta
     print(f"data L={L} target={target}: "
           + " ".join(f"{k}={v[0].shape[0]}" for k, v in splits.items()))
 
-    model, n_param = build_lcnn(target, size, L=L, conv_impl=conv_impl,
-                                init_w=init_w)
+    if arch == "gelt":
+        model, n_param, spec = build_gelt(target, size, L=L,
+                                          mlp_zero_init=mlp_zero)
+        paper_n = LCNN_NPARAM.get((target, "large"))
+        impl = "-".join(f"{k}{v}" for k, v in spec.items())
+        print(f"GELT {target} {size} seed={seed}: {n_param} real DOFs "
+              f"(matched against Table V's L-CNN: {paper_n})")
+        print(f"  {spec}  mlp_zero_init={mlp_zero}")
+    else:
+        model, n_param = build_lcnn(target, size, L=L, conv_impl=conv_impl,
+                                    init_w=init_w)
+        paper_n = LCNN_NPARAM.get((target, size))
+        impl = conv_impl
+        print(f"L-CNN {target} {size} [{conv_impl}] seed={seed}: "
+              f"{n_param} parameters (Table V: {paper_n})")
     model = model.to(device)
-    paper_n = LCNN_NPARAM.get((target, size))
-    print(f"L-CNN {target} {size} [{conv_impl}] seed={seed}: "
-          f"{n_param} parameters (Table V: {paper_n})")
     print(f"  AdamW lr={lr} wd=0  epochs<={epochs} patience={patience} "
           f"batch={batch_size}  device={device}")
 
-    stem = f"wilson_regression_{target}_{size}_{conv_impl}_s{seed}"
+    stem = (f"wilson_regression_{target}_{size}_{conv_impl}_s{seed}"
+            if arch == "lcnn"
+            else f"wilson_regression_gelt_{target}_{size}_s{seed}")
     if tag:
         stem += f"_{tag}"
     ckpt = os.path.join(DUMP_DIR, stem + ".pth")
@@ -180,16 +217,22 @@ def main():
     _, pred = run_split(model, splits["test"], batch_size, device)
     mse_site, mse_avg = mse_pair(pred, splits["test"][2])
     ref = PAPER_MSE_LCNN[target]
+    # The paper's number is the L-CNN's. It is printed for the GELT arm too, as
+    # the scale of the problem, and is *not* a reproduction target there.
+    label = "paper" if arch == "lcnn" else "paper's L-CNN"
     print(f"\n  test MSE (lattice-averaged, Fig. 3's convention): {mse_avg:.3e}"
-          f"   [paper: {ref:.1e}]")
+          f"   [{label}: {ref:.1e}]")
     print(f"  test MSE (per site):                             {mse_site:.3e}")
     print(f"  best val loss: {best_val:.4e}")
 
     dump = {
-        "target": target, "size": size, "conv_impl": conv_impl, "seed": seed,
+        "arch": arch, "target": target, "size": size, "seed": seed,
+        "conv_impl": conv_impl if arch == "lcnn" else None,
+        "gelt_spec": GELT_ARCHS[(target, size)] if arch == "gelt" else None,
         "L": L, "n_param": n_param, "paper_n_param": paper_n,
         "lr": lr, "epochs": epochs, "patience": patience, "batch": batch_size,
-        "init_w": init_w, "history": history, "best_val": best_val,
+        "init_w": init_w, "mlp_zero_init": mlp_zero, "run_tag": tag or None,
+        "history": history, "best_val": best_val,
         "mse_site": mse_site, "mse_avg": mse_avg, "paper_mse": ref,
         "test_pred": pred, "test_true": splits["test"][2], "test_beta": test_beta,
         "epochs_run": len(history["train"]),
@@ -198,6 +241,13 @@ def main():
     # The same trained model on larger lattices: translational equivariance plus
     # a per-site head means an L-CNN transfers without retraining, which is one
     # of the Letter's claims and costs nothing to check here.
+    if extra_sizes and arch == "gelt":
+        # GEMHSA bakes the lattice extents into its offset index maps at
+        # construction; there is no update_dims for it, so the volume-transfer
+        # check is an L-CNN-only reading here rather than a silent no-op.
+        print(f"  [transfer] WR_TEST_SIZES is ignored for WR_ARCH=gelt: "
+              f"GEMHSA's offset maps are built for L={L}")
+        extra_sizes = []
     for Lx in extra_sizes:
         try:
             Ux, Wx, yx, bx, _ = load_split("test", L=Lx, target=target)

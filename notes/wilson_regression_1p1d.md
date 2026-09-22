@@ -211,6 +211,60 @@ keep the **per-site** predictions, so either can be recomputed offline.
   whether the *MSE* survives, which is a statement about the ensemble, not the
   architecture.
 
+## 10. The GELT arm on `W^(4×4)`
+
+Not part of the reproduction. The same problem — same ensemble, same splits,
+same per-site label, same MSE loss, same AdamW with zero weight decay, same
+batch 50, same 100-epoch cap and patience 25 — with this repo's architecture in
+place of the L-CB, at a matched real-parameter budget. `WR_ARCH=gelt`.
+
+**Why on this task, when four attempts have already closed.**
+`where_attention_can_win.md` records four GELT-vs-L-CNN comparisons, every one
+of them either a variational or an unsupervised objective, and every one a tie
+on accuracy. None was a *supervised per-site target with an exact answer*. That
+is a different question: here there is a right answer, the loss floor is
+machine precision rather than an ensemble, and the L-CNN's own number on it is
+known to five orders of magnitude. If the two architectures differ at all on
+representational reach, a task with an exact answer and a hard floor is where
+the difference is least likely to be buried in noise. **It also fails criterion
+4 of §6 of that note** — it is not a physics observable anyone needs predicted —
+so it is a mechanism reading, not a physics result, exactly as the M1 probe is.
+
+**The architecture, and why each number.**
+
+| | value | why |
+|---|---|---|
+| blocks | 4 | the L-CNN's own depth rule, `n = ⌈log₂(N²)⌉ = 4` for a 4×4 loop. GELT's value path is matrix-bilinear precisely so this count transfers. |
+| `R` | 3 | their `L-CB(4, ·)` reaches 3 hops per axis per layer. The L1-ball of radius 3 is a strict superset of that *in the positive quadrant* — it also carries (2,1) and (1,2), which a single-axis chain cannot — so reach is **matched, not widened**, and what differs is the non-axis-aligned content. |
+| `d_qkv` | 8 | RoPE assigns pair `p` to axis `p % D`, so `d_qkv ≥ 2D = 4` is required in 2D (CLAUDE.md caveat 2). 8 covers both axes twice, at two frequencies. |
+| `d_model`, `nhead`, `mlp_hidden` | 32, 2, 32 | whatever lands on Table V's count: **39 569 real DOFs against the L-CNN's 39 905**, 0.8% apart. A complex parameter is two reals, the convention `tests/test_lcnn.py` already uses. |
+| `init_scale` | 10.0 | the repo's value, and **measured at this geometry** rather than carried over: `scripts/wilson_regression_init_gate.py` reads the field after each block on real configurations at L = 8, and it is flat at 1.0 for every scale from 0.3 to 100. Unlike the L-CNN there is no cliff here — the residual stream plus the L-Act gate keep the stack near-identity at init. |
+
+**The one thing not yet settled, and it is not cosmetic.** GELT's head is
+zero-initialised, so the gradient reaches the attention only after the head has
+moved (the `fc2 → fc1 → Q/K/V` cascade). The L-CNN arm it is being compared
+against has a standard-init `Linear` and no such stall. A 12-epoch smoke run on
+120 configurations sat at exactly `var(y)` — the constant predictor — which is
+either the stall or simply 36 optimiser steps, and 36 steps cannot distinguish
+them. So neither the learning rate nor `mlp_zero_init` is asserted here:
+`WR_PARTS=gelt-sweep` brackets both (3 rates × 2 head inits, ten epochs each,
+under disposable `_sweep` tags the figure skips) and the full run takes what it
+says. **The default is `lr = 3e-3`** — `train_gelt.py`'s measured value for the
+same stall, not the paper's 1e-3, which is the L-CNN's — **and
+`mlp_zero_init=True`**, the architecture's own.
+
+**What would count as an answer.** The L-CNN reached `mse_avg = 9.41e−9` on
+`W^(4×4)` (§9). A GELT arm within an order of magnitude of that is parity — the
+fifth tie, and the most informative one, because it would be a tie on a task
+with an exact answer rather than on an ensemble average. Two or more orders
+worse is a real gap and points at the transport or the softmax; two or more
+orders better would be the first accuracy win in five attempts and would need a
+second seed before it is said out loud.
+
+**Not read**: nothing yet. `WR_TEST_SIZES` is ignored for this arm — GEMHSA
+bakes the lattice extents into its offset maps at construction and has no
+`update_dims`, so the volume-transfer reading stays an L-CNN-only one.
+
 ## 8. What is run and what is not
 
 **Wired and smoke-tested** (tiny ensemble, CPU): data generation, all four

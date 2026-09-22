@@ -12,6 +12,15 @@ supposed to be evidence about. The table prints that run and, next to it, the
 median and spread over whatever seeds exist; at one seed per loop the three
 columns coincide, which is the honest way of saying no best-of-N was taken.
 
+**Dumps carrying a ``run_tag`` are skipped**, the same rule as
+``probe_readings.py``: the bracketing runs of ``WR_PARTS=gelt-sweep`` are
+ten-epoch and would otherwise be read as the result.
+
+A GELT arm, if present for a loop, is overlaid on the same panel in a second
+colour with its own MSE line. It is the same problem and the same splits, so
+the panels are directly comparable; it is *not* a reproduction of the paper's
+number and the table labels it as its own row.
+
 **Which MSE.** The lattice-averaged one, Fig. 3's own convention: one point per
 test configuration, both sides averaged over the lattice first. See
 ``wilson_regression_common`` on why.
@@ -41,7 +50,11 @@ from wilson_regression_common import (
     validate_argv,
 )
 
-COLOUR = "#2ca02c"      # the Letter's own green for the L-CNN points
+# The Letter's own green for the L-CNN; a second colour for this repo's arm.
+ARCH_STYLE = {
+    "lcnn": ("L-CNN", "#2ca02c", "o", 2),
+    "gelt": ("GELT", "#d62728", "^", 3),
+}
 
 
 def load_dumps(pattern):
@@ -52,6 +65,9 @@ def load_dumps(pattern):
         d = torch.load(path, map_location="cpu", weights_only=False)
         if "mse_avg" not in d:
             continue
+        if d.get("run_tag"):
+            continue          # a bracketing run, not a result
+        d.setdefault("arch", "lcnn")   # dumps written before the GELT arm
         d["_path"] = path
         runs.append(d)
     return runs
@@ -63,9 +79,9 @@ def lattice_average(d):
     return pred.mean(dim=dims), true.mean(dim=dims)
 
 
-def select(runs, target, size=None):
-    """Best-validation-loss run for one loop, and every run at that size."""
-    cell = [r for r in runs if r["target"] == target
+def select(runs, target, arch="lcnn", size=None):
+    """Best-validation-loss run for one (loop, arch), and every run at that size."""
+    cell = [r for r in runs if r["target"] == target and r["arch"] == arch
             and (size is None or r["size"] == size)]
     if not cell:
         return None, []
@@ -100,27 +116,38 @@ def main():
     for i, target in enumerate(targets):
         ax = axes[i // ncol][i % ncol]
         m, n = LOOPS[target]
-        best, cell = select(runs, target, size)
-        pred, true = lattice_average(best)
-        ax.scatter(pred, true, s=10, c=COLOUR, marker="o", alpha=0.65,
-                   linewidths=0, zorder=2, label="L-CNN")
-
-        vals = sorted(r["mse_avg"] for r in cell)
         paper = PAPER_MSE_LCNN[target]
-        table.append(dict(target=target, size=best["size"],
-                          conv_impl=best.get("conv_impl"),
-                          n_param=best["n_param"],
-                          paper_n_param=best.get("paper_n_param"),
-                          best_mse_avg=best["mse_avg"],
-                          best_mse_site=best["mse_site"],
-                          paper_mse=paper, n_seeds=len(vals),
-                          median_mse_avg=statistics.median(vals),
-                          min_mse_avg=vals[0], max_mse_avg=vals[-1],
-                          seed=best["seed"], path=best["_path"]))
-        payload[target] = dict(pred=pred, true=true, mse_avg=best["mse_avg"])
-
-        lo = min(true.min().item(), pred.min().item())
-        hi = max(true.max().item(), pred.max().item())
+        lo = hi = None
+        note = []
+        for arch in ("lcnn", "gelt"):
+            best, cell = select(runs, target, arch, size)
+            if best is None:
+                continue
+            label, colour, marker, z = ARCH_STYLE[arch]
+            pred, true = lattice_average(best)
+            ax.scatter(pred, true, s=10, c=colour, marker=marker, alpha=0.6,
+                       linewidths=0, zorder=z, label=label)
+            vals = sorted(r["mse_avg"] for r in cell)
+            note.append(f"{label:5} {best['mse_avg']:.1e}")
+            table.append(dict(target=target, arch=arch, size=best["size"],
+                              conv_impl=best.get("conv_impl"),
+                              n_param=best["n_param"],
+                              paper_n_param=best.get("paper_n_param"),
+                              best_mse_avg=best["mse_avg"],
+                              best_mse_site=best["mse_site"],
+                              paper_mse=paper, n_seeds=len(vals),
+                              median_mse_avg=statistics.median(vals),
+                              min_mse_avg=vals[0], max_mse_avg=vals[-1],
+                              seed=best["seed"], path=best["_path"]))
+            payload[f"{arch}_{target}"] = dict(pred=pred, true=true,
+                                               mse_avg=best["mse_avg"])
+            a = min(true.min().item(), pred.min().item())
+            b = max(true.max().item(), pred.max().item())
+            lo = a if lo is None else min(lo, a)
+            hi = b if hi is None else max(hi, b)
+        if lo is None:
+            continue
+        note.append(f"paper {paper:.1e}")
         pad = 0.08 * (hi - lo + 1e-9)
         ax.plot([lo - pad, hi + pad], [lo - pad, hi + pad], "k--", lw=0.8,
                 zorder=0)
@@ -132,10 +159,10 @@ def main():
         # The Letter prints each model's MSE in the panel corner; keeping the
         # paper's own value next to ours is what makes the panel a comparison
         # rather than a picture.
-        ax.text(0.03, 0.97,
-                f"this run: {best['mse_avg']:.1e}\npaper:    {paper:.1e}",
-                transform=ax.transAxes, va="top", ha="left", fontsize=7,
-                family="monospace")
+        ax.text(0.03, 0.97, "\n".join(note), transform=ax.transAxes,
+                va="top", ha="left", fontsize=7, family="monospace")
+        if len(note) > 2:
+            ax.legend(loc="lower right", fontsize=8, frameon=False)
 
     for j in range(len(targets), nrow * ncol):
         axes[j // ncol][j % ncol].axis("off")
@@ -148,13 +175,14 @@ def main():
     torch.save({"table": table, "panels": payload},
                os.path.join(RESULT_DIR, stem + ".pt"))
 
-    hdr = (f"{'loop':7} {'size':7} {'impl':6} {'N_par':>7} {'Table V':>8} "
-           f"{'MSE_avg':>10} {'paper':>9} {'ratio':>10} {'MSE_site':>10} "
-           f"{'seeds':>5} {'median':>10} {'worst':>10}")
+    hdr = (f"{'loop':6} {'arch':5} {'size':8} {'impl':6} {'N_par':>7} "
+           f"{'Table V':>8} {'MSE_avg':>10} {'paper':>9} {'ratio':>10} "
+           f"{'MSE_site':>10} {'seeds':>5} {'median':>10} {'worst':>10}")
     print("\n" + hdr)
     print("-" * len(hdr))
     for r in table:
-        print(f"{r['target']:7} {r['size']:7} {str(r['conv_impl']):6} "
+        print(f"{r['target']:6} {r['arch']:5} {r['size']:8} "
+              f"{str(r['conv_impl']):6} "
               f"{r['n_param']:7d} {str(r['paper_n_param']):>8} "
               f"{r['best_mse_avg']:10.2e} {r['paper_mse']:9.1e} "
               f"{r['best_mse_avg'] / r['paper_mse']:10.2f} "
@@ -164,12 +192,13 @@ def main():
     tex = os.path.join(RESULT_DIR, stem + ".tex")
     with open(tex, "w") as f:
         f.write("% generated by scripts/wilson_regression_figure.py\n")
-        f.write("\\begin{tabular}{lrrrr}\n\\hline\n")
-        f.write("loop & $N_\\mathrm{param}$ & MSE (this work) & "
+        f.write("\\begin{tabular}{llrrrr}\n\\hline\n")
+        f.write("loop & arch & $N_\\mathrm{param}$ & MSE (this work) & "
                 "MSE (Favoni et al.) & seeds \\\\\n\\hline\n")
         for r in table:
             f.write(f"$W^{{({LOOPS[r['target']][0]}\\times"
-                    f"{LOOPS[r['target']][1]})}}$ & {r['n_param']} & "
+                    f"{LOOPS[r['target']][1]})}}$ & {r['arch']} & "
+                    f"{r['n_param']} & "
                     f"{r['best_mse_avg']:.1e} & {r['paper_mse']:.1e} & "
                     f"{r['n_seeds']} \\\\\n")
         f.write("\\hline\n\\end{tabular}\n")

@@ -7,12 +7,21 @@ conventions. The two attention scripts in this repo share one estimator by
 import for exactly this reason; the same discipline applies to a comparison
 whose headline numbers are four MSEs.
 
-**Scope: the L-CNN half of Fig. 3, and nothing else.** The Letter's panels also
+**Scope: the L-CNN half of Fig. 3, plus a GELT arm on the same problem.** The
+Letter's panels also
 carry a baseline CNN, and this does not reproduce it --- that comparison is not
 what the arm in this repo needs to stand on, and their baseline sweep is 2 680
 models across 264 architectures and four activation functions. The four
 ``PAPER_MSE_LCNN`` values are the target; the CNN's are quoted in
 ``notes/wilson_regression_1p1d.md`` §1 for scale and are not computed here.
+
+``WR_ARCH=gelt`` runs this repo's own architecture on the identical problem ---
+same ensemble, same splits, same label, same loss, same optimiser --- at a
+matched real-parameter budget. That is not part of the reproduction and is not
+compared against the paper's number as a reproduction of it; it is the question
+"can the attention block do what the L-CB does here, at the same cost", which
+the four closed attempts in ``notes/where_attention_can_win.md`` never asked on
+a supervised per-site target of this size. See §10 of the design record.
 
 **The two MSEs.** The Letter's Fig. 3 plots one point per test configuration,
 not one per lattice site: their ``LCNN.mse(global_average=True)`` averages the
@@ -119,6 +128,49 @@ LCNN_NPARAM = {
     ("W44", "large"): 39905,
 }
 
+# ── The GELT arm ─────────────────────────────────────────────────────────────
+# Not from any table: this repo's architecture, sized against Table V's largest
+# network for the same loop. Every choice below is recorded in
+# ``notes/wilson_regression_1p1d.md`` §10; the load-bearing ones are
+#
+#   layers = 4   the L-CNN's own depth rule, n = ceil(log2(N^2)) = 4 for a 4x4
+#                loop. GELT's value path is matrix-bilinear for exactly this
+#                reason, so the loop-doubling count transfers unchanged.
+#   R = 3        their L-CB(4, .) reaches 3 hops per axis per layer; GELT's
+#                L1-ball of radius 3 is a strict superset of that in the
+#                positive quadrant -- it also carries (2,1) and (1,2), which a
+#                single-axis chain cannot -- so the reach is matched, not
+#                widened, and the difference is the non-axis-aligned content.
+#   d_qkv = 8    RoPE assigns pair p to axis p % D, so d_qkv >= 2D = 4 is
+#                required in 2D (CLAUDE.md caveat 2); 8 covers both axes twice,
+#                at two frequencies.
+#
+# The width is then whatever lands on Table V's parameter count: 39 569 real
+# degrees of freedom against the L-CNN's 39 905, 0.8% apart. A complex
+# parameter counts as two reals, the convention ``tests/test_lcnn.py`` already
+# uses for the matched-parameter checks.
+GELT_ARCHS = {
+    ("W44", "matched"): dict(R=3, layers=4, d_model=32, nhead=2, d_qkv=8,
+                             mlp_hidden=32),
+    # Smaller siblings, for a width scan that does not need a new ensemble.
+    ("W44", "small"):   dict(R=3, layers=4, d_model=8, nhead=1, d_qkv=8,
+                             mlp_hidden=16),
+    ("W22", "matched"): dict(R=3, layers=2, d_model=32, nhead=2, d_qkv=8,
+                             mlp_hidden=32),
+}
+# INIT_SCALE is the repo's own value (train_glueball.py, train_gelt.py both use
+# 10.0 with qk_init_scale 1.0) and is gated at this geometry by
+# ``scripts/wilson_regression_init_gate.py`` rather than carried over on trust:
+# the field through an attention stack is geometry-dependent and a value
+# measured at D = 3, L = 12 is not a measurement at D = 2, L = 8.
+GELT_INIT_SCALE = 10.0
+GELT_QK_INIT_SCALE = 1.0
+# The paper's 1e-3 is the L-CNN's rate and is kept for that arm. GELT's head is
+# zero-initialised, so the gradient reaches the attention only once the head has
+# moved (the fc2 -> fc1 -> Q/K/V cascade); 3e-3 is what train_gelt.py measured
+# for the same stall and is this arm's default, not a tuned value.
+GELT_LR = 3e-3
+
 # ── SM SS VI.A / Table V caption: training hyper-parameters ─────────────────
 # "Models for W(1x1) and W(1x2) are trained for a maximum of 20 epochs with a
 #  batch size of 50 and early stopping (patience value 5). The learning rate was
@@ -205,6 +257,78 @@ def lcnn_dof_count(layers, conv_impl="ref", D=2):
         slots = max(1, shifts) if conv_impl == "exact" else 1 + shifts
         total += n_out * (2 * n_in + 1) * (2 * n_in * slots + 1)
     return total + 2 * layers[-1][2] + 1
+
+
+def real_dofs(model):
+    """Parameter count in real degrees of freedom (a complex weight is two).
+
+    The convention ``tests/test_lcnn.py`` already uses for matched-parameter
+    checks, and the only one under which the two arms here are comparable: the
+    reference L-CB's weights are real tensors cast to complex at use, GELT's
+    are complex.
+    """
+    return sum(p.numel() * (2 if p.is_complex() else 1) for p in model.parameters())
+
+
+def build_gelt(target, size, L, init_scale=None, qk_init_scale=None,
+               mlp_zero_init=True):
+    """This repo's architecture on the same problem. See ``GELT_ARCHS``.
+
+    ``mlp_zero_init`` is a knob and not a constant because it is the one choice
+    here with a known cost. Zero-initialising the head makes the untrained model
+    the constant predictor at the target mean, which is the clean baseline
+    ``train_gelt.py`` wants; it also means the gradient reaches the attention
+    only once the head has moved (the fc2 -> fc1 -> Q/K/V cascade), and that
+    stall is exactly what looks like "GELT cannot do this task" if the epoch
+    budget is short. The L-CNN arm it is being compared against has a
+    standard-init Linear head and no such stall, so which setting is the fair
+    one is a measurement, not a preference -- ``WR_PARTS=gelt-sweep`` makes it.
+    """
+    from gelt.blocks import GELT
+    from gelt.lattice import SU
+
+    key = (target, size)
+    if key not in GELT_ARCHS:
+        raise SystemExit(f"no GELT architecture for {key}; have "
+                         f"{sorted(GELT_ARCHS)}")
+    spec = dict(GELT_ARCHS[key])
+    model = GELT(
+        SU(2), L=L, D=2, R=spec["R"],
+        nhead=spec["nhead"], gemhsa_layers=spec["layers"], d_qkv=spec["d_qkv"],
+        d_model=spec["d_model"], mlp_hidden=spec["mlp_hidden"], mlp_out=1,
+        in_channels=1,                          # 1+1D: one plaquette channel
+        reduction="none",                       # per-site output
+        gate="softplus",
+        dtype=torch.complex64,
+        init_scale=GELT_INIT_SCALE if init_scale is None else init_scale,
+        qk_init_scale=(GELT_QK_INIT_SCALE if qk_init_scale is None
+                       else qk_init_scale),
+        mlp_zero_init=mlp_zero_init,
+    )
+    return model, real_dofs(model), spec
+
+
+def build_transport(U, R, chunk=512, device=None, progress=True):
+    """``T`` for every configuration, in chunks.
+
+    ``GELT.forward(W, T)`` wants the shortest-path-averaged transport over the
+    signed L1-ball, which is a function of the links alone, so it is built once
+    per split rather than once per optimiser step. At R = 3 in 2D that is 24
+    offsets, i.e. ~0.5 GB in complex64 for the training split -- large enough to
+    be worth building in chunks, small enough to keep resident.
+    """
+    from gelt.lattice import SU, build_transport_average
+
+    outs = []
+    for i in range(0, U.shape[0], chunk):
+        u = U[i:i + chunk]
+        if device is not None:
+            u = u.to(device)
+        outs.append(build_transport_average(u, R=R, gaugegroup=SU(2)).cpu())
+        if progress:
+            print(f"    transport {min(i + chunk, U.shape[0])}/{U.shape[0]}",
+                  flush=True)
+    return torch.cat(outs)
 
 
 def build_lcnn(target, size, L, conv_impl="ref", init_w=1.0, check_nparam=True):

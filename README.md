@@ -117,7 +117,8 @@ CLAUDE.md              module-by-module detail, conventions, status, caveats
 | `lcnn_shootout.sh` | the V100 batch behind the L-CNN shootout: profile, LR/init sweep, two trainings, the untrained control |
 | `bench_lcnn_reference.py` | our L-CNN block against the authors' own implementation, same shape, same box |
 | `wilson_regression_data.py` | the 1+1D SU(2) datasets of PRL 128, 032003: their Metropolis, one independent chain per configuration |
-| `wilson_regression.py` | one (loop, size, seed) of the Fig. 3 reproduction, on the authors' own L-CB |
+| `wilson_regression.py` | one (loop, size, seed) of the Fig. 3 reproduction, on the authors' own L-CB — `WR_ARCH=gelt` runs ours on the identical problem at a matched parameter budget |
+| `wilson_regression_init_gate.py` | does the GELT arm's field survive four blocks at D=2, L=8? forward-only, seconds |
 | `wilson_regression_figure.py` | the four scatter panels and the MSE table against the paper's own numbers — offline |
 | `wilson_regression.sh` | the whole Fig. 3 batch: data, four trainings, the figure |
 | `fit_glueball_overlap.py` | cosh fits, overlap A₀, correlated (Δm, ΔA₀) — offline |

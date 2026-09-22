@@ -662,6 +662,18 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   to `WR_SIZES=best WR_SEEDS=1`, i.e. **four runs**. `WR_DATA_DIR` writes a
   smoke set somewhere the production set is not. Every entry point calls
   `validate_argv()` first, the same discipline as the probe.
+  **`WR_ARCH=gelt`** runs this repo's architecture on the identical problem —
+  same ensemble, splits, label, loss and optimiser, **39 569 real DOFs against
+  the L-CNN's 39 905** (R=3 ↔ their k=4, 4 blocks ↔ their depth rule
+  `⌈log₂ N²⌉`). Not part of the reproduction: it is the fifth GELT-vs-L-CNN
+  comparison and the first on a *supervised per-site target with an exact
+  answer* (`notes/wilson_regression_1p1d.md` §10, which knowingly violates
+  criterion 4 of `where_attention_can_win.md` §6). `scripts/wilson_regression_init_gate.py`
+  is its init gate, measured at **this** geometry — the field is flat at 1.0
+  from `init_scale` 0.3 to 100, no cliff, unlike the L-CNN's. The open choice
+  is the **zero-initialised head**: the gradient reaches the attention only
+  after `fc2` moves, which the L-CNN has no analogue of, so `lr` and
+  `mlp_zero_init` are bracketed by `WR_PARTS=gelt-sweep` rather than asserted.
 - **`profile_glueball_step.py`** — where one optimizer step goes, per stage,
   forward **and backward** separately. It goes through
   `train_glueball.config_inputs`, i.e. the pipeline the training loop actually
