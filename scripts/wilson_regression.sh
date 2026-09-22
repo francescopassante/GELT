@@ -28,7 +28,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-PY=${PY:-.venv/bin/python}
+# Same convention as lcnn_shootout.sh: the interpreter on PATH, overridable.
+# A hardcoded .venv/bin/python is a local-machine assumption and breaks on any
+# box where the environment is a module load or a conda env.
+#   PY=.venv/bin/python bash scripts/wilson_regression.sh
+PY="${PY:-python}"
 PARTS=${WR_PARTS:-data,train,figure}
 SEEDS=${WR_SEEDS:-1}
 TARGETS=${WR_TARGETS:-W11,W12,W22,W44}
@@ -57,7 +61,7 @@ if has_part data; then
   if [ -f "$DATA/train_L8.pt" ] && [ "$DRY" != "1" ]; then
     echo "= data: $DATA/train_L8.pt exists, skipping"
   else
-    run $PY scripts/wilson_regression_data.py
+    run $PY -u scripts/wilson_regression_data.py
   fi
 fi
 
@@ -74,11 +78,11 @@ if has_part train; then
           echo "= $d exists, skipping"; continue
         fi
         run env WR_TARGET=$t WR_SIZE=$s WR_CONV_IMPL=$IMPL WR_SEED=$seed \
-            $PY scripts/wilson_regression.py
+            $PY -u scripts/wilson_regression.py
       done
     done
   done
 fi
 
-has_part figure && run $PY scripts/wilson_regression_figure.py
+has_part figure && run $PY -u scripts/wilson_regression_figure.py
 echo "done."
