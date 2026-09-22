@@ -59,12 +59,19 @@ no hidden layer and no ReLU. Worth having as more than a fidelity option: a
 saturating ReLU on a hidden layer is what turned a small field into an exactly
 constant output in the first glueball run.
 
-Two further divergences from the paper, both deliberate and both recorded in
+One further divergence from the paper is deliberate and recorded in
 ``notes/lcnn_reference_switch.md`` §8: their convolutions use **positive shifts
-only** by default (SM §III), while this wrapper passes ``use_symmetric=True`` so
-the receptive field matches GELT's; and their deeper models **grow the kernel
-size with depth** (L-CB(2,·), L-CB(2,·), L-CB(3,·), L-CB(3,·)), while ``K`` here
-is uniform.
+only** by default (SM §III), while this wrapper defaults to
+``use_symmetric=True`` so the receptive field matches GELT's. Pass
+``symmetric=False`` for their own default. ``K`` accepts a per-layer sequence,
+because their deeper models **grow the kernel size with depth** (L-CB(2,·),
+L-CB(2,·), L-CB(3,·), L-CB(3,·) for ``W^(4×4)``).
+
+``conv_impl`` picks the L-CB parametrisation: ``"ref"`` is the vendored class as
+published, ``"exact"`` is :mod:`gelt.lcnn_exact`, which drops the one transported
+slot by which the published code exceeds the parameter counts PRL 128, 032003
+Table V prints. See that module for the evidence; neither is a correction of the
+other.
 
 See ``notes/m1_probe.md`` §4 and ``notes/lcnn_shootout.md`` for what is being
 compared and why. ``lge-cnn-master/`` is MIT-licensed third-party code and is
@@ -191,7 +198,7 @@ class LCNNRef(nn.Module):
         gaugegroup,
         L,
         D: int,
-        K: int,
+        K,                        # int, or a per-layer sequence
         c_hidden,                 # int, or a per-layer sequence
         n_layers: int,
         dtype: torch.dtype = torch.complex64,
@@ -209,6 +216,7 @@ class LCNNRef(nn.Module):
         dilation: int = 1,
         use_unit_elements: bool = True,
         symmetric: bool = True,
+        conv_impl: str = "ref",
     ):
         super().__init__()
         if reduction not in ("sum", "mean", "none"):
@@ -217,7 +225,7 @@ class LCNNRef(nn.Module):
             )
         ref = reference_layers()
         self.reduction = reduction
-        self.K = K
+        self.K = K                 # as given: int or sequence
         self.D = D
         self.gaugegroup = gaugegroup
         self.grad_checkpoint = grad_checkpoint
@@ -253,14 +261,37 @@ class LCNNRef(nn.Module):
         self.c_hidden = hidden[-1]      # what the head reads
 
         # Their kernel_size, in their convention. See the module docstring.
-        self.kernel_size_ref = K + 1
+        # ``K`` may be a per-layer sequence: Tables V-VI grow the kernel with
+        # depth (L-CB(2,.), L-CB(2,.), L-CB(3,.), L-CB(3,.) for the W^(4x4)
+        # networks), and a uniform K cannot express that.
+        if isinstance(K, (tuple, list)):
+            ks = [int(k) for k in K]
+            if len(ks) != n_layers:
+                raise ValueError(
+                    f"K has {len(ks)} entries for {n_layers} layers"
+                )
+        else:
+            ks = [int(K)] * n_layers
+        self.Ks = ks
+        self.kernel_size_ref = [k + 1 for k in ks]
+
+        if conv_impl not in ("ref", "exact"):
+            raise ValueError(
+                f"conv_impl must be 'ref' or 'exact', got {conv_impl!r}"
+            )
+        self.conv_impl = conv_impl
+        if conv_impl == "exact":
+            from gelt.lcnn_exact import exact_conv_class
+            conv_cls = exact_conv_class()
+        else:
+            conv_cls = ref.LConvBilin
 
         widths = [c_in_plaq] + hidden
         self.convs = nn.ModuleList(
             [
-                ref.LConvBilin(
+                conv_cls(
                     dims=self.dims,
-                    kernel_size=self.kernel_size_ref,
+                    kernel_size=self.kernel_size_ref[i],
                     dilation=dilation,
                     n_in=widths[i],
                     n_out=widths[i + 1],
@@ -347,6 +378,29 @@ class LCNNRef(nn.Module):
                 any_dev = next(iter(m.unit_tensors.values())).device
                 if any_dev != device:
                     m.unit_tensors = {}
+
+    def update_dims(self, lattice):
+        """Retarget the stack to another lattice size, same ``D``.
+
+        An L-CNN is translationally equivariant and its head is per-site, so a
+        trained model applies unchanged to any volume — one of the claims of
+        PRL 128, 032003 (they train on 8 × 8 and test up to 64 × 64). Nothing
+        about the parameters changes; what has to move is the lattice shape the
+        vendored layers reshape against inside ``shift``, plus their unit-matrix
+        cache, which is keyed on tensor shape and would otherwise hand back a
+        tensor sized for the old volume.
+        """
+        lat = (tuple(lattice) if isinstance(lattice, (tuple, list))
+               else (int(lattice),) * self.D)
+        if len(lat) != self.D:
+            raise ValueError(f"lattice={lattice!r} does not describe {self.D} axes")
+        self.lattice = lat
+        self.dims = list(lat)
+        for m in list(self.convs) + list(self.acts):
+            if hasattr(m, "update_dims"):
+                m.update_dims(self.dims)
+            if hasattr(m, "unit_tensors"):
+                m.unit_tensors = {}
 
     def forward(self, W: torch.Tensor, U: torch.Tensor) -> torch.Tensor:
         """W : ``(B, C_in_plaq, *Λ, nc, nc)`` — plaquettes.
