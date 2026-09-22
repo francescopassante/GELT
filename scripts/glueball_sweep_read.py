@@ -18,10 +18,14 @@ So this reads three things per run, not one:
 * **was the horizon binding?** The best epoch being the last one, with the curve
   still falling across the final quarter, means the run was cut off. A sweep in
   which the winner was cut off has not measured what it claims to.
-* **excursions** — the largest val *after* the best. The M1 probe's ``diverged``
-  flag keyed on the best value and was therefore blind to a run that learns,
-  blows up and settles back at the trivial predictor; the same shape is possible
-  here and the same blindness would follow from reading only the best.
+* **give-back** — how much of the descent the run returned after its best
+  epoch, as a fraction of the descent. The M1 probe's ``diverged`` flag keyed on
+  the best value and was therefore blind to a run that learns, blows up and
+  settles back at the trivial predictor; the same shape appears here, and the
+  first version of *this* reader was blind to it too — it used a ratio
+  ``max(after)/best``, which is meaningless for a loss that is negative at
+  convergence, and guarded it with ``best > 0`` so the check was inert on every
+  run that worked.
 
 It parses the training logs rather than the dumps, because the dumps of runs
 made before 2026-09-21 do not carry the val curve (only ``best_val_loss``).
@@ -79,10 +83,18 @@ def verdict(series):
     falling = len(vals) >= 4 and (sum(vals[-q:]) / q) < (sum(vals[-2 * q:-q]) / q)
     cut_off = best_epoch == last and falling
 
+    # How much of the descent was given back after the best epoch, as a
+    # fraction of the descent itself. A ratio max(after)/best is wrong here:
+    # the Rayleigh loss is *negative* at convergence, so a ratio is meaningless
+    # and the `best > 0` guard an earlier version used made the whole check
+    # inert on exactly the runs that converged. 1.0 means the run returned all
+    # the way to where it started.
     after = vals[best_i + 1:]
-    excursion = (max(after) / best) if after and best > 0 else 1.0
+    descent = vals[0] - best
+    giveback = (max(after) - best) / descent if after and descent > 0 else 0.0
     return dict(best=best, best_epoch=best_epoch, last=last, falling=falling,
-                cut_off=cut_off, excursion=excursion, final=vals[-1])
+                cut_off=cut_off, giveback=giveback, final=vals[-1],
+                start=vals[0])
 
 
 def label(path):
@@ -101,7 +113,7 @@ def main(argv):
     print("Glueball sweep — best val Rayleigh loss, and whether the horizon bound it")
     print("=" * 86)
     print(f"{'run':34s} {'best':>9s} {'@ep':>5s} {'final':>9s} "
-          f"{'excursion':>10s}   status")
+          f"{'giveback':>9s}   status")
 
     rows, parsed = [], 0
     for p in paths:
@@ -116,12 +128,15 @@ def main(argv):
         status = []
         if v["cut_off"]:
             status.append("** CUT OFF — best is the last epoch and still falling")
-        if v["excursion"] > 2.0:
-            status.append(f"** EXCURSION ×{v['excursion']:.1f} after the best")
+        if v["giveback"] > 0.25:
+            status.append(
+                f"** GAVE BACK {100 * v['giveback']:.0f}% of its descent after "
+                f"epoch {v['best_epoch']}"
+            )
         if reported is not None and abs(reported - v["best"]) > 1e-3:
             status.append(f"(log reports {reported:.4f})")
         print(f"{label(p):34s} {v['best']:9.4f} {v['best_epoch']:5d} "
-              f"{v['final']:9.4f} {v['excursion']:10.2f}   "
+              f"{v['final']:9.4f} {v['giveback']:9.2f}   "
               + ("; ".join(status) if status else "ok"))
         rows.append((v["best"], label(p), v))
 
