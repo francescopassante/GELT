@@ -42,6 +42,20 @@ or "removed in the 2026-09-09 cleanup", that is where it went.
   `train_glueball.py`, and the readings fixed in advance. **Run 2026-09-14:
   parity** — ΔA₀(GELT − L-CNN) = +0.007 ± 0.007 (1.1σ), same mass, same
   noise-to-signal (§9.3); the one asymmetry is robustness (§9.2).
+- `notes/wilson_regression_1p1d.md` — **the reproduction of the L-CNN half of
+  Fig. 3 of PRL 128, 032003**: 1+1D SU(2) Wilson-loop regression (1×1, 1×2, 2×2,
+  4×4) on 8×8, on the authors' own L-CB, at the parameter counts and
+  hyper-parameters the Supplemental Material prints. **One network per loop
+  shape, four runs** — Table V's three sizes and SM §VI.A's ten seeds are a
+  sweep whose minimum is the number in the panel, not three results, and the
+  default takes the largest size at one seed (§8). **Their baseline-CNN half is
+  deliberately not reproduced** (§1): 2 680 models over 264 architectures and
+  four activations, and it says nothing about whether our L-CNN is theirs. Holds
+  the β-ladder ambiguity (SM Table I says 11 couplings, SM §II says 10), the
+  one-chain-per-configuration departure from their MC, and **§4, the divergence
+  that forced `gelt/lcnn_exact.py`**. Wired and smoke-tested 2026-09-22; **the
+  production ensemble is not generated and no reading has a value yet** (§7 is
+  the pre-registration).
 - `notes/where_attention_can_win.md` — **the architecture question's running
   record, and the first thing to read before proposing a GELT-vs-L-CNN task.**
   Both attempts and why each closed: the 0⁺⁺ tie (structural) and the flow-free
@@ -308,6 +322,16 @@ implementation (MIT, Favoni et al. 2012.12901), layer sources only, tracked so
     of the original cost the ens2 replication run); overrelaxation reflects
     `U' = V†·U†·V†` and re-projects with the closed-form `_project_su2`.
     SU(2) only — SU(N≥3) needs Cabibbo–Marinari.
+  - **`metropolis_sweep_multichain`** + **`_su2_proposal_paper`** — the batched
+    sampler behind the 1+1D Wilson-loop datasets. A leading configuration axis is
+    a batch of **independent chains**, each carrying its own β (a `(B,)` tensor),
+    so a whole coupling ladder thermalises in one set of kernels and no `.item()`
+    fires inside the hit loop. `_su2_proposal_paper` is Favoni et al.'s own kernel
+    (SM §I): `V = exp(i Σ_a T^a X^a)` with `X^a = A η^a`, η standard normal — in
+    closed form at nc = 2, the unit quaternion `(cos|X|/2, sin|X|/2·X̂)`. **Not**
+    `_su2_proposal`, whose vector part is uniform on a cube. Pinned against the
+    exact 2D result `I₂(β)/I₁(β)` at three couplings at once, so a β-broadcast
+    bug shows up as the *ladder* being wrong rather than the sampler.
   - **`z2_heatbath_sweep`** — exact Z₂ heat-bath, `P(U=+1) = σ(2βs)`. Near β_c
     the Metropolis flip proposal's acceptance collapses to 0.02; this does not.
   - **`integrated_autocorrelation_time(series, c=6, max_lag=None)`** → `(rho,
@@ -433,6 +457,32 @@ implementation (MIT, Favoni et al. 2012.12901), layer sources only, tracked so
   **Measured**: our `LCB` reproduces their kernel exactly (1.9e-15) once the
   L-Conv width reaches `2·c_in·(1+2DK)`, so ours is a low-rank member of their
   family — and the production widths are 8% and 1.6% of that.
+  **`K` takes a per-layer sequence** (their deeper models grow the kernel with
+  depth: L-CB(2,·), L-CB(2,·), L-CB(3,·), L-CB(3,·)), **`conv_impl`** picks the
+  L-CB parametrisation (`"ref"` = as published, `"exact"` = `gelt/lcnn_exact.py`),
+  and **`update_dims`** retargets a trained stack to another volume — which is
+  the Letter's own generalisation claim and is a test, not a comment
+  (a 2×2 tiling reproduces the tiled per-site output to 1e-10).
+- **`lcnn_exact.py`** — **the L-CB the Letter *reports*, where the vendored code
+  drifted.** Their published `LConvBilin` seeds the transported list with the
+  field itself (`t_w = [w]`) and then appends the `D(k−1)` shifts, so the
+  bilinear runs over `1 + D(k−1)` slots; PRL 128, 032003 Table V's parameter
+  counts are reproduced **exactly, all ten architectures**, by `max(1, D(k−1))`
+  slots — the transported copies alone, the local field kept only when there are
+  none (`k = 1`). The extra slot is the same-site square `W_i · W_j` (the unit
+  element already gives `W · 𝟙`), so the published class is a strictly larger
+  function class at strictly more parameters: 47 vs 35 for `W^(1×2)` small,
+  46 481 vs 39 905 for `W^(4×4)` large. Neither is treated as the correction of
+  the other — `conv_impl="ref"` is the code as published, `"exact"` is the
+  architecture as reported. `tests/test_lcnn_exact.py` pins the table, pins the
+  excess, and shows the two are the **same function** once the added slots are
+  zeroed (which tests the ordering of their `t_w` axis, not just its length).
+  Nothing in `lge-cnn-master/` is modified; the class is a subclass of theirs.
+  **Consequence elsewhere:** every "the authors' own L-CNN at N parameters" in
+  `notes/lcnn_reference_switch.md`, `notes/lcnn_shootout.md` and
+  `notes/m1_probe.md` quotes the *wider* variant. Those are matched to **our**
+  L-CNN by parameter count and are unaffected as comparisons; what is not quite
+  right is only the sentence "this is the paper's network".
 - **`cnn_baseline.py`** — `LatticeCNN`: non-equivariant baseline; `Conv2d`/
   `Conv3d` for D=2/3 and a roll-based `_RollConvND` for D≥4.
 
@@ -595,6 +645,23 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   `Z2V_SMOKE` (production *geometry* off a short fresh chain, under a minute —
   it samples nothing otherwise, the ensembles are `train_z2_glueball.py`'s by
   the identical cache key).
+- **`wilson_regression_data.py` / `wilson_regression_common.py` /
+  `wilson_regression.py` / `wilson_regression_figure.py` /
+  `wilson_regression.sh`** — the Fig. 3 reproduction, L-CNN only
+  (`notes/wilson_regression_1p1d.md`). `wilson_regression_common.py` holds the
+  β ladder, SM Table V **verbatim in the table's own `L-CB(k, n_in, n_out)`
+  notation**, the loader and the two MSE conventions, so nothing can drift
+  between the generator, the trainer and the figure; the parameter count is
+  checked against the printed table **at build time**, because a silently wider
+  network is the one way this reproduction could "succeed" without reproducing
+  anything. **The number to quote is `mse_avg`** — Fig. 3 plots one point per
+  configuration, both sides averaged over the lattice first, which is their own
+  `mse(global_average=True)`; `mse_site` is printed beside it because on an 8×8
+  lattice the averaged one is 64× more forgiving, and the dumps keep the
+  per-site predictions so either can be recomputed offline. The batch defaults
+  to `WR_SIZES=best WR_SEEDS=1`, i.e. **four runs**. `WR_DATA_DIR` writes a
+  smoke set somewhere the production set is not. Every entry point calls
+  `validate_argv()` first, the same discipline as the probe.
 - **`profile_glueball_step.py`** — where one optimizer step goes, per stage,
   forward **and backward** separately. It goes through
   `train_glueball.config_inputs`, i.e. the pipeline the training loop actually
@@ -669,6 +736,15 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   additive; the local arm is bounded by the global one, matches a brute-force
   BFS and **ignores structure outside its ball** — the honesty gate that makes
   it a ceiling; gauge invariance in Z₂ and SU(2); the D ≠ 3 guard.
+- **`test_lcnn_exact.py`** — the Letter's L-CB and the Fig. 3 reproduction's
+  premises: SM Table V's ten parameter counts; that the vendored class exceeds
+  them by exactly the predicted slot; that `ref` and `exact` are the **same
+  function** once the added slots are zeroed (1e-12, which tests the ordering of
+  their `t_w` axis, not just its length); gauge invariance of the per-site
+  readout; translation equivariance **and volume transfer** (a 2×2 tiling into
+  16×16 reproduces the tiled output); the training hyper-parameters as SM §VI.A
+  prints them; and `W^(1×1)` **constructively** exact in the 12-parameter
+  network, so its MSE is a float32 floor and not an approximation error.
 - **`test_data_model.py`** — split validation and CNN-baseline shape guards.
 
 ## Conventions
@@ -807,6 +883,10 @@ GLUEBALL_ARCH=lcnn_ref python scripts/train_glueball.py  # ...the authors' own
 Z2GATE_ARM=lcnn_ref python scripts/z2_init_gate.py   # their init_w, at production volume
 LCNN_DRY_RUN=1 bash scripts/lcnn_shootout.sh # the L-CNN batch: what would run
 python scripts/bench_lcnn_reference.py       # our L-CNN block vs lge-cnn's
+WR_DRY_RUN=1 bash scripts/wilson_regression.sh   # the PRL Fig. 3 batch: what would run
+python scripts/wilson_regression_data.py     # the 1+1D SU(2) datasets (GPU)
+WR_TARGET=W22 WR_SIZE=large python scripts/wilson_regression.py
+python scripts/wilson_regression_figure.py   # the four panels + the MSE table (offline)
 python scripts/operator_decomposition.py     # O = P + r (offline, seconds)
 python scripts/input_architecture_curve.py   # A₀ vs input content (offline, seconds)
 SFF_NOCACHE=1 python scripts/su2_fair_fight.py     # reproduce ΔA₀ offline

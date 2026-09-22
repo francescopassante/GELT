@@ -56,6 +56,7 @@ Three audits of the above and one baseline, none of which main.tex quotes:
 | Did the network find operator content the classical basis cannot express? | *offline:* `python scripts/operator_decomposition.py` — 12.9% of the norm² outside the published span, ΔA₀ = +0.076 ± 0.019 (4.0σ). Add `--basis=dumps/su2_fair_fight_obars_run5.pt:deep` for the strong arm (+0.097 ± 0.021) and `--shape-span=…:full` for what `r` is made of (80% rectangular loops); `--m-ref` runs the untrained control, where ΔA₀ flips sign. `notes/operator_decomposition.md` |
 | Is the advantage the architecture, or just richer inputs? | *GPU, ~1.5 days:* `bash scripts/curve_batch.sh` (3 trained points + the untrained trace), then *offline:* one `SFF_TRUNCATE=1 SFF_BASES=1 python scripts/su2_fair_fight.py <dump>` per dump and `python scripts/input_architecture_curve.py`. A₀ against input content for classical / trained / untrained. Verdict in `notes/fable5.1_10-09_audit.md` §8.2 |
 | Is the advantage attention, or any gauge-equivariant network on the same inputs? | *GPU, one night:* `bash scripts/lcnn_shootout.sh` trains a matched-parameter L-CNN on the identical problem (`GLUEBALL_ARCH=lcnn`), then *offline:* `python scripts/fit_glueball_overlap.py <gelt dump> --vs=<lcnn dump>` differences the two inside every jackknife sample. **Parity:** ΔA₀(GELT − L-CNN) = +0.012 ± 0.009 (1.3σ), same mass, both beating the GEVP by the same margin — plus a robustness gap parity does not contain (3 of 9 L-CNN operators put 36–98% of C(0) on one configuration; 0 of 14 GELT ones exceed 1.0%). `notes/lcnn_shootout.md` §9 |
+| Does our L-CNN arm reproduce the paper it comes from? | *GPU for the ensemble, then CPU-minutes:* `bash scripts/wilson_regression.sh` — the L-CNN half of Fig. 3 of PRL 128, 032003: the 1+1D SU(2) datasets and **one network per Wilson-loop shape** at SM Table V's own architecture and hyper-parameters, against the four MSEs the Letter prints. `WR_CONV_IMPL=exact` is the architecture as *reported* (`gelt/lcnn_exact.py`); `ref` is the vendored code as *published*, one transported slot per layer wider. Their baseline-CNN half is not reproduced. Design record and pre-registered readings in `notes/wilson_regression_1p1d.md` |
 
 **Known caveat that touches the Z₂ table.** Projected Z₂ APE smearing has no
 tunable radius at any α, and at the production `SMEAR_ALPHA = 0.5` it is not
@@ -115,6 +116,10 @@ CLAUDE.md              module-by-module detail, conventions, status, caveats
 | `train_glueball.py` | GELT as a variational operator on the Rayleigh loss — `--arch=lcnn` runs the matched-parameter L-CNN on the identical problem |
 | `lcnn_shootout.sh` | the V100 batch behind the L-CNN shootout: profile, LR/init sweep, two trainings, the untrained control |
 | `bench_lcnn_reference.py` | our L-CNN block against the authors' own implementation, same shape, same box |
+| `wilson_regression_data.py` | the 1+1D SU(2) datasets of PRL 128, 032003: their Metropolis, one independent chain per configuration |
+| `wilson_regression.py` | one (loop, size, seed) of the Fig. 3 reproduction, on the authors' own L-CB |
+| `wilson_regression_figure.py` | the four scatter panels and the MSE table against the paper's own numbers — offline |
+| `wilson_regression.sh` | the whole Fig. 3 batch: data, four trainings, the figure |
 | `fit_glueball_overlap.py` | cosh fits, overlap A₀, correlated (Δm, ΔA₀) — offline |
 | `overnight_replication.sh` | fresh ensemble + from-scratch training, unattended |
 | `operator_decomposition.py` | O_GELT = P + r against the classical span, any fair-fight arm — offline |

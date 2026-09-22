@@ -295,6 +295,136 @@ def metropolis_sweep(
     return U, total_accepted / total_proposed
 
 
+def _su2_proposal_paper(
+    U_mu: torch.Tensor, gaugegroup: GaugeGroup, epsilon: float = 0.5
+) -> torch.Tensor:
+    """Favoni et al.'s own SU(2) Metropolis proposal (PRL 128, 032003 SM §I).
+
+    Their update is ``U' = V · U`` with ``V = exp(i Σ_a T^a X^a)``, where
+    ``X^a = A · η^a``, ``η^a`` are uncorrelated standard normals and ``A`` is
+    the amplitude (``A = 0.5`` in their production runs, ten hits per link per
+    sweep). ``epsilon`` is that amplitude, under the name the Metropolis
+    machinery here already uses for a proposal width.
+
+    Closed form at nc = 2: with ``T^a = σ^a/2`` the exponent is ``(X·σ)/2``, so
+    ``V = cos θ · 𝟙 + i sin θ · (X̂ · σ)`` with ``θ = |X|/2`` — a unit quaternion
+    ``(cos θ, sin θ · X̂)``, no matrix exponential and no projection. This is
+    *not* :func:`_su2_proposal`'s kernel: that one draws the quaternion's vector
+    part uniformly from a cube and is bounded away from ``−𝟙``, while a Gaussian
+    ``X`` reaches the whole group. Both are symmetric under ``V ↔ V†`` (the
+    density is even in ``X``), so neither needs a Hastings correction.
+
+    ``|X| = 0`` would divide by zero in ``X̂``; the ``clamp_min`` below is on the
+    norm only, and at that point ``sin θ = 0`` kills the vector part anyway, so
+    the limit ``V → 𝟙`` is taken correctly rather than patched.
+    """
+    if gaugegroup.nc != 2:
+        raise NotImplementedError(
+            f"_su2_proposal_paper only supports SU(2), got nc={gaugegroup.nc}."
+        )
+    batch_shape = U_mu.shape[:-2]
+    real_dtype = torch.float64 if U_mu.dtype == torch.complex128 else torch.float32
+    X = epsilon * torch.randn(
+        *batch_shape, 3, dtype=real_dtype, device=U_mu.device
+    )
+    norm = X.norm(dim=-1)
+    theta = 0.5 * norm
+    a0 = torch.cos(theta)
+    a = X * (torch.sin(theta) / norm.clamp_min(1e-30)).unsqueeze(-1)
+    return _su2_from_quaternion(a0, a) @ U_mu
+
+
+def metropolis_sweep_multichain(
+    U: torch.Tensor,
+    gaugegroup: GaugeGroup,
+    beta,
+    propose_fn=None,
+    n_hits: int = 1,
+    epsilon: float = 0.3,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """One Metropolis sweep over a *batch of independent chains*.
+
+    :func:`metropolis_sweep` is one chain: its staple call is unbatched and it
+    syncs on ``.item()`` once per (direction, parity, hit). Generating the
+    1+1D Wilson-loop datasets of PRL 128, 032003 needs ~10⁴ configurations per
+    label at a dozen couplings, which as one chain per coupling is ~10⁵ sweeps
+    of a 128-link lattice — hours of kernel-launch overhead for arithmetic that
+    would fit in one warp. Here the configuration axis is the batch: every
+    chain evolves under its own ``beta``, sharing one set of kernels.
+
+    The chains are **independent** — nothing couples them, ``staple_sum`` and
+    the accept/reject are elementwise over the leading axis — so ``B`` chains
+    thermalised from ``B`` independent random starts give ``B`` samples that are
+    decorrelated by construction rather than by a skip interval. That is a
+    strictly stronger guarantee than the single-chain-plus-skip route the paper
+    describes (SM §I: 2×10³ warmup sweeps, save every 10²), and it samples the
+    same distribution.
+
+    Parameters
+    ----------
+    U     : ``(B, D, *Λ, nc, nc)`` — not modified in place.
+    beta  : scalar, or a ``(B,)`` tensor giving each chain its own coupling.
+    propose_fn : proposal kernel ``(U_mu, gaugegroup, epsilon) → U'``, defaulting
+        to ``_PROPOSAL_FN[type(gaugegroup)]``. Pass ``_su2_proposal_paper`` for
+        the Letter's own kernel.
+    n_hits : Metropolis hits per link per sweep (the paper uses 10).
+
+    Returns
+    -------
+    ``(U_new, acceptance)`` with ``acceptance`` a ``(B,)`` tensor — per chain,
+    because a single scalar over a β-ladder hides that the largest β is stuck.
+    """
+    if propose_fn is None:
+        propose_fn = _PROPOSAL_FN.get(type(gaugegroup))
+        if propose_fn is None:
+            raise NotImplementedError(
+                f"No Metropolis proposal registered for {type(gaugegroup).__name__}."
+            )
+    if U.ndim < 4:
+        raise ValueError(
+            f"metropolis_sweep_multichain expects (B, D, *Λ, nc, nc); got {tuple(U.shape)}"
+        )
+
+    B, D = U.shape[0], U.shape[1]
+    spatial_shape = U.shape[2:-2]
+    nc = gaugegroup.nc
+    device = U.device
+
+    real_dtype = torch.float64 if U.dtype == torch.complex128 else torch.float32
+    if not torch.is_tensor(beta):
+        beta = torch.as_tensor(beta, dtype=real_dtype, device=device)
+    beta = beta.to(device=device, dtype=real_dtype)
+    # (B,) → (B, 1, …, 1): one coupling per chain, broadcast over the lattice.
+    beta_b = beta.reshape(-1, *([1] * len(spatial_shape))) if beta.ndim else beta
+
+    parity = _site_parity(spatial_shape, device)  # (*Λ)
+
+    U = U.clone()
+    accepted = torch.zeros(B, dtype=real_dtype, device=device)
+    proposed = 0.0
+
+    for mu in range(D):
+        for par in (0, 1):
+            A = staple_sum(U, mu, gaugegroup, batched=True)   # (B, *Λ, nc, nc)
+            site_mask = parity == par                          # (*Λ)
+            n_sites = int(site_mask.sum().item())
+
+            for _hit in range(n_hits):
+                U_mu = U[:, mu]
+                U_proposed = propose_fn(U_mu, gaugegroup, epsilon)
+                dS = (beta_b / nc) * _re_tr((U_mu - U_proposed) @ A)  # (B, *Λ)
+                rand = torch.rand(B, *spatial_shape, device=device, dtype=real_dtype)
+                accept = (dS <= 0) | (rand < torch.exp(-dS.clamp(min=0)))
+                update = accept & site_mask
+                # Reductions stay on device: one .item() per sweep would be
+                # 4·n_hits syncs, which is the whole point of batching.
+                accepted += update.flatten(1).sum(dim=1).to(real_dtype)
+                proposed += n_sites
+                U[:, mu] = torch.where(update[..., None, None], U_proposed, U_mu)
+
+    return U, accepted / proposed
+
+
 def z2_heatbath_sweep(
     U: torch.Tensor,
     gaugegroup: GaugeGroup,
