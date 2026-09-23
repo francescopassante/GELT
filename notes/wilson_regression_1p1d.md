@@ -311,30 +311,62 @@ parameter gap: 39 569 against 39 905, 0.8%. And GELT still lands **on** the
 accuracy the Letter published (1.54e−7 against 1.4e−7) — what opened the gap is
 that our L-CNN arm beat its own paper by 15×.
 
-**The hypothesis this points at, which the repo wrote down before the
-experiment existed.** `gelt/data.py`'s docstring for `transport_mode="single"`
-says it is "useful for A/B testing whether path averaging dilutes a
-specific-path target like a rectangular Wilson loop". A 4×4 Wilson loop *is* a
-specific path. GELT's transport is averaged over all shortest paths in the
-L1-ball and its offset weights are a softmax, i.e. convex — both average over
-products that are not the one being asked for, where the L-CB contracts a dense
-bilinear kernel over axis-aligned terms with free (unnormalised) weights. The
-`site/avg` column is consistent with that: independent per-site errors would
-give 64, the L-CNN sits at 57 and GELT at 26, so about half of GELT's error is a
-coherent long-wavelength component rather than local noise.
+**Why — the first hypothesis, and its falsification.** `gelt/data.py`'s
+docstring for `transport_mode="single"` says it exists to test "whether path
+averaging dilutes a specific-path target like a rectangular Wilson loop", and a
+4×4 loop is a specific path, so that was the obvious reading. **It is wrong, and
+a forward-only check settles it without training anything:** the shortest path
+from `x` to `x + r·μ̂` is *unique*, so for every axis-aligned offset in the ball
+`T` is an exact group element —
 
-**The next experiment is one flag**, `WR_TRANSPORT_MODE=single`, same
-everything else, three seeds. If the single-path arm closes most of the 16×,
-the answer is path averaging and it is a statement about a design choice, not
-about attention. If it does not, the remaining suspects are the softmax's
-convexity and the rank of the value path — and the second is testable against
-`alpha_mode="signed"`, which already exists.
+| offset | shortest paths | max \|T T† − 𝟙\| |
+|---|---|---|
+| (±1,0), (0,±1), (±2,0), (0,±2), (±3,0), (0,±3) | **1** | ~1e−15 |
+| (±1,±1) | 2 | 0.97 |
+| (±2,±1), (±1,±2) | 3 | 0.96 – 0.99 |
+
+— unitary to round-off, identical in kind to the L-CNN's axis transport. Only
+the diagonal offsets are averages, and a 4×4 rectangle is built entirely from
+axis-aligned segments. GELT has exactly the transporters it needs, exact, inside
+its own ball. Path averaging cannot be the explanation.
+
+**Why — what is actually different.** The two value paths, side by side:
+
+    GELT :  out_i(x) = Q_v,i†(x) · [ Σ_Δ α_Δ(x) · Ṽ_i(x+Δ) ]
+    L-CNN:  W_i(x)  ← Σ_{j,j',Δ} ω_{i,j,j',Δ} · W_j(x) · [T_Δ W_{j'}(x+Δ)]
+
+`α_Δ(x)` is **one scalar per (head, offset, site), shared across all `d_qkv`
+channels of that head**. `ω` is a free complex weight per *(out-channel,
+in-channel, in-channel, offset)*. So in one GELT layer every channel of a head
+is transported under the same offset weighting, while building a rectangle
+needs different channels carried by different offsets *in the same layer* —
+GELT can only get that from separate heads (it has two) or from depth. On top
+of that the softmax is convex: α cannot be zero and cannot be signed, so an
+offset can be made small but never switched off, where `ω` simply is zero.
+
+That is the leading candidate and it is about the **offset weighting**, not the
+transport. It is also not new to this repo — it is M1 and M2 of
+`where_attention_can_win.md` §1 seen from the other side, and `m1_probe.md` §0
+already measured the softmax to be *worth* 0.48 of R² on a constructed target.
+What is new is a task where the same structure costs 16×.
+
+**Three A/Bs, in the order the reasoning now puts them**, all one flag and three
+seeds each:
+
+1. `nhead` at fixed parameter budget (2 → 4 or 8, `d_qkv` down to compensate).
+   The direct test of "one offset weighting per head is the bottleneck". **Not
+   wired yet** — `GELT_ARCHS` would need the entry.
+2. `alpha_mode="signed"`, which removes non-negativity and normalisation while
+   keeping input dependence. Exists in `gelt/blocks.py`; needs a flag here.
+3. `WR_TRANSPORT_MODE=single`, now a **control rather than a hypothesis**: the
+   table above predicts it changes little, and running it is what turns the
+   retraction above from an argument into a measurement.
 
 **Cost**: 11 s/epoch on the V100 at the production ensemble, so a full
 100-epoch run is ~18 minutes. The transport is free — 0.1 ms/configuration at
 R = 3, 0.49 GB for the training split — so it is all optimiser steps.
 
-**Not read**: the single-path A/B. `WR_TEST_SIZES` is ignored for this arm — GEMHSA
+**Not read**: the three A/Bs above. `WR_TEST_SIZES` is ignored for this arm — GEMHSA
 bakes the lattice extents into its offset maps at construction and has no
 `update_dims`, so the volume-transfer reading stays an L-CNN-only one.
 

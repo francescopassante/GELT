@@ -691,9 +691,15 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   on the disjoint ranges, not on a p-value. The **zero-init head's `lr`
   dependence is non-monotone and contradicts `train_gelt.py`'s 3e-3**: here 3e-3
   never leaves `var(y)`, 1e-2 diverges, 1e-3 works — probably Adam's
-  `lr/(√v+ε)` with `fc2 = 0`, not the cascade. Next is one flag,
-  `WR_TRANSPORT_MODE=single`: `gelt/data.py` predicted this failure mode in its
-  own docstring, path averaging diluting a specific-path target.
+  `lr/(√v+ε)` with `fc2 = 0`, not the cascade. **The obvious explanation is
+  falsified**: path averaging cannot be it, because the shortest path to an
+  axis-aligned offset is *unique*, so GELT's `T` for (±r,0) and (0,±r) is an
+  exact unitary group element (1e−15) and a 4×4 rectangle is built only from
+  those. What differs is the **offset weighting**: GELT's α is one scalar per
+  (head, offset, site) *shared across the head's channels* and convex, where
+  the L-CB's ω is a free complex weight per (out, in, in, offset) and can be
+  zero. The A/Bs, in order: `nhead` at fixed budget, then `alpha_mode="signed"`,
+  then `WR_TRANSPORT_MODE=single` as a **control** on the retraction.
 - **`profile_glueball_step.py`** — where one optimizer step goes, per stage,
   forward **and backward** separately. It goes through
   `train_glueball.config_inputs`, i.e. the pipeline the training loop actually
