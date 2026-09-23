@@ -240,18 +240,40 @@ so it is a mechanism reading, not a physics result, exactly as the M1 probe is.
 | `d_model`, `nhead`, `mlp_hidden` | 32, 2, 32 | whatever lands on Table V's count: **39 569 real DOFs against the L-CNN's 39 905**, 0.8% apart. A complex parameter is two reals, the convention `tests/test_lcnn.py` already uses. |
 | `init_scale` | 10.0 | the repo's value, and **measured at this geometry** rather than carried over: `scripts/wilson_regression_init_gate.py` reads the field after each block on real configurations at L = 8, and it is flat at 1.0 for every scale from 0.3 to 100. Unlike the L-CNN there is no cliff here — the residual stream plus the L-Act gate keep the stack near-identity at init. |
 
-**The one thing not yet settled, and it is not cosmetic.** GELT's head is
-zero-initialised, so the gradient reaches the attention only after the head has
-moved (the `fc2 → fc1 → Q/K/V` cascade). The L-CNN arm it is being compared
-against has a standard-init `Linear` and no such stall. A 12-epoch smoke run on
-120 configurations sat at exactly `var(y)` — the constant predictor — which is
-either the stall or simply 36 optimiser steps, and 36 steps cannot distinguish
-them. So neither the learning rate nor `mlp_zero_init` is asserted here:
-`WR_PARTS=gelt-sweep` brackets both (3 rates × 2 head inits, ten epochs each,
-under disposable `_sweep` tags the figure skips) and the full run takes what it
-says. **The default is `lr = 3e-3`** — `train_gelt.py`'s measured value for the
-same stall, not the paper's 1e-3, which is the L-CNN's — **and
-`mlp_zero_init=True`**, the architecture's own.
+**The head-init / learning-rate bracket — run 2026-09-23, and it has an
+answer.** GELT's head is zero-initialised, so the gradient reaches the attention
+only after the head has moved (the `fc2 → fc1 → Q/K/V` cascade); the L-CNN arm
+has a standard-init `Linear` and no such stall. Six ten-epoch runs on the
+production ensemble, one seed, `WR_PARTS=gelt-sweep`:
+
+| `lr` | `mlp_zero_init` | best val @ 10 epochs | what happened |
+|---|---|---|---|
+| **1e-3** | **True** | **1.14e−3** | stalls 5 epochs, then falls a factor ~2.4 *per epoch* and is still falling at the cap |
+| 1e-3 | False | 2.12e−1 | stalls 7 epochs, only starting to move at 10 |
+| 3e-3 | True | 2.4966e−1 | **never moves** — flat at `var(y)` for ten epochs |
+| 3e-3 | False | 1.24e−1 | moves at epoch 5, then slow |
+| 1e-2 | True | diverged | 1e19 by epoch 3 |
+| 1e-2 | False | NaN | NaN by epoch 4 |
+
+`lr = 1e-3` with the zero-initialised head, by two orders of magnitude, and the
+ten-epoch cap — not the rate — is what binds it.
+
+**The finding worth carrying out of this note: with a zero-initialised head the
+dependence on `lr` is not monotone, and it goes the wrong way.** The reasoning
+in `train_gelt.py` is that a higher rate gets training past the cascade stall,
+and 3e-3 is its value for exactly that. Here 3e-3 is *the* value that never
+escapes, while 1e-3 does. The likely mechanism is Adam, not the cascade: with
+`fc2 = 0` the upstream gradients are ~0, so the second moment `v` is ~0 and the
+effective step `lr/(√v + ε)` is enormous and noisy — survivable at 1e-3, not
+above. So "raise the rate to beat the zero-init stall" is not a rule; it is one
+measurement at one geometry, and this is a second measurement that contradicts
+it. `scripts/probe_curves.py`'s question ("was the epoch budget the binding
+constraint rather than the rate?") is the one to ask first, and here the answer
+is yes.
+
+Note what this does *not* cost the comparison: 1e-3 is also the Letter's own
+rate for `W^(4×4)`, so both arms run at the identical learning rate and neither
+gets a tuning advantage.
 
 **What would count as an answer.** The L-CNN reached `mse_avg = 9.41e−9` on
 `W^(4×4)` (§9). A GELT arm within an order of magnitude of that is parity — the
@@ -261,7 +283,11 @@ worse is a real gap and points at the transport or the softmax; two or more
 orders better would be the first accuracy win in five attempts and would need a
 second seed before it is said out loud.
 
-**Not read**: nothing yet. `WR_TEST_SIZES` is ignored for this arm — GEMHSA
+**Cost**: 11 s/epoch on the V100 at the production ensemble, so a full
+100-epoch run is ~18 minutes. The transport is free — 0.1 ms/configuration at
+R = 3, 0.49 GB for the training split — so it is all optimiser steps.
+
+**Not read**: the full run. `WR_TEST_SIZES` is ignored for this arm — GEMHSA
 bakes the lattice extents into its offset maps at construction and has no
 `update_dims`, so the volume-transfer reading stays an L-CNN-only one.
 
