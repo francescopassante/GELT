@@ -275,13 +275,46 @@ Note what this does *not* cost the comparison: 1e-3 is also the Letter's own
 rate for `W^(4×4)`, so both arms run at the identical learning rate and neither
 gets a tuning advantage.
 
-**What would count as an answer.** The L-CNN reached `mse_avg = 9.41e−9` on
-`W^(4×4)` (§9). A GELT arm within an order of magnitude of that is parity — the
-fifth tie, and the most informative one, because it would be a tie on a task
-with an exact answer rather than on an ensemble average. Two or more orders
-worse is a real gap and points at the transport or the softmax; two or more
-orders better would be the first accuracy win in five attempts and would need a
-second seed before it is said out loud.
+**The reading, 2026-09-23.** One seed each, everything else identical:
+
+| | `mse_avg` | `mse_site` | site/avg | vs the paper's L-CNN |
+|---|---|---|---|---|
+| L-CNN (Table V large, 39 905) | **9.41e−9** | 5.40e−7 | 57 | 15× better |
+| GELT (matched, 39 569) | **1.54e−7** | 3.93e−6 | 26 | 1.1× — *equal to it* |
+
+**GELT loses by 16×** on the lattice-averaged MSE, 7.3× per site. That is 1.2
+orders of magnitude, which falls in a **hole in the criterion written above**:
+"within an order of magnitude is parity, two or more orders is a real gap"
+leaves 10×–100× unnamed, and this landed there. The criterion was badly drawn
+and the honest report is the number, not a band. It is not parity and it is not
+a collapse.
+
+Two things the ratio alone does not say.
+
+*One*: GELT at matched parameters lands **on** the accuracy the Letter
+published (1.54e−7 against their 1.4e−7). What opened the gap is that our L-CNN
+arm beat its own paper by 15×, not that GELT failed to reach it. Both statements
+are about the same pair of numbers and the second is the one a reader needs.
+
+*Two*: the **site/avg column is a structural difference, not a restatement**. If
+the per-site errors were independent across the 64 sites, `mse_site/mse_avg`
+would be 64. The L-CNN sits at 57 — near-independent residuals. GELT sits at 26,
+so about half of its error is a coherent, long-wavelength component that
+lattice-averaging does not cancel. That is invisible in `mse_avg` and is a
+property of the model rather than of the task; it is the first thing to chase if
+this is pursued, and `notes/attention_as_operator.md` is where a globally
+normalised softmax coupling sites has come up before.
+
+**What this reading does *not* yet support.** One seed per arm. §9.9 of
+`where_attention_can_win.md` measured GELT's spread over initialisations at 6.2×
+the L-CNN's on a different task, and `beta_transfer.md` §9.1 then showed even
+that to be coupling-dependent — a single-initialisation comparison of these two
+architectures is exactly the thing this programme has already been burned by. A
+16× gap at n = 1 is a number, not a finding. The cheap completion is **three
+seeds per arm** (~18 min each for GELT, less for the L-CNN) plus the `cut`
+column of the figure's table, which says whether either arm was stopped by the
+100-epoch cap rather than by convergence — if GELT was and the L-CNN was not,
+the gap is a budget and not an architecture.
 
 **Cost**: 11 s/epoch on the V100 at the production ensemble, so a full
 100-epoch run is ~18 minutes. The transport is free — 0.1 ms/configuration at

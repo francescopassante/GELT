@@ -16,6 +16,12 @@ columns coincide, which is the honest way of saying no best-of-N was taken.
 ``probe_readings.py``: the bracketing runs of ``WR_PARTS=gelt-sweep`` are
 ten-epoch and would otherwise be read as the result.
 
+**``epochs`` and ``cut``** answer ``probe_curves.py``'s question, which has to
+be asked before any two arms are compared: *was the epoch budget the binding
+constraint rather than the architecture?* A run whose best epoch is its last and
+whose validation curve is still falling over its final quarter was cut off, and
+comparing it with one that converged is comparing budgets, not models.
+
 A GELT arm, if present for a loop, is overlaid on the same panel in a second
 colour with its own MSE line. It is the same problem and the same splits, so
 the panels are directly comparable; it is *not* a reproduction of the paper's
@@ -71,6 +77,21 @@ def load_dumps(pattern):
         d["_path"] = path
         runs.append(d)
     return runs
+
+
+def was_cut_off(d):
+    """``probe_curves.py``'s rule: best epoch is the last, and still descending.
+
+    Returns ``(epochs_run, cut_off)``. "Still descending" is measured over the
+    final quarter of the curve rather than the last step, which is noise.
+    """
+    val = (d.get("history") or {}).get("val") or []
+    n = len(val)
+    if n < 4:
+        return n, False
+    best_is_last = min(range(n), key=lambda i: val[i]) == n - 1
+    q = max(2, n // 4)
+    return n, bool(best_is_last and val[-1] < val[-q])
 
 
 def lattice_average(d):
@@ -129,7 +150,9 @@ def main():
                        linewidths=0, zorder=z, label=label)
             vals = sorted(r["mse_avg"] for r in cell)
             note.append(f"{label:5} {best['mse_avg']:.1e}")
+            n_ep, cut = was_cut_off(best)
             table.append(dict(target=target, arch=arch, size=best["size"],
+                              epochs_run=n_ep, cut_off=cut,
                               conv_impl=best.get("conv_impl"),
                               n_param=best["n_param"],
                               paper_n_param=best.get("paper_n_param"),
@@ -175,19 +198,30 @@ def main():
     torch.save({"table": table, "panels": payload},
                os.path.join(RESULT_DIR, stem + ".pt"))
 
-    hdr = (f"{'loop':6} {'arch':5} {'size':8} {'impl':6} {'N_par':>7} "
-           f"{'Table V':>8} {'MSE_avg':>10} {'paper':>9} {'ratio':>10} "
-           f"{'MSE_site':>10} {'seeds':>5} {'median':>10} {'worst':>10}")
+    hdr = (f"{'loop':6} {'arch':5} {'size':8} {'N_par':>7} {'MSE_avg':>10} "
+           f"{'paper':>9} {'/paper':>8} {'MSE_site':>10} {'site/avg':>9} "
+           f"{'ep':>4} {'cut':>4} {'seeds':>5} {'median':>10} {'worst':>10}")
     print("\n" + hdr)
     print("-" * len(hdr))
     for r in table:
+        # site/avg: 64 (the site count) if the per-site errors were
+        # independent across the lattice. Well below that means the residual
+        # has a coherent, long-wavelength component, which the averaged MSE
+        # cannot see and which is a property of the model, not of the task.
+        ratio_sa = r["best_mse_site"] / r["best_mse_avg"]
         print(f"{r['target']:6} {r['arch']:5} {r['size']:8} "
-              f"{str(r['conv_impl']):6} "
-              f"{r['n_param']:7d} {str(r['paper_n_param']):>8} "
+              f"{r['n_param']:7d} "
               f"{r['best_mse_avg']:10.2e} {r['paper_mse']:9.1e} "
-              f"{r['best_mse_avg'] / r['paper_mse']:10.2f} "
-              f"{r['best_mse_site']:10.2e} {r['n_seeds']:5d} "
+              f"{r['best_mse_avg'] / r['paper_mse']:8.1e} "
+              f"{r['best_mse_site']:10.2e} {ratio_sa:9.1f} "
+              f"{r['epochs_run']:4d} {'YES' if r['cut_off'] else '-':>4} "
+              f"{r['n_seeds']:5d} "
               f"{r['median_mse_avg']:10.2e} {r['max_mse_avg']:10.2e}")
+    if any(r["cut_off"] for r in table):
+        print("\ncut = the best epoch is the last one and the validation curve "
+              "is still falling\n      over its final quarter: that run was "
+              "stopped by the epoch cap, not by\n      convergence, and its "
+              "MSE is an upper bound.")
 
     tex = os.path.join(RESULT_DIR, stem + ".tex")
     with open(tex, "w") as f:
