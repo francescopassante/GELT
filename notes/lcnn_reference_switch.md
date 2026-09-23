@@ -371,3 +371,58 @@ round-off floor the guard refuses at.
 **Settings for the production runs**: `init_w = 1.0`, `use_act = False`,
 `head = mlp`, `--calibrate-c0`. All four are the shootout's defaults for this
 arm, so `LCNN_ARCH=lcnn_ref bash scripts/lcnn_shootout.sh` needs no extra flags.
+
+---
+
+## 10. The result — *measured 2026-09-22/23*. Dispersion over initialisations.
+
+Three initialisations each, **ens0**, everything else identical by construction
+(ensemble, splits, smeared inputs, Rayleigh loss, checkpoint selection, fit
+window, GEVP comparator, blocked jackknife). ΔA₀ against the GEVP-projected
+operator, differenced inside every jackknife sample:
+
+| seed | GELT | L-CNN (authors') |
+|---|---|---|
+| init0 | +0.0660 ± 0.0310 | −0.0349 ± 0.0266 |
+| init1 | +0.0669 ± 0.0269 | **−0.2155 ± 0.0442** |
+| init2 | +0.0762 ± 0.0328 | +0.0318 ± 0.0429 |
+| **range** | **0.010** | **0.247** |
+| sd | 0.006 | 0.128 |
+
+**24× in range, 513× in variance, and the two intervals do not overlap**:
+GELT spans [+0.066, +0.076], the authors' L-CNN spans [−0.216, +0.032]. Every
+GELT run clears the classical GEVP at ≥ 2.3σ; one L-CNN run falls **4.9σ
+below** it. The distribution-free statement is the one to quote — n = 3 gives
+an F-test 2 dof and nothing worth printing.
+
+**What is *not* different.** The mass is consistent with the GEVP in all six
+runs (GELT 0.2σ, 0.1σ; theirs 0.4σ, 0.8σ, 1.3σ) — the architecture always finds
+the right physics. And the top-1 share of C(0) is 0.8–1.0% in all six, i.e.
+**this is not `notes/lcnn_shootout.md` §9.2's failure mode**: no configuration
+dominates, nothing is pathological. It is a third, distinct failure: the
+*overlap* is not reproducible across initialisations.
+
+The training curves say the same thing directly. Of four L-CNN runs, two peak
+at epoch 5–6 and then degrade, one of them returning to **3.3932** — exactly
+the untrained loss, the value the 1e-2 sweep cell never left. GELT's two new
+runs peak at epoch 8 at −0.6169 and −0.6165 and end at −0.6094 and −0.6103, a
+1% wobble.
+
+**The ens0/ens1 tension of §9 was this, not an ensemble effect.** ens1's single
+run gave +0.0858 ± 0.0298, 3.0σ from ens0's init0; three seeds on ens0 alone
+cover 0.247, which contains that gap comfortably.
+
+**What this is and is not.** It is the fourth independent sighting of the same
+asymmetry, and the first on the authors' own implementation, on a physics task,
+with the training curve as direct evidence rather than an inference from a
+final number — which closes the "it is an artefact of your reimplementation"
+objection to `update_2026-09-18.md` §1's robustness claim. It is **not** a
+statement that their architecture is worse: the mass is right every time, the
+median run is near parity, and §8's caveat stands — four layers on 12 smeared
+channels under a Rayleigh loss with a zero-momentum projection is our
+transplant, and their own SM §V warns that "L-CNNs with global average pooling
+often did not converge at all".
+
+**Still open**: ens1 at three seeds (one run only so far), and the correlated
+ΔA₀(GELT − L-CNN) via `--vs=`, which is the form `update_2026-09-18.md` §1
+quotes and which has not been computed for this arm.

@@ -92,9 +92,14 @@ def verdict(series):
     after = vals[best_i + 1:]
     descent = vals[0] - best
     giveback = (max(after) - best) / descent if after and descent > 0 else 0.0
+    # The absolute give-back as well, because the fraction alone is misleading
+    # when the descent is short: a run that starts near its own optimum (GELT
+    # does — its val is already −0.59 after one epoch) can wobble by 0.008 and
+    # score 25%. Both have to be large for it to mean anything.
+    absolute = (max(after) - best) if after else 0.0
     return dict(best=best, best_epoch=best_epoch, last=last, falling=falling,
-                cut_off=cut_off, giveback=giveback, final=vals[-1],
-                start=vals[0])
+                cut_off=cut_off, giveback=giveback, absolute=absolute,
+                final=vals[-1], start=vals[0])
 
 
 def label(path):
@@ -128,7 +133,7 @@ def main(argv):
         status = []
         if v["cut_off"]:
             status.append("** CUT OFF — best is the last epoch and still falling")
-        if v["giveback"] > 0.25:
+        if v["giveback"] > 0.25 and v["absolute"] > 0.1 * abs(v["best"]):
             status.append(
                 f"** GAVE BACK {100 * v['giveback']:.0f}% of its descent after "
                 f"epoch {v['best_epoch']}"
