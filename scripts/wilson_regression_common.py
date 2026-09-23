@@ -249,6 +249,24 @@ def mse_pair(pred, true):
     return site, avg
 
 
+def r2_pair(pred, true):
+    """``(r2_site, r2_avg)``: ``1 - MSE / Var(label)``, in both conventions.
+
+    An MSE alone says nothing about whether a task was solved -- it is in the
+    label's units squared, and for these loops those units change by an order of
+    magnitude between W(1x1) and W(4x4). R^2 is what the rest of this repo reads
+    (the M1 probe, the vortex study) and it is what separates "one arm is 16x
+    the other" from "both arms are at 0.99998": the same two numbers say both,
+    and only one of them is the thing a reader wants first.
+    """
+    dims = tuple(range(1, pred.ndim))
+    site, avg = mse_pair(pred, true)
+    var_site = true.var(unbiased=False).item()
+    var_avg = true.mean(dim=dims).var(unbiased=False).item()
+    return (1.0 - site / max(var_site, 1e-300),
+            1.0 - avg / max(var_avg, 1e-300))
+
+
 # ── The model ────────────────────────────────────────────────────────────────
 
 def lcnn_dof_count(layers, conv_impl="ref", D=2):

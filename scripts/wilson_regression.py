@@ -67,6 +67,7 @@ from wilson_regression_common import (
     cfg,
     load_split,
     mse_pair,
+    r2_pair,
     pick_device,
     real_dofs,
     validate_argv,
@@ -220,6 +221,7 @@ def main():
 
     _, pred = run_split(model, splits["test"], batch_size, device)
     mse_site, mse_avg = mse_pair(pred, splits["test"][2])
+    r2_site, r2_avg = r2_pair(pred, splits["test"][2])
     ref = PAPER_MSE_LCNN[target]
     # The paper's number is the L-CNN's. It is printed for the GELT arm too, as
     # the scale of the problem, and is *not* a reproduction target there.
@@ -227,6 +229,10 @@ def main():
     print(f"\n  test MSE (lattice-averaged, Fig. 3's convention): {mse_avg:.3e}"
           f"   [{label}: {ref:.1e}]")
     print(f"  test MSE (per site):                             {mse_site:.3e}")
+    # The MSE is in the label's units squared and those change by an order of
+    # magnitude across the four loops; R^2 is what says whether the task was
+    # solved at all, and the two readings answer different questions.
+    print(f"  test R^2:  avg {r2_avg:.9f}   per site {r2_site:.9f}")
     print(f"  best val loss: {best_val:.4e}")
 
     dump = {
@@ -239,6 +245,7 @@ def main():
         "transport_mode": tmode if arch == "gelt" else None,
         "history": history, "best_val": best_val,
         "mse_site": mse_site, "mse_avg": mse_avg, "paper_mse": ref,
+        "r2_site": r2_site, "r2_avg": r2_avg,
         "test_pred": pred, "test_true": splits["test"][2], "test_beta": test_beta,
         "epochs_run": len(history["train"]),
     }

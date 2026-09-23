@@ -681,7 +681,12 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   from `init_scale` 0.3 to 100, no cliff, unlike the L-CNN's.
   **Run and closed 2026-09-23 on a measured loss — the first in five attempts.**
   Δlog₁₀(GELT − L-CNN) = **1.207 ± 0.222, i.e. 16.1× [9.7, 26.8]**, three seeds
-  each, **ranges disjoint** (GELT's best is 5.0× above the L-CNN's worst). Not a
+  each, **ranges disjoint** (GELT's best is 5.0× above the L-CNN's worst).
+  **Read R² before the ratio**: per site **0.9999843 (GELT)** against 0.9999978
+  (L-CNN), i.e. both solve the task and the 16× is a ratio of two residuals each
+  ~10⁻⁵ of the signal — GELT's per-site error is 0.4% of the label's sd, at the
+  loop size where the Letter's own baseline CNN collapses to the training mean.
+  "GELT loses" and "GELT does it" are the same two numbers. Not a
   budget (both ran 100 epochs, neither cut mid-descent), not a rate (1e-3 is the
   bracketed optimum for GELT *and* the Letter's rate for the L-CNN), not a
   parameter gap (0.8%). **Dispersion is equal** — 3.27× vs 3.06× — which is a

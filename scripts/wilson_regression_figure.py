@@ -53,6 +53,7 @@ from wilson_regression_common import (
     PAPER_MSE_LCNN,
     RESULT_DIR,
     cfg,
+    r2_pair,
     validate_argv,
 )
 
@@ -151,8 +152,12 @@ def main():
             vals = sorted(r["mse_avg"] for r in cell)
             note.append(f"{label:5} {best['mse_avg']:.1e}")
             n_ep, cut = was_cut_off(best)
+            # Recomputed rather than read, so dumps written before r2 existed
+            # still get the column.
+            r2s, r2a = r2_pair(best["test_pred"], best["test_true"])
             table.append(dict(target=target, arch=arch, size=best["size"],
                               epochs_run=n_ep, cut_off=cut,
+                              r2_site=r2s, r2_avg=r2a,
                               conv_impl=best.get("conv_impl"),
                               n_param=best["n_param"],
                               paper_n_param=best.get("paper_n_param"),
@@ -199,8 +204,9 @@ def main():
                os.path.join(RESULT_DIR, stem + ".pt"))
 
     hdr = (f"{'loop':6} {'arch':5} {'size':8} {'N_par':>7} {'MSE_avg':>10} "
-           f"{'paper':>9} {'/paper':>8} {'MSE_site':>10} {'site/avg':>9} "
-           f"{'ep':>4} {'cut':>4} {'seeds':>5} {'median':>10} {'worst':>10}")
+           f"{'paper':>9} {'/paper':>8} {'MSE_site':>10} {'R2_site':>13} "
+           f"{'site/avg':>9} {'ep':>4} {'cut':>4} {'seeds':>5} {'median':>10} "
+           f"{'worst':>10}")
     print("\n" + hdr)
     print("-" * len(hdr))
     for r in table:
@@ -213,7 +219,8 @@ def main():
               f"{r['n_param']:7d} "
               f"{r['best_mse_avg']:10.2e} {r['paper_mse']:9.1e} "
               f"{r['best_mse_avg'] / r['paper_mse']:8.1e} "
-              f"{r['best_mse_site']:10.2e} {ratio_sa:9.1f} "
+              f"{r['best_mse_site']:10.2e} {r['r2_site']:13.9f} "
+              f"{ratio_sa:9.1f} "
               f"{r['epochs_run']:4d} {'YES' if r['cut_off'] else '-':>4} "
               f"{r['n_seeds']:5d} "
               f"{r['median_mse_avg']:10.2e} {r['max_mse_avg']:10.2e}")

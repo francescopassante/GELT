@@ -283,6 +283,22 @@ first in five attempts.** Three seeds per arm, everything else identical:
 | L-CNN (Table V large, 39 905) | 9.41e−9, 1.09e−8, 3.08e−8 | −7.833 ± 0.281 | 3.27× |
 | GELT (matched, 39 569) | 1.54e−7, 1.82e−7, 4.71e−7 | −6.626 ± 0.262 | 3.06× |
 
+**Read as R² first, because the ratio hides the scale.** The per-site label
+variance is 0.2497 (the epoch-1 loss of a zero-initialised head, whose output is
+exactly 0, is `mean(y²)`), so
+
+| | MSE per site | **R² per site** | rms error / sd(y) |
+|---|---|---|---|
+| L-CNN | 5.40e−7 | **0.9999978** | 0.15% |
+| GELT | 3.93e−6 | **0.9999843** | 0.40% |
+
+Both arms solve the task. GELT predicts a 4×4 Wilson loop site by site to 0.4%
+of the label's standard deviation, and the 16× below is the ratio of two
+residuals that are each ~10⁻⁵ of the signal. **"GELT loses" and "GELT does it"
+are the same two numbers**, and the second is the one a reader needs first —
+this is the loop size at which the Letter's own baseline CNN collapses to
+predicting the training mean (R² ≈ 0).
+
 **Δlog₁₀(GELT − L-CNN) = 1.207 ± 0.222, i.e. 16.1× [9.7, 26.8], t = 5.45.**
 The ranges are **disjoint**: GELT's best run is 5.0× above the L-CNN's worst.
 On the pre-registered criterion this is between the two bands — a hole in the
