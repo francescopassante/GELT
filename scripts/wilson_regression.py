@@ -154,6 +154,7 @@ def main():
     L = int(cfg("WR_L", 8))
     init_w = float(cfg("WR_INIT_W", 1.0))
     mlp_zero = str(cfg("WR_MLP_ZERO_INIT", "1")) not in ("0", "false", "False")
+    tmode = str(cfg("WR_TRANSPORT_MODE", "average")).lower()
     tag = cfg("WR_RUN_TAG", "")
     extra_sizes = [int(s) for s in str(cfg("WR_TEST_SIZES", "")).split(",") if s]
     device = pick_device(cfg("WR_DEVICE", None))
@@ -177,7 +178,8 @@ def main():
         if arch == "gelt":
             print(f"  building transport R={R} for {name} "
                   f"({U.shape[0]} configurations)", flush=True)
-            aux = build_transport(U, R=R, device=device, progress=False)
+            aux = build_transport(U, R=R, device=device, progress=False,
+                                  mode=tmode)
         else:
             aux = U
         splits[name] = (W, aux, y)
@@ -193,7 +195,7 @@ def main():
         impl = "-".join(f"{k}{v}" for k, v in spec.items())
         print(f"GELT {target} {size} seed={seed}: {n_param} real DOFs "
               f"(matched against Table V's L-CNN: {paper_n})")
-        print(f"  {spec}  mlp_zero_init={mlp_zero}")
+        print(f"  {spec}  mlp_zero_init={mlp_zero}  transport={tmode}")
     else:
         model, n_param = build_lcnn(target, size, L=L, conv_impl=conv_impl,
                                     init_w=init_w)
@@ -207,7 +209,9 @@ def main():
 
     stem = (f"wilson_regression_{target}_{size}_{conv_impl}_s{seed}"
             if arch == "lcnn"
-            else f"wilson_regression_gelt_{target}_{size}_s{seed}")
+            else f"wilson_regression_gelt_{target}_{size}"
+                 + ("" if tmode == "average" else f"_{tmode}")
+                 + f"_s{seed}")
     if tag:
         stem += f"_{tag}"
     ckpt = os.path.join(DUMP_DIR, stem + ".pth")
@@ -232,6 +236,7 @@ def main():
         "L": L, "n_param": n_param, "paper_n_param": paper_n,
         "lr": lr, "epochs": epochs, "patience": patience, "batch": batch_size,
         "init_w": init_w, "mlp_zero_init": mlp_zero, "run_tag": tag or None,
+        "transport_mode": tmode if arch == "gelt" else None,
         "history": history, "best_val": best_val,
         "mse_site": mse_site, "mse_avg": mse_avg, "paper_mse": ref,
         "test_pred": pred, "test_true": splits["test"][2], "test_beta": test_beta,

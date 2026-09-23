@@ -275,52 +275,66 @@ Note what this does *not* cost the comparison: 1e-3 is also the Letter's own
 rate for `W^(4×4)`, so both arms run at the identical learning rate and neither
 gets a tuning advantage.
 
-**The reading, 2026-09-23.** One seed each, everything else identical:
+**The reading — RUN AND CLOSED, 2026-09-23. A measured loss for GELT, the
+first in five attempts.** Three seeds per arm, everything else identical:
 
-| | `mse_avg` | `mse_site` | site/avg | vs the paper's L-CNN |
-|---|---|---|---|---|
-| L-CNN (Table V large, 39 905) | **9.41e−9** | 5.40e−7 | 57 | 15× better |
-| GELT (matched, 39 569) | **1.54e−7** | 3.93e−6 | 26 | 1.1× — *equal to it* |
+| | seeds (`mse_avg`) | log₁₀ mean ± sd | worst/best |
+|---|---|---|---|
+| L-CNN (Table V large, 39 905) | 9.41e−9, 1.09e−8, 3.08e−8 | −7.833 ± 0.281 | 3.27× |
+| GELT (matched, 39 569) | 1.54e−7, 1.82e−7, 4.71e−7 | −6.626 ± 0.262 | 3.06× |
 
-**GELT loses by 16×** on the lattice-averaged MSE, 7.3× per site. That is 1.2
-orders of magnitude, which falls in a **hole in the criterion written above**:
-"within an order of magnitude is parity, two or more orders is a real gap"
-leaves 10×–100× unnamed, and this landed there. The criterion was badly drawn
-and the honest report is the number, not a band. It is not parity and it is not
-a collapse.
+**Δlog₁₀(GELT − L-CNN) = 1.207 ± 0.222, i.e. 16.1× [9.7, 26.8], t = 5.45.**
+The ranges are **disjoint**: GELT's best run is 5.0× above the L-CNN's worst.
+On the pre-registered criterion this is between the two bands — a hole in the
+criterion, named above — but the separation is not in doubt.
 
-Two things the ratio alone does not say.
+On significance, both framings, because they disagree and the weaker one is the
+honest headline. The t is on log₁₀ and gives p ≈ 0.005, but it assumes
+log-normality from three points. The exact permutation test over the six values
+gives **p = 0.10, which is the floor at n = 3 vs 3** — no arrangement of three
+against three can do better. So the defensible statement is the *disjoint
+ranges and the 5× separation between the closest pair*, not a p-value.
 
-*One*: GELT at matched parameters lands **on** the accuracy the Letter
-published (1.54e−7 against their 1.4e−7). What opened the gap is that our L-CNN
-arm beat its own paper by 15×, not that GELT failed to reach it. Both statements
-are about the same pair of numbers and the second is the one a reader needs.
+**The dispersion is equal**: 3.27× against 3.06×, worst over best. That is a
+third reading on the robustness question and it lands on neither side —
+`where_attention_can_win.md` §9.9 measured GELT at **6.2×** the L-CNN's spread
+on the Z₂ vortex task, `beta_transfer.md` §9.1 then showed that to hold only at
+the training coupling, and here the two arms are indistinguishable. The
+repo-wide sentence "GELT's robustness is task-dependent" survives; nothing
+stronger does.
 
-*Two*: the **site/avg column is a structural difference, not a restatement**. If
-the per-site errors were independent across the 64 sites, `mse_site/mse_avg`
-would be 64. The L-CNN sits at 57 — near-independent residuals. GELT sits at 26,
-so about half of its error is a coherent, long-wavelength component that
-lattice-averaging does not cancel. That is invisible in `mse_avg` and is a
-property of the model rather than of the task; it is the first thing to chase if
-this is pursued, and `notes/attention_as_operator.md` is where a globally
-normalised softmax coupling sites has come up before.
+**What the loss is not.** It is not a budget artifact: both arms ran the full
+100 epochs with `cut = -`, i.e. neither was stopped mid-descent, and the cap
+bound both equally. It is not a learning-rate handicap: 1e-3 is the bracketed
+optimum for GELT *and* the Letter's own rate for the L-CNN. It is not a
+parameter gap: 39 569 against 39 905, 0.8%. And GELT still lands **on** the
+accuracy the Letter published (1.54e−7 against 1.4e−7) — what opened the gap is
+that our L-CNN arm beat its own paper by 15×.
 
-**What this reading does *not* yet support.** One seed per arm. §9.9 of
-`where_attention_can_win.md` measured GELT's spread over initialisations at 6.2×
-the L-CNN's on a different task, and `beta_transfer.md` §9.1 then showed even
-that to be coupling-dependent — a single-initialisation comparison of these two
-architectures is exactly the thing this programme has already been burned by. A
-16× gap at n = 1 is a number, not a finding. The cheap completion is **three
-seeds per arm** (~18 min each for GELT, less for the L-CNN) plus the `cut`
-column of the figure's table, which says whether either arm was stopped by the
-100-epoch cap rather than by convergence — if GELT was and the L-CNN was not,
-the gap is a budget and not an architecture.
+**The hypothesis this points at, which the repo wrote down before the
+experiment existed.** `gelt/data.py`'s docstring for `transport_mode="single"`
+says it is "useful for A/B testing whether path averaging dilutes a
+specific-path target like a rectangular Wilson loop". A 4×4 Wilson loop *is* a
+specific path. GELT's transport is averaged over all shortest paths in the
+L1-ball and its offset weights are a softmax, i.e. convex — both average over
+products that are not the one being asked for, where the L-CB contracts a dense
+bilinear kernel over axis-aligned terms with free (unnormalised) weights. The
+`site/avg` column is consistent with that: independent per-site errors would
+give 64, the L-CNN sits at 57 and GELT at 26, so about half of GELT's error is a
+coherent long-wavelength component rather than local noise.
+
+**The next experiment is one flag**, `WR_TRANSPORT_MODE=single`, same
+everything else, three seeds. If the single-path arm closes most of the 16×,
+the answer is path averaging and it is a statement about a design choice, not
+about attention. If it does not, the remaining suspects are the softmax's
+convexity and the rank of the value path — and the second is testable against
+`alpha_mode="signed"`, which already exists.
 
 **Cost**: 11 s/epoch on the V100 at the production ensemble, so a full
 100-epoch run is ~18 minutes. The transport is free — 0.1 ms/configuration at
 R = 3, 0.49 GB for the training split — so it is all optimiser steps.
 
-**Not read**: the full run. `WR_TEST_SIZES` is ignored for this arm — GEMHSA
+**Not read**: the single-path A/B. `WR_TEST_SIZES` is ignored for this arm — GEMHSA
 bakes the lattice extents into its offset maps at construction and has no
 `update_dims`, so the volume-transfer reading stays an L-CNN-only one.
 

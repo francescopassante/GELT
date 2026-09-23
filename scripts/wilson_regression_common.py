@@ -315,8 +315,17 @@ def build_gelt(target, size, L, init_scale=None, qk_init_scale=None,
     return model, real_dofs(model), spec
 
 
-def build_transport(U, R, chunk=512, device=None, progress=True):
+def build_transport(U, R, chunk=512, device=None, progress=True, mode="average"):
     """``T`` for every configuration, in chunks.
+
+    ``mode`` is :func:`gelt.lattice.build_transport_average`'s: ``"average"`` is
+    the architecture (shortest-path-averaged over the L1-ball), ``"single"`` is
+    one canonical path. The A/B is the one the three-seed result points at and
+    ``gelt/data.py`` anticipated in its own docstring -- "useful for A/B testing
+    whether path averaging dilutes a specific-path target like a rectangular
+    Wilson loop". A 4x4 Wilson loop *is* a specific path; averaging the
+    transport over all shortest paths averages over products that are not the
+    one being asked for.
 
     ``GELT.forward(W, T)`` wants the shortest-path-averaged transport over the
     signed L1-ball, which is a function of the links alone, so it is built once
@@ -331,7 +340,8 @@ def build_transport(U, R, chunk=512, device=None, progress=True):
         u = U[i:i + chunk]
         if device is not None:
             u = u.to(device)
-        outs.append(build_transport_average(u, R=R, gaugegroup=SU(2)).cpu())
+        outs.append(build_transport_average(u, R=R, gaugegroup=SU(2),
+                                            mode=mode).cpu())
         if progress:
             print(f"    transport {min(i + chunk, U.shape[0])}/{U.shape[0]}",
                   flush=True)

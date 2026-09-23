@@ -53,9 +53,17 @@ or "removed in the 2026-09-09 cleanup", that is where it went.
   four activations, and it says nothing about whether our L-CNN is theirs. Holds
   the β-ladder ambiguity (SM Table I says 11 couplings, SM §II says 10), the
   one-chain-per-configuration departure from their MC, and **§4, the divergence
-  that forced `gelt/lcnn_exact.py`**. Wired and smoke-tested 2026-09-22; **the
-  production ensemble is not generated and no reading has a value yet** (§7 is
-  the pre-registration).
+  that forced `gelt/lcnn_exact.py`**. **Run and closed 2026-09-23.** The reproduction
+  succeeds on all four loops and *beats* the published MSEs — 8.6e−16 / 5.3e−16
+  / 1.9e−12 / 9.4e−9 against 2.2e−11 / 2.1e−9 / 1.1e−8 / 1.4e−7 — with the two
+  small loops sitting at the pipeline's **float32 rounding floor** (rms error
+  0.5 ε) rather than at an approximation error. The pre-registered R1 ("within
+  a factor of 10") does not pass as worded: three of four are outside it, on
+  the good side, and the criterion should have been one-sided. **The one
+  assumption everything rests on** is that Fig. 3's MSEs are lattice-averaged
+  (their `mse(global_average=True)` default, "for each example" in the caption,
+  and the CNN arm has a GAP so it cannot be per-site); read per-site instead,
+  `W^(4×4)` flips from 15× better to 3.9× worse.
 - `notes/where_attention_can_win.md` — **the architecture question's running
   record, and the first thing to read before proposing a GELT-vs-L-CNN task.**
   Both attempts and why each closed: the 0⁺⁺ tie (structural) and the flow-free
@@ -670,10 +678,22 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   answer* (`notes/wilson_regression_1p1d.md` §10, which knowingly violates
   criterion 4 of `where_attention_can_win.md` §6). `scripts/wilson_regression_init_gate.py`
   is its init gate, measured at **this** geometry — the field is flat at 1.0
-  from `init_scale` 0.3 to 100, no cliff, unlike the L-CNN's. The open choice
-  is the **zero-initialised head**: the gradient reaches the attention only
-  after `fc2` moves, which the L-CNN has no analogue of, so `lr` and
-  `mlp_zero_init` are bracketed by `WR_PARTS=gelt-sweep` rather than asserted.
+  from `init_scale` 0.3 to 100, no cliff, unlike the L-CNN's.
+  **Run and closed 2026-09-23 on a measured loss — the first in five attempts.**
+  Δlog₁₀(GELT − L-CNN) = **1.207 ± 0.222, i.e. 16.1× [9.7, 26.8]**, three seeds
+  each, **ranges disjoint** (GELT's best is 5.0× above the L-CNN's worst). Not a
+  budget (both ran 100 epochs, neither cut mid-descent), not a rate (1e-3 is the
+  bracketed optimum for GELT *and* the Letter's rate for the L-CNN), not a
+  parameter gap (0.8%). **Dispersion is equal** — 3.27× vs 3.06× — which is a
+  third reading on the robustness question landing on neither side, after §9.9's
+  6.2× and `beta_transfer.md` §9.1's retraction of it. Significance: the exact
+  permutation test is **floored at p = 0.10** at n = 3 vs 3, so the claim rests
+  on the disjoint ranges, not on a p-value. The **zero-init head's `lr`
+  dependence is non-monotone and contradicts `train_gelt.py`'s 3e-3**: here 3e-3
+  never leaves `var(y)`, 1e-2 diverges, 1e-3 works — probably Adam's
+  `lr/(√v+ε)` with `fc2 = 0`, not the cascade. Next is one flag,
+  `WR_TRANSPORT_MODE=single`: `gelt/data.py` predicted this failure mode in its
+  own docstring, path averaging diluting a specific-path target.
 - **`profile_glueball_step.py`** — where one optimizer step goes, per stage,
   forward **and backward** separately. It goes through
   `train_glueball.config_inputs`, i.e. the pipeline the training loop actually
