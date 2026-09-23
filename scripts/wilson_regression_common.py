@@ -165,11 +165,18 @@ GELT_ARCHS = {
 # measured at D = 3, L = 12 is not a measurement at D = 2, L = 8.
 GELT_INIT_SCALE = 10.0
 GELT_QK_INIT_SCALE = 1.0
-# The paper's 1e-3 is the L-CNN's rate and is kept for that arm. GELT's head is
-# zero-initialised, so the gradient reaches the attention only once the head has
-# moved (the fc2 -> fc1 -> Q/K/V cascade); 3e-3 is what train_gelt.py measured
-# for the same stall and is this arm's default, not a tuned value.
-GELT_LR = 3e-3
+# Measured, 2026-09-23 (notes/wilson_regression_1p1d.md SS 10), not carried over.
+# GELT's head is zero-initialised, so the gradient reaches the attention only
+# once the head has moved, and train_gelt.py's reasoning is that a higher rate
+# gets past that stall -- its value is 3e-3. On this task 3e-3 is the value that
+# *never* gets past it (flat at var(y) for ten epochs) and 1e-2 diverges, while
+# 1e-3 escapes at epoch 6 and falls two orders in four. The mechanism is
+# probably Adam rather than the cascade: with fc2 = 0 the upstream gradients are
+# ~0, so v ~ 0 and the effective step lr/(sqrt(v)+eps) is enormous.
+# Leaving 3e-3 here would hand anyone running this arm a model stuck at the
+# constant predictor, so the default is the measured value.
+# It is also the Letter's own rate for W(4x4), so both arms run at the same one.
+GELT_LR = 1e-3
 
 # ── SM SS VI.A / Table V caption: training hyper-parameters ─────────────────
 # "Models for W(1x1) and W(1x2) are trained for a maximum of 20 epochs with a
