@@ -426,3 +426,55 @@ often did not converge at all".
 **Still open**: ens1 at three seeds (one run only so far), and the correlated
 ΔA₀(GELT − L-CNN) via `--vs=`, which is the form `update_2026-09-18.md` §1
 quotes and which has not been computed for this arm.
+
+### 10.1 The paired comparison — *measured 2026-09-23*. GELT leads in all four.
+
+`fit_glueball_overlap.py --vs=`, i.e. the two learned operators differenced
+**inside every jackknife sample**, which is the form `update_2026-09-18.md` §1
+quotes (the two ΔA₀-vs-GEVP numbers are correlated through the classical arm
+and must not be subtracted by hand):
+
+| pairing | ΔA₀(GELT − L-CNN) | |
+|---|---|---|
+| ens0 / init0 | +0.1005 ± 0.0270 | 3.7σ |
+| ens0 / init1 | **+0.2825 ± 0.0414** | 6.8σ |
+| ens0 / init2 | +0.0444 ± 0.0260 | 1.7σ |
+| ens1 / init0 | +0.0028 ± 0.0171 | 0.2σ |
+
+**Positive in all four** (sign test, one-sided, p = 0.0625 — the floor at n = 4).
+On ens0, where there is headroom, the median is **+0.101** and the range
+[+0.044, +0.282].
+
+**Read ens1 with care: it is a saturated point.** Its classical GEVP sits at
+A₀ = 0.9249 and both learned operators at ≈ 1.01, i.e. there is almost nothing
+left to win. `input_architecture_curve.py:57` already encodes that rule —
+`SATURATED = 0.90`, "combined classical A₀ at or above which a point is
+excluded" — and ens1 is above it. The tie there is mostly absence of headroom,
+not equivalence, and quoting it as parity without that sentence would be
+misleading.
+
+**Distribution-free, on ens0:** GELT's A₀ spans 0.9029–0.9136 and the authors'
+L-CNN 0.6218–0.8692. **GELT's worst run beats their best run.** GELT also
+reaches a better optimum of the loss being optimised (best val −0.6165…−0.6169
+against −0.4271…−0.5697), so this is not only a readout effect.
+
+**This changes §1 of `update_2026-09-18.md`.** "Parity" was measured against our
+reimplementation: ΔA₀(GELT − L-CNN) = +0.012 ± 0.009, 1.3σ. Against the
+authors' own implementation, at one training run each — which is what any
+practical comparison does — the median on the unsaturated ensemble is **+0.101,
+eight times larger**, and GELT is ahead in every pairing.
+
+**The one thing this data cannot separate**, and the write-up must say so: the
+margin and the instability are the same fact seen twice. The authors' arm is
+behind *because* its runs land in different places, and with three seeds there
+is no way to tell "a systematically weaker operator" from "an operator whose
+training does not converge reliably here". §8's caveat is the other half — four
+layers on 12 smeared channels under a Rayleigh loss with a zero-momentum
+projection is our transplant, and their own SM §V warns that L-CNNs with a
+lattice average "often did not converge at all".
+
+**Status: the experiment is closed.** What would extend it, none of it needed
+for the claim: ens1 at three seeds (one run so far, and it is the saturated
+point anyway), the same three seeds for our own `lcnn` arm so all three
+architectures have a dispersion, and the 3.9× step-cost figure re-measured for
+this arm.
