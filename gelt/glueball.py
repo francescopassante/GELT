@@ -410,6 +410,7 @@ def fit_cosh_correlator(
     sigma: Optional[torch.Tensor] = None,
     m_range: Tuple[float, float] = (1e-3, 3.0),
     n_grid: int = 2000,
+    cov: Optional[torch.Tensor] = None,
 ) -> Tuple[float, float, float]:
     """Least-squares fit  C(Δ) ≈ A·[e^{−mΔ} + e^{−m(Nt−Δ)}]  on Δ ∈ [dmin, dmax].
 
@@ -426,12 +427,23 @@ def fit_cosh_correlator(
     correlations); the returned χ² is a fit-quality heuristic, not a
     correlated goodness-of-fit test.
 
+    ``cov`` : the (Nt, Nt) covariance of C over the FULL time extent, in place
+    of ``sigma`` — its window block is inverted and used as the χ² weight
+    matrix, i.e. a **correlated** fit, and the returned χ² is rᵀ Σ⁻¹ r. It
+    exists to check the claim above (scripts/fit_window_scan.py), not to
+    replace the diagonal fit every table uses.
+
     Returns ``(m, A, chi2)`` as floats.
     """
     Nt = C.shape[0]
     dd = torch.arange(dmin, dmax + 1, dtype=torch.float64)
     y = C[dmin : dmax + 1].to(torch.float64)
-    if sigma is None:
+    if cov is not None and sigma is not None:
+        raise ValueError("pass sigma or cov, not both")
+    if cov is not None:
+        Winv = torch.linalg.inv(cov[dmin : dmax + 1, dmin : dmax + 1].to(torch.float64))
+        Winv = 0.5 * (Winv + Winv.T)
+    elif sigma is None:
         w = torch.ones_like(y)
     else:
         w = 1.0 / sigma[dmin : dmax + 1].to(torch.float64).clamp_min(1e-300) ** 2
@@ -439,6 +451,11 @@ def fit_cosh_correlator(
     def chi2_profile(ms):
         # (n_m, n_pts) model shapes; profiled A minimises the weighted residual.
         f = torch.exp(-ms[:, None] * dd) + torch.exp(-ms[:, None] * (Nt - dd))
+        if cov is not None:
+            Wf = f @ Winv
+            A = (Wf * y).sum(-1) / (Wf * f).sum(-1)
+            r = y[None, :] - A[:, None] * f
+            return ((r @ Winv) * r).sum(-1), A
         A = (w * y * f).sum(-1) / (w * f * f).sum(-1)
         r = y[None, :] - A[:, None] * f
         return (w * r * r).sum(-1), A

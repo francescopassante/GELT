@@ -501,9 +501,11 @@ def analyse(dump, i=0):
 
 
 def ensemble_of(dump):
-    """run5 (seed 0) or ens1 (seed 1) — the tag is in the filename, as
-    `dumps/README.md` says it must be."""
-    return "ens1" if "_ens1" in os.path.basename(dump) else "run5"
+    """run5 (seed 0) or ens<k> (seed k) — the tag is in the filename, as
+    `dumps/README.md` says it must be. Runs are combined per ensemble, so a
+    seed this does not recognise must not fall through to run5."""
+    b = os.path.basename(dump)
+    return f"ens{b.split('_ens')[1].split('_')[0]}" if "_ens" in b else "run5"
 
 
 def plot(runs):

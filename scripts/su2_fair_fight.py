@@ -167,7 +167,8 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # ── Tunables ──────────────────────────────────────────────────────────────────
 def _cache_for(dump):
     """The ensemble a test-Ō dump was measured on, from its filename tag."""
-    seed = "_seed1" if "_ens1" in os.path.basename(dump) else ""
+    tag = _tag(dump)  # run5 → the seed-0 cache; ens<k> → _seed<k>
+    seed = "" if tag == "run5" else f"_seed{tag[3:]}"
     return (f"datasets/glueball_configs_L{tg.L}_Lt{tg.LT}_b{tg.BETA}_xi{tg.XI}"
             f"_N{tg.N_CONFIGS}{seed}.pt")
 

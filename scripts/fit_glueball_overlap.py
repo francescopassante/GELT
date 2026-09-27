@@ -165,6 +165,21 @@ def project_ground(basis, t0, td):
     return torch.einsum("i,ibt->bt", v0, basis)
 
 
+def fit_one(C, sig, window=None):
+    """(m, A₀, χ²) of one operator's correlator on the shared window.
+
+    ``window`` defaults to ``FIT_WINDOW``; scripts/fit_window_scan.py passes
+    others, which is the only reason this lives at module level. ``sig`` is
+    σ_Δ, shape (Nt,), for the diagonal fit every table uses — or the (Nt, Nt)
+    covariance of C for the correlated check the scan runs beside it.
+    """
+    dmin, dmax = FIT_WINDOW if window is None else window
+    kw = {"cov": sig} if sig.dim() == 2 else {"sigma": sig}
+    m, A, chi2 = fit_cosh_correlator(C, dmin, dmax, m_range=M_RANGE, **kw)
+    a0 = A * (1.0 + math.exp(-m * C.shape[0])) / C[0].item()
+    return m, a0, chi2
+
+
 def main():
     blob = torch.load(DUMP)
     gelt_obar = blob["gelt_obar"].double()
@@ -237,12 +252,6 @@ def main():
         if vs_obar is None
         else blocked_jackknife(lambda m: connected_correlator(vs_obar[m]), B, jb)[1]
     )
-
-    def fit_one(C, sig):
-        """(m, A₀, χ²) of one operator's correlator on the shared window."""
-        m, A, chi2 = fit_cosh_correlator(C, dmin, dmax, sigma=sig, m_range=M_RANGE)
-        a0 = A * (1.0 + math.exp(-m * Nt)) / C[0].item()
-        return m, a0, chi2
 
     # Full-sample fits: central χ²/dof and the reference mass for cosh_ref.
     _, _, chi2_g = fit_one(connected_correlator(gelt_obar), sig_gelt)

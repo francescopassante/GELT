@@ -209,6 +209,29 @@ def test_fit_cosh_correlator_recovers_synthetic():
     assert abs(A_w - A) < 1e-2
 
 
+def test_fit_cosh_correlator_correlated():
+    # A diagonal covariance is the σ-weighted fit; a full one still returns
+    # rᵀ Σ⁻¹ r at its own optimum, and sigma + cov together is refused.
+    g = torch.Generator().manual_seed(0)
+    m, A, Nt = 0.35, 2.0, 24
+    dd = torch.arange(Nt, dtype=torch.float64)
+    C0 = A * (torch.exp(-m * dd) + torch.exp(-m * (Nt - dd)))
+    sigma = 0.05 * C0
+    C = C0 + sigma * torch.randn(Nt, dtype=torch.float64, generator=g)
+    diag = fit_cosh_correlator(C, 2, 7, sigma=sigma)
+    corr = fit_cosh_correlator(C, 2, 7, cov=torch.diag(sigma**2))
+    assert all(abs(a - b) < 1e-10 * max(1.0, abs(a)) for a, b in zip(diag, corr))
+
+    rho = 0.8 ** (dd[:, None] - dd[None, :]).abs()  # AR(1)-like correlations
+    cov = sigma[:, None] * rho * sigma[None, :]
+    m_c, A_c, chi2_c = fit_cosh_correlator(C, 2, 7, cov=cov)
+    w = slice(2, 8)
+    r = C[w] - A_c * (torch.exp(-m_c * dd[w]) + torch.exp(-m_c * (Nt - dd[w])))
+    assert abs(chi2_c - (r @ torch.linalg.inv(cov[w, w]) @ r).item()) < 1e-8
+    with pytest.raises(ValueError):
+        fit_cosh_correlator(C, 2, 7, sigma=sigma, cov=cov)
+
+
 def test_smearing_operator_basis_shape_and_invariance():
     # The basis stacks one zero-momentum operator per level, and every level is
     # gauge invariant (each is a sum of Wilson loops on smeared links).
