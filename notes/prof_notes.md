@@ -447,6 +447,41 @@ is the projection onto A₁⁺⁺ (A₁ of O, parity-even). Implementation notes
   O_h at inference, or symmetrise ChannelLift/RoPE — an architectural change the
   supervisor explicitly did not ask for.
 
+**Implementation — 2026-09-28, not yet run on the V100.**
+
+- `gelt/cubic.py`: the 48 elements as `CubicElement(perm, flips)` (reflect,
+  then permute; `y = P·F·x`), `apply_cubic` on batched links (index operations
+  and daggers only, exact), the ten O_h characters, `irrep_projections`
+  (`P_Γ Ō = (d_Γ/48) Σ_g χ_Γ(g) Ō_g`) and `irrep_fractions`.
+- `tests/test_cubic.py` (8 tests, 1.5 s): task 1's test — the anisotropic
+  action and the classical Ō(t) at APE levels 0/1/3 invariant under all 48 to
+  1e-10 — plus the composition law bit for bit (`g₂(g₁U) = (M₂M₁)U`, which ties
+  the link maps to the matrices the characters are read from), character
+  orthonormality, one plane's plaquette sum = A1g ⊕ Eg with the plane average as
+  its A1g part, Σ Im Tr U₁ (SU(3)) = pure T1u. Mutation-checked: reversing the
+  reflection's shift fails the action test, swapping χ_T1 ↔ χ_T2 fails T1u.
+- `scripts/cubic_projection.py` + `scripts/cubic_batch.sh`: task 2 and the
+  inputs of task 3 (details in the script's docstring). Gates before any hours
+  are spent: the identity must reproduce the source dump (net and classical Ō,
+  ≤ 1e-3 sd), every g preserves the action (1e-10, complex128) and leaves the
+  classical Ō invariant at every input level. Writes, per net, the 48 Ō_g and
+  an `…_a1_test_obars.pt` in the standard format, so task 3 is the existing
+  offline scripts pointed at it.
+- **Definition fixed before the numbers exist**: "fraction of C(0) outside
+  A₁⁺⁺" is `1 − f_A1g` with `f_Γ = ‖Π_Γ δv‖²/‖δv‖²` on the O_h-augmented sample
+  (`irrep_fractions`; Π_Γ the isotypic projectors of the regular
+  representation, v the orbit vector Ō(g_k U)). The naive C_Γ(0)/C(0) of the
+  projected series do not add up on a finite sample (a 2-configuration test
+  gave Σ = 7.3); these add up to 1 exactly and are what the first reading's
+  "≲ 1%" is read against. The script also prints C(0)[Ō_A1g]/C(0)[Ō_e].
+- Checked locally only as plumbing (CPU, the Run-5 checkpoint, random links):
+  the net's Ō already moves under one axis swap and one reflection, i.e. the
+  architecture is not invariant by construction — expected, and says nothing
+  about the trained operator on equilibrium configurations.
+
+Next: `CUBIC_DRY_RUN=1 bash scripts/cubic_batch.sh`, then the batch on the V100
+(phase 1 = the gates on Run 5 in minutes, then ~13 h estimated for the five
+trained nets); copy `results/glueball/cubic/` to `dumps/cubic/`; task 3 offline.
 
 ---
 

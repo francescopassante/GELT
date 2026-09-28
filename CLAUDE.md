@@ -321,6 +321,16 @@ implementation (MIT, Favoni et al. 2012.12901), layer sources only, tracked so
   right is only the sentence "this is the paper's network".
 - **`cnn_baseline.py`** — `LatticeCNN`: non-equivariant baseline; `Conv2d`/
   `Conv3d` for D=2/3 and a roll-based `_RollConvND` for D≥4.
+- **`cubic.py`** — the spatial cubic group O_h on links, for S4
+  (`notes/prof_notes.md`). `cubic_elements()` → the 48 signed permutations of
+  axes 1..3 (time untouched), identity first; `apply_cubic(U, group, g,
+  batch_dims)` reflects then permutes, exactly (index ops and daggers; the
+  reflection shifts *down* before reflecting, as in the parity test).
+  `irrep_characters` / `irrep_projections` (`P_Γ = (d_Γ/48) Σ χ_Γ(g) g`) for the
+  ten irreps; `irrep_fractions` splits C(0) over the irreps on the
+  O_h-augmented sample via the regular representation's projectors, so the
+  shares add up to 1 exactly (the naive per-projection C_Γ(0) do not).
+
 ### `scripts/`
 
 Flat and self-contained: each defines its own `evaluate` / `train_model` inline
@@ -532,6 +542,14 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   the L-CB's ω is a free complex weight per (out, in, in, offset) and can be
   zero. The A/Bs, in order: `nhead` at fixed budget, then `alpha_mode="signed"`,
   then `WR_TRANSPORT_MODE=single` as a **control** on the retraction.
+- **`cubic_projection.py` / `cubic_batch.sh`** — S4: each trained net's Ō on
+  its test split transformed by all 48 elements of O_h, the whole input
+  pipeline rebuilt from the transformed links. Gated on the identity
+  reproducing the source dump, the action, and the classical Ō's invariance;
+  writes the 48 Ō_g and an `…_a1_test_obars.pt` in the standard dump format
+  (the `_ens<k>` tag kept), so the fit / fair-fight / decomposition scripts read
+  the projected operator unchanged. Resumes per element. Refuses to run without
+  CUDA except `--smoke=1`.
 - **`profile_glueball_step.py`** — where one optimizer step goes, per stage,
   forward **and backward** separately. It goes through
   `train_glueball.config_inputs`, i.e. the pipeline the training loop actually
@@ -616,6 +634,11 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   prints them; and `W^(1×1)` **constructively** exact in the 12-parameter
   network, so its MSE is a float32 floor and not an approximation error.
 - **`test_data_model.py`** — split validation and CNN-baseline shape guards.
+- **`test_cubic.py`** — O_h on links: the composition law bit for bit
+  against the matrices, the anisotropic action and the classical Ō(t) (APE
+  ladder included) invariant under all 48, the character table orthonormal,
+  one plane's plaquette sum = A1g ⊕ Eg, Σ Im Tr U₁ (SU(3)) = pure T1u, the
+  regular projectors a resolution of the identity.
 
 ## Conventions
 
@@ -752,6 +775,8 @@ python scripts/fit_window_scan.py            # S1: windows, correlated χ², m_e
 python scripts/fit_estimator_mc.py           # S1: is the diagonal or the correlated fit biased? (offline, 15 s)
 bash   scripts/overnight_replication.sh      # fresh ensemble + retraining (~24 h)
 bash   scripts/ens2_batch.sh                 # the third ensemble (seed 2); never retrains ens1
+python scripts/cubic_projection.py --smoke=1 # S4 plumbing (CPU, seconds)
+CUBIC_DRY_RUN=1 bash scripts/cubic_batch.sh  # S4: Ō under all 48 of O_h → _a1 dumps (V100)
 bash   scripts/curve_batch.sh                # the curve's random trace + 3 trainings
 GLUEBALL_ARCH=lcnn python scripts/train_glueball.py  # the matched-parameter L-CNN
 GLUEBALL_ARCH=lcnn_ref python scripts/train_glueball.py  # ...the authors' own
