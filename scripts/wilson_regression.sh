@@ -29,6 +29,13 @@
 #
 #   WR_ARCH=gelt WR_TARGETS=W44 WR_PARTS=train bash scripts/wilson_regression.sh
 #
+# WR_ARCH=cnn is the non-equivariant LatticeCNN on the same problem, at two
+# sizes (matched ~40k, large ~520k; "best" runs both). WR_ARCH takes a comma
+# list, so the GELT-vs-CNN scan over W(2x2), W(3x3), W(4x4) is one command:
+#
+#   WR_ARCH=gelt,cnn WR_TARGETS=W22,W33,W44 WR_SEEDS=3 WR_PARTS=train,figure \
+#     WR_FIG_TAG=cnn_vs_gelt bash scripts/wilson_regression.sh
+#
 # Unlike the glueball and probe batches this does *not* refuse to run on a CPU:
 # the smallest model here is twelve parameters on a 64-site lattice. The data
 # phase and the W(4x4) network are the only parts that want a GPU.
@@ -46,7 +53,7 @@ SEEDS=${WR_SEEDS:-1}
 TARGETS=${WR_TARGETS:-W11,W12,W22,W44}
 SIZES=${WR_SIZES:-best}
 IMPL=${WR_CONV_IMPL:-exact}
-ARCH=${WR_ARCH:-lcnn}
+ARCHS=${WR_ARCH:-lcnn}
 DRY=${WR_DRY_RUN:-0}
 DUMPS=${WR_DUMP_DIR:-dumps}
 DATA=${WR_DATA_DIR:-datasets/wilson1p1d}
@@ -64,6 +71,8 @@ has_part() { case ",$PARTS," in *",$1,"*) return 0;; *) return 1;; esac; }
 sizes_for() {
   if [ "$SIZES" != "best" ]; then echo "${SIZES//,/ }"; return; fi
   if [ "$ARCH" = "gelt" ]; then echo matched; return; fi
+  # The CNN is the baseline being argued against: give it every chance.
+  if [ "$ARCH" = "cnn" ]; then echo matched large; return; fi
   if [ "$1" = "W11" ]; then echo small; else echo large; fi
 }
 
@@ -72,6 +81,8 @@ sizes_for() {
 dump_for() {
   if [ "$ARCH" = "gelt" ]; then
     echo "$DUMPS/wilson_regression_gelt_${1}_${2}_s${3}.pt"
+  elif [ "$ARCH" = "cnn" ]; then
+    echo "$DUMPS/wilson_regression_cnn_${1}_${2}_s${3}.pt"
   else
     echo "$DUMPS/wilson_regression_${1}_${2}_${IMPL}_s${3}.pt"
   fi
@@ -86,8 +97,10 @@ if has_part data; then
 fi
 
 IFS=',' read -ra TGTS <<< "$TARGETS"
+IFS=',' read -ra ARCH_LIST <<< "$ARCHS"
 
 if has_part train; then
+  for ARCH in "${ARCH_LIST[@]}"; do
   for t in "${TGTS[@]}"; do
     for s in $(sizes_for "$t"); do
       # Table V has no W(1x1) beyond 'small': nothing to sweep there.
@@ -101,6 +114,7 @@ if has_part train; then
             WR_SEED=$seed $PY -u scripts/wilson_regression.py
       done
     done
+  done
   done
 fi
 
@@ -122,5 +136,14 @@ if has_part gelt-sweep; then
 WR_LR=<best> WR_MLP_ZERO_INIT=<best> WR_PARTS=train bash scripts/wilson_regression.sh"
 fi
 
-has_part figure && run $PY -u scripts/wilson_regression_figure.py
+# WR_FIG_TAG names the figure's artifacts, and restricts its panels to
+# WR_TARGETS, so a scan does not overwrite fig3.png.
+if has_part figure; then
+  if [ -n "${WR_FIG_TAG:-}" ]; then
+    run $PY -u scripts/wilson_regression_figure.py --out-tag="$WR_FIG_TAG" \
+        --fig-targets="$TARGETS"
+  else
+    run $PY -u scripts/wilson_regression_figure.py
+  fi
+fi
 echo "done."

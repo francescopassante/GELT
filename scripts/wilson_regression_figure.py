@@ -31,10 +31,19 @@ number and the table labels it as its own row.
 test configuration, both sides averaged over the lattice first. See
 ``wilson_regression_common`` on why.
 
+A CNN arm (``WR_ARCH=cnn``) is overlaid the same way, compared against the
+Letter's own CNN number for scale. The table prints **every size** present for
+an arm, one row each, with ``*`` on the one the panel plots: the CNN is run at
+two sizes, and the smaller one losing is not the claim. ``R2_within`` is R^2
+with the coupling's share of the label variance removed
+(``wilson_regression_common.r2_within_beta``) --- 0 for a model that reads off
+beta and nothing else, which on this dataset is the reading that matters for a
+non-equivariant arm.
+
 ``--dumps=<glob>`` overrides the default dump pattern, ``--out-tag=<s>`` names
 the artifacts, ``--size=<s>`` restricts to one architecture size (by default the
 lowest-validation-loss size present is used, which is the Letter's "best model"
-reading).
+reading), ``--fig-targets=W22,W33,W44`` restricts the panels.
 """
 
 import glob
@@ -50,10 +59,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wilson_regression_common import (
     DUMP_DIR,
     LOOPS,
+    PAPER_MSE_CNN,
     PAPER_MSE_LCNN,
     RESULT_DIR,
     cfg,
     r2_pair,
+    r2_within_beta,
     validate_argv,
 )
 
@@ -61,6 +72,7 @@ from wilson_regression_common import (
 ARCH_STYLE = {
     "lcnn": ("L-CNN", "#2ca02c", "o", 2),
     "gelt": ("GELT", "#d62728", "^", 3),
+    "cnn": ("CNN", "#7f7f7f", "s", 1),
 }
 
 
@@ -114,10 +126,14 @@ def select(runs, target, arch="lcnn", size=None):
 
 
 def main():
-    validate_argv()
     pattern = cfg("WR_DUMPS", os.path.join(DUMP_DIR, "wilson_regression_*.pt"))
     tag = cfg("WR_OUT_TAG", "")
     size = cfg("WR_SIZE", None)
+    only = [t.strip().upper()
+            for t in str(cfg("WR_FIG_TARGETS", "")).split(",") if t.strip()]
+    # After every cfg() read, not before: validate_argv only knows the flags
+    # cfg() has already been asked for, so called first it refused them all.
+    validate_argv()
     runs = load_dumps(pattern)
     if not runs:
         raise SystemExit(f"no run dumps matched {pattern}")
@@ -128,7 +144,8 @@ def main():
     import matplotlib.pyplot as plt
 
     os.makedirs(RESULT_DIR, exist_ok=True)
-    targets = [t for t in LOOPS if any(r["target"] == t for r in runs)]
+    targets = [t for t in LOOPS if any(r["target"] == t for r in runs)
+               and (not only or t in only)]
     ncol = 2 if len(targets) > 1 else 1
     nrow = math.ceil(len(targets) / ncol)
     fig, axes = plt.subplots(nrow, ncol, figsize=(4.0 * ncol, 3.5 * nrow),
@@ -138,10 +155,10 @@ def main():
     for i, target in enumerate(targets):
         ax = axes[i // ncol][i % ncol]
         m, n = LOOPS[target]
-        paper = PAPER_MSE_LCNN[target]
+        paper = PAPER_MSE_LCNN.get(target)
         lo = hi = None
         note = []
-        for arch in ("lcnn", "gelt"):
+        for arch in ("lcnn", "gelt", "cnn"):
             best, cell = select(runs, target, arch, size)
             if best is None:
                 continue
@@ -149,24 +166,37 @@ def main():
             pred, true = lattice_average(best)
             ax.scatter(pred, true, s=10, c=colour, marker=marker, alpha=0.6,
                        linewidths=0, zorder=z, label=label)
-            vals = sorted(r["mse_avg"] for r in cell)
             note.append(f"{label:5} {best['mse_avg']:.1e}")
-            n_ep, cut = was_cut_off(best)
-            # Recomputed rather than read, so dumps written before r2 existed
-            # still get the column.
-            r2s, r2a = r2_pair(best["test_pred"], best["test_true"])
-            table.append(dict(target=target, arch=arch, size=best["size"],
-                              epochs_run=n_ep, cut_off=cut,
-                              r2_site=r2s, r2_avg=r2a,
-                              conv_impl=best.get("conv_impl"),
-                              n_param=best["n_param"],
-                              paper_n_param=best.get("paper_n_param"),
-                              best_mse_avg=best["mse_avg"],
-                              best_mse_site=best["mse_site"],
-                              paper_mse=paper, n_seeds=len(vals),
-                              median_mse_avg=statistics.median(vals),
-                              min_mse_avg=vals[0], max_mse_avg=vals[-1],
-                              seed=best["seed"], path=best["_path"]))
+            ref = (PAPER_MSE_CNN if arch == "cnn"
+                   else PAPER_MSE_LCNN).get(target)
+            # One row per size present (the panel plots the starred one).
+            sizes = sorted({r["size"] for r in runs if r["target"] == target
+                            and r["arch"] == arch
+                            and (size is None or r["size"] == size)})
+            for sz in sizes:
+                row_best, row_cell = select(runs, target, arch, sz)
+                vals = sorted(r["mse_avg"] for r in row_cell)
+                n_ep, cut = was_cut_off(row_best)
+                # Recomputed rather than read, so dumps written before r2
+                # existed still get the column.
+                r2s, r2a = r2_pair(row_best["test_pred"], row_best["test_true"])
+                r2w = r2_within_beta(row_best["test_pred"],
+                                     row_best["test_true"],
+                                     row_best["test_beta"])
+                table.append(dict(target=target, arch=arch, size=sz,
+                                  plotted=sz == best["size"],
+                                  epochs_run=n_ep, cut_off=cut,
+                                  r2_site=r2s, r2_avg=r2a, r2_within=r2w,
+                                  conv_impl=row_best.get("conv_impl"),
+                                  n_param=row_best["n_param"],
+                                  paper_n_param=row_best.get("paper_n_param"),
+                                  best_mse_avg=row_best["mse_avg"],
+                                  best_mse_site=row_best["mse_site"],
+                                  paper_mse=ref, n_seeds=len(vals),
+                                  median_mse_avg=statistics.median(vals),
+                                  min_mse_avg=vals[0], max_mse_avg=vals[-1],
+                                  seed=row_best["seed"],
+                                  path=row_best["_path"]))
             payload[f"{arch}_{target}"] = dict(pred=pred, true=true,
                                                mse_avg=best["mse_avg"])
             a = min(true.min().item(), pred.min().item())
@@ -175,7 +205,8 @@ def main():
             hi = b if hi is None else max(hi, b)
         if lo is None:
             continue
-        note.append(f"paper {paper:.1e}")
+        if paper is not None:
+            note.append(f"paper {paper:.1e}")
         pad = 0.08 * (hi - lo + 1e-9)
         ax.plot([lo - pad, hi + pad], [lo - pad, hi + pad], "k--", lw=0.8,
                 zorder=0)
@@ -189,7 +220,7 @@ def main():
         # rather than a picture.
         ax.text(0.03, 0.97, "\n".join(note), transform=ax.transAxes,
                 va="top", ha="left", fontsize=7, family="monospace")
-        if len(note) > 2:
+        if sum(1 for a in ARCH_STYLE if select(runs, target, a, size)[0]) > 1:
             ax.legend(loc="lower right", fontsize=8, frameon=False)
 
     for j in range(len(targets), nrow * ncol):
@@ -203,8 +234,9 @@ def main():
     torch.save({"table": table, "panels": payload},
                os.path.join(RESULT_DIR, stem + ".pt"))
 
-    hdr = (f"{'loop':6} {'arch':5} {'size':8} {'N_par':>7} {'MSE_avg':>10} "
+    hdr = (f"{'loop':6} {'arch':5} {'size':9} {'N_par':>7} {'MSE_avg':>10} "
            f"{'paper':>9} {'/paper':>8} {'MSE_site':>10} {'R2_site':>13} "
+           f"{'R2_within':>13} "
            f"{'site/avg':>9} {'ep':>4} {'cut':>4} {'seeds':>5} {'median':>10} "
            f"{'worst':>10}")
     print("\n" + hdr)
@@ -215,15 +247,21 @@ def main():
         # has a coherent, long-wavelength component, which the averaged MSE
         # cannot see and which is a property of the model, not of the task.
         ratio_sa = r["best_mse_site"] / r["best_mse_avg"]
-        print(f"{r['target']:6} {r['arch']:5} {r['size']:8} "
+        pm = r["paper_mse"]
+        size_s = r["size"] + ("*" if r["plotted"] else "")
+        print(f"{r['target']:6} {r['arch']:5} {size_s:9} "
               f"{r['n_param']:7d} "
-              f"{r['best_mse_avg']:10.2e} {r['paper_mse']:9.1e} "
-              f"{r['best_mse_avg'] / r['paper_mse']:8.1e} "
-              f"{r['best_mse_site']:10.2e} {r['r2_site']:13.9f} "
+              f"{r['best_mse_avg']:10.2e} "
+              + (f"{pm:9.1e} {r['best_mse_avg'] / pm:8.1e} " if pm is not None
+                 else f"{'-':>9} {'-':>8} ")
+              + f"{r['best_mse_site']:10.2e} {r['r2_site']:13.9f} "
+              f"{r['r2_within']:13.9f} "
               f"{ratio_sa:9.1f} "
               f"{r['epochs_run']:4d} {'YES' if r['cut_off'] else '-':>4} "
               f"{r['n_seeds']:5d} "
               f"{r['median_mse_avg']:10.2e} {r['max_mse_avg']:10.2e}")
+    print("\n* = the size the panel plots (lowest validation loss). "
+          "R2_within: 0 = knows beta, nothing else.")
     if any(r["cut_off"] for r in table):
         print("\ncut = the best epoch is the last one and the validation curve "
               "is still falling\n      over its final quarter: that run was "
@@ -233,14 +271,18 @@ def main():
     tex = os.path.join(RESULT_DIR, stem + ".tex")
     with open(tex, "w") as f:
         f.write("% generated by scripts/wilson_regression_figure.py\n")
-        f.write("\\begin{tabular}{llrrrr}\n\\hline\n")
+        f.write("\\begin{tabular}{llrrrrr}\n\\hline\n")
         f.write("loop & arch & $N_\\mathrm{param}$ & MSE (this work) & "
-                "MSE (Favoni et al.) & seeds \\\\\n\\hline\n")
+                "MSE (Favoni et al.) & $R^2_{\\beta}$ & seeds "
+                "\\\\\n\\hline\n")
         for r in table:
             f.write(f"$W^{{({LOOPS[r['target']][0]}\\times"
                     f"{LOOPS[r['target']][1]})}}$ & {r['arch']} & "
                     f"{r['n_param']} & "
-                    f"{r['best_mse_avg']:.1e} & {r['paper_mse']:.1e} & "
+                    f"{r['best_mse_avg']:.1e} & "
+                    + (f"{r['paper_mse']:.1e}" if r['paper_mse'] is not None
+                       else "--")
+                    + f" & {r['r2_within']:.6f} & "
                     f"{r['n_seeds']} \\\\\n")
         f.write("\\hline\n\\end{tabular}\n")
     print(f"\nwrote {tex}")

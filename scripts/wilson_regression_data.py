@@ -180,7 +180,6 @@ def save_split(path, U, beta, meta):
 
 
 def main():
-    validate_argv()
     L = int(cfg("WR_L", 8))
     n_beta = int(cfg("WR_N_BETA", 11))
     b_min = float(cfg("WR_BETA_MIN", 0.1))
@@ -197,6 +196,9 @@ def main():
     device = pick_device(cfg("WR_DEVICE", None))
     extra_sizes = [int(s) for s in str(cfg("WR_TEST_SIZES", "")).split(",") if s]
     n_test_large = int(cfg("WR_N_TEST_LARGE", 1000))
+    # After every cfg() read, not before: validate_argv only knows the flags
+    # cfg() has already been asked for, so called first it refused them all.
+    validate_argv()
 
     os.makedirs(DATA_DIR, exist_ok=True)
     torch.manual_seed(seed)

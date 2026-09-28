@@ -7,13 +7,14 @@ conventions. The two attention scripts in this repo share one estimator by
 import for exactly this reason; the same discipline applies to a comparison
 whose headline numbers are four MSEs.
 
-**Scope: the L-CNN half of Fig. 3, plus a GELT arm on the same problem.** The
-Letter's panels also
+**Scope: the L-CNN half of Fig. 3, plus GELT and CNN arms on the same problem.**
+The Letter's panels also
 carry a baseline CNN, and this does not reproduce it --- that comparison is not
 what the arm in this repo needs to stand on, and their baseline sweep is 2 680
 models across 264 architectures and four activation functions. The four
 ``PAPER_MSE_LCNN`` values are the target; the CNN's are quoted in
-``notes/wilson_regression_1p1d.md`` §1 for scale and are not computed here.
+``notes/wilson_regression_1p1d.md`` §1 (and ``PAPER_MSE_CNN``) for scale and are
+not reproduced here.
 
 ``WR_ARCH=gelt`` runs this repo's own architecture on the identical problem ---
 same ensemble, same splits, same label, same loss, same optimiser --- at a
@@ -22,6 +23,23 @@ compared against the paper's number as a reproduction of it; it is the question
 "can the attention block do what the L-CB does here, at the same cost", which
 the four closed attempts in ``notes/where_attention_can_win.md`` never asked on
 a supervised per-site target of this size. See §10 of the design record.
+
+``WR_ARCH=cnn`` is a non-equivariant baseline on the same problem --- this
+repo's ``LatticeCNN``, not the Letter's CNN sweep, fed the raw real and
+imaginary components of the links *and* the plaquettes (the information GELT
+and the L-CNN get, in a form that is not gauge covariant). It exists for the
+GELT-vs-CNN reading on W(2x2), W(3x3), W(4x4), the SU(2) version of main.tex's
+validation figure. ``PAPER_MSE_CNN`` is printed next to it for scale only: the
+Letter's CNNs end in a global average pool and were trained on the averaged
+label, this one is per-site.
+
+**The coupling is a shortcut on this dataset.** The labels span a beta ladder,
+so a large part of their variance is the beta dependence of <W>, which any
+network that can estimate the local mean plaquette --- a linear function of the
+CNN's input channels --- can harvest without ever forming a loop.
+``r2_within_beta`` removes it: 1 - MSE / Var(y | beta), which is 0 for the
+predictor that knows the coupling and nothing else. It is the reading that says
+whether a per-site loop was actually computed.
 
 **The two MSEs.** The Letter's Fig. 3 plots one point per test configuration,
 not one per lattice site: their ``LCNN.mse(global_average=True)`` averages the
@@ -97,11 +115,18 @@ DUMP_DIR = cfg("WR_DUMP_DIR", os.path.join(REPO, "dumps"))
 RESULT_DIR = os.path.join(REPO, "results", "wilson_regression")
 
 # Eq. (12): W^(m x n)_{x,01}. Keys are the artifact names, values are (m, n).
-LOOPS = {"W11": (1, 1), "W12": (1, 2), "W22": (2, 2), "W44": (4, 4)}
+LOOPS = {"W11": (1, 1), "W12": (1, 2), "W22": (2, 2), "W33": (3, 3),
+         "W44": (4, 4)}
+# W(3x3) is not in the Letter; it is here for the GELT-vs-CNN scan
+# (W22 / W33 / W44). Datasets written before it existed do not store the label,
+# and ``load_split`` computes it from the float64 links instead.
 
 # Fig. 3's L-CNN MSEs (lattice-averaged), in the Letter's own printing. These
 # are the pre-registered targets of the reproduction, not a fit.
 PAPER_MSE_LCNN = {"W11": 2.2e-11, "W12": 2.1e-9, "W22": 1.1e-8, "W44": 1.4e-7}
+# Fig. 3's baseline-CNN MSEs, same convention. For scale next to the CNN arm,
+# never a target: their CNNs are a 2 680-model sweep with a global average pool.
+PAPER_MSE_CNN = {"W11": 1.0e-9, "W12": 2.0e-3, "W22": 4.0e-3, "W44": 4.2e-3}
 
 # ── SM Table V: the L-CNN architectures in 1+1D ──────────────────────────────
 # Each entry is the stack of L-CB(k, n_in, n_out) layers; Trace and the single
@@ -157,6 +182,21 @@ GELT_ARCHS = {
                              mlp_hidden=16),
     ("W22", "matched"): dict(R=3, layers=2, d_model=32, nhead=2, d_qkv=8,
                              mlp_hidden=32),
+    # 9 plaquettes need four bilinear doublings, like 16: W(4x4)'s network.
+    ("W33", "matched"): dict(R=3, layers=4, d_model=32, nhead=2, d_qkv=8,
+                             mlp_hidden=32),
+}
+
+# ── The CNN arm ──────────────────────────────────────────────────────────────
+# Loop-independent: five 3x3 circular convolutions reach +-5 sites per axis,
+# and W(4x4) at x reads links up to 4 sites away, so every loop here is inside
+# the receptive field with one layer of slack; the per-site 1x1 head adds none.
+#   matched  40 055 parameters, against GELT's 39 569 on W(3x3)/W(4x4) and
+#            20 873 on W(2x2) -- the CNN is never the smaller network.
+#   large    523 377, the ~500k of main.tex's validation figure.
+CNN_ARCHS = {
+    "matched": dict(hidden=[30] * 5, kernel=3, fc_hidden=32),
+    "large":   dict(hidden=[104] * 6, kernel=3, fc_hidden=128),
 }
 # INIT_SCALE is the repo's own value (train_glueball.py, train_gelt.py both use
 # 10.0 with qk_init_scale 1.0) and is gated at this geometry by
@@ -188,6 +228,8 @@ TRAIN_HP = {
     "W11": dict(lr=3e-3, epochs=20, patience=5),
     "W12": dict(lr=3e-3, epochs=20, patience=5),
     "W22": dict(lr=1e-3, epochs=100, patience=25),
+    # Not in the Letter: W(3x3) takes the recipe of the two loops around it.
+    "W33": dict(lr=1e-3, epochs=100, patience=25),
     "W44": dict(lr=1e-3, epochs=100, patience=25),
 }
 BATCH_SIZE = 50
@@ -229,6 +271,14 @@ def load_split(split, L=8, target="W11", dtype=torch.complex64):
             f"    python scripts/wilson_regression_data.py"
         )
     d = torch.load(path, map_location="cpu", weights_only=False)
+    if target not in d["labels"] and target in LOOPS:
+        # A loop added to LOOPS after the set was written (W33). The links are
+        # stored in complex128, so this is the label the generator would have
+        # written, to the same precision.
+        from gelt.lattice import SU, rectangular_wilson_loop
+        m, n = LOOPS[target]
+        d["labels"][target] = rectangular_wilson_loop(
+            d["U"].to(torch.complex128), SU(2), R=m, T=n, mu=0, nu=1)
     if target not in d["labels"]:
         raise SystemExit(f"{path} has no label {target!r}; has "
                          f"{sorted(d['labels'])}")
@@ -265,6 +315,24 @@ def r2_pair(pred, true):
     var_avg = true.mean(dim=dims).var(unbiased=False).item()
     return (1.0 - site / max(var_site, 1e-300),
             1.0 - avg / max(var_avg, 1e-300))
+
+
+def r2_within_beta(pred, true, beta):
+    """Per-site ``1 - MSE / Var(y | beta)``: R^2 with the coupling taken out.
+
+    The denominator is the label's variance around its own per-coupling mean,
+    so the predictor that knows beta and nothing else scores 0 and a model that
+    computes the loop scores ~1. See the module docstring on why this dataset
+    needs it: the plain R^2 credits the beta dependence of <W> to whoever can
+    read the mean plaquette.
+    """
+    resid = torch.zeros_like(true)
+    for b in torch.unique(beta):
+        sel = beta == b
+        resid[sel] = true[sel] - true[sel].mean()
+    var_w = (resid ** 2).mean().item()
+    site, _ = mse_pair(pred, true)
+    return 1.0 - site / max(var_w, 1e-300)
 
 
 # ── The model ────────────────────────────────────────────────────────────────
@@ -405,3 +473,37 @@ def build_lcnn(target, size, L, conv_impl="ref", init_w=1.0, check_nparam=True):
             f"conv_impl={conv_impl!r} (Table V: {LCNN_NPARAM[key]})"
         )
     return model, n
+
+
+class CNNArm(torch.nn.Module):
+    """``LatticeCNN`` behind the ``model(W, U)`` signature the other arms share.
+
+    The input is ``flatten_color`` of the links and of the plaquettes, real and
+    imaginary parts as separate channels: 2 * (D + 1) * nc^2 = 24 in 1+1D SU(2).
+    Both are gauge covariant, not invariant, so the CNN sees the loop's
+    ingredients buried under the gauge "noise" main.tex describes.
+    """
+
+    def __init__(self, cnn):
+        super().__init__()
+        self.cnn = cnn
+
+    def forward(self, W, U):
+        from gelt.data import flatten_color
+        return self.cnn(torch.cat([flatten_color(U), flatten_color(W)], dim=1))
+
+
+def build_cnn(size, L, D=2, nc=2):
+    """The non-equivariant arm. See ``CNN_ARCHS``."""
+    from gelt.cnn_baseline import LatticeCNN
+
+    if size not in CNN_ARCHS:
+        raise SystemExit(f"no CNN architecture {size!r}; have "
+                         f"{sorted(CNN_ARCHS)}")
+    spec = dict(CNN_ARCHS[size])
+    cnn = LatticeCNN(L, D, in_channels=2 * (D + 1) * nc * nc,
+                     hidden_channels=spec["hidden"],
+                     kernel_size=spec["kernel"], fc_hidden=spec["fc_hidden"],
+                     reduction="none")
+    model = CNNArm(cnn)
+    return model, real_dofs(model), spec

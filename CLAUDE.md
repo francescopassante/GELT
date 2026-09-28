@@ -542,6 +542,19 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   the L-CB's ω is a free complex weight per (out, in, in, offset) and can be
   zero. The A/Bs, in order: `nhead` at fixed budget, then `alpha_mode="signed"`,
   then `WR_TRANSPORT_MODE=single` as a **control** on the retraction.
+  **`WR_ARCH=cnn`** (2026-09-28, wired, not yet run) is the non-equivariant
+  `LatticeCNN` on the same problem — raw re/im components of links *and*
+  plaquettes, 24 channels, five/six 3×3 circular convs — at `matched`
+  (40 055, never smaller than GELT's 39 569 / 20 873) and `large` (523 377,
+  main.tex's ~500k). With **W³ˣ³** added to `LOOPS` (computed from the stored
+  float64 links when an older dataset lacks it; GELT reuses W⁴ˣ⁴'s network)
+  it is the SU(2) version of main.tex's validation figure:
+  `WR_ARCH=gelt,cnn WR_TARGETS=W22,W33,W44 WR_SEEDS=3 WR_FIG_TAG=cnn_vs_gelt`.
+  **Read `r2_within` first**: the labels span a β ladder and the CNN can read β
+  off the mean plaquette; `1 − MSE/Var(y|β)` is 0 for that and ~1 only for a
+  model that forms the loop. All four `wilson_regression*` entry points had
+  `validate_argv()` *before* their `cfg()` reads, so every documented
+  `--name=value` was refused; it now runs after them.
 - **`cubic_projection.py` / `cubic_batch.sh`** — S4: each trained net's Ō on
   its test split transformed by all 48 elements of O_h, the whole input
   pipeline rebuilt from the transformed links. Gated on the identity

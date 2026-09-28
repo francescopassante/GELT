@@ -37,8 +37,15 @@ the test-set predictions and labels (per site, so either MSE can be recomputed
 offline), the loss history and the metadata.
 ``scripts/wilson_regression_figure.py`` assembles Fig. 3 from those.
 
-Env overrides (also ``--name=value``): ``WR_TARGET`` (W11|W12|W22|W44),
-``WR_SIZE`` (small|medium|large), ``WR_CONV_IMPL`` (exact|ref), ``WR_SEED``,
+``WR_ARCH=cnn`` trains the non-equivariant ``LatticeCNN`` on the same problem
+(``WR_SIZE`` matched|large, see ``CNN_ARCHS``); its dumps are
+``wilson_regression_cnn_<target>_<size>_s<seed>.pt``. Every run also reports
+``r2_within`` --- R^2 with the coupling's share of the label variance taken
+out, the reading that separates "computed the loop" from "read off beta".
+
+Env overrides (also ``--name=value``): ``WR_ARCH`` (lcnn|gelt|cnn),
+``WR_TARGET`` (W11|W12|W22|W33|W44), ``WR_SIZE`` (small|medium|large),
+``WR_CONV_IMPL`` (exact|ref), ``WR_SEED``,
 ``WR_L``, ``WR_LR``, ``WR_EPOCHS``, ``WR_PATIENCE``, ``WR_BATCH``,
 ``WR_INIT_W``, ``WR_DEVICE``, ``WR_RUN_TAG``, ``WR_TEST_SIZES`` (evaluate the
 trained model on larger lattices too).
@@ -55,12 +62,15 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from wilson_regression_common import (
     BATCH_SIZE,
+    CNN_ARCHS,
     DUMP_DIR,
     GELT_ARCHS,
     GELT_LR,
     LCNN_NPARAM,
+    PAPER_MSE_CNN,
     PAPER_MSE_LCNN,
     TRAIN_HP,
+    build_cnn,
     build_gelt,
     build_lcnn,
     build_transport,
@@ -68,6 +78,7 @@ from wilson_regression_common import (
     load_split,
     mse_pair,
     r2_pair,
+    r2_within_beta,
     pick_device,
     real_dofs,
     validate_argv,
@@ -85,7 +96,8 @@ def run_split(model, data, batch_size, device, train_step=None):
     ``data`` is ``(W, aux, y)``. Both architectures are called as
     ``model(W, aux)`` and differ only in what ``aux`` is: raw links for the
     reference L-CB, which transports internally, and the shortest-path-averaged
-    L1-ball transport for GELT, which does not. Keeping the call signature
+    L1-ball transport for GELT, which does not. The CNN takes raw links too and
+    flattens them with the plaquettes (``CNNArm``). Keeping the call signature
     identical is what makes the two arms the same experiment.
 
     Returns ``(mean loss, predictions)``; predictions are only accumulated when
@@ -144,10 +156,10 @@ def train(model, train_data, val_data, lr, epochs, patience, batch_size,
 
 
 def main():
-    validate_argv()
     arch = str(cfg("WR_ARCH", "lcnn")).lower()
-    if arch not in ("lcnn", "gelt"):
-        raise SystemExit(f"WR_ARCH must be 'lcnn' or 'gelt', got {arch!r}")
+    if arch not in ("lcnn", "gelt", "cnn"):
+        raise SystemExit(f"WR_ARCH must be 'lcnn', 'gelt' or 'cnn', "
+                         f"got {arch!r}")
     target = str(cfg("WR_TARGET", "W11")).upper()
     size = str(cfg("WR_SIZE", "small" if arch == "lcnn" else "matched")).lower()
     conv_impl = str(cfg("WR_CONV_IMPL", "exact")).lower()
@@ -164,10 +176,14 @@ def main():
     # The paper's rate is the L-CNN's. GELT's head is zero-initialised, so the
     # gradient reaches the attention only once the head has moved; GELT_LR is
     # what train_gelt.py measured for that stall, not a value tuned here.
-    lr = float(cfg("WR_LR", hp["lr"] if arch == "lcnn" else GELT_LR))
+    # The CNN has a standard-init head and no stall: it takes the paper's rate.
+    lr = float(cfg("WR_LR", GELT_LR if arch == "gelt" else hp["lr"]))
     epochs = int(cfg("WR_EPOCHS", hp["epochs"]))
     patience = int(cfg("WR_PATIENCE", hp["patience"]))
     batch_size = int(cfg("WR_BATCH", BATCH_SIZE))
+    # After every cfg() read, not before: validate_argv only knows the flags
+    # cfg() has already been asked for, so called first it refused them all.
+    validate_argv()
 
     os.makedirs(DUMP_DIR, exist_ok=True)
     torch.manual_seed(seed)
@@ -189,7 +205,14 @@ def main():
     print(f"data L={L} target={target}: "
           + " ".join(f"{k}={v[0].shape[0]}" for k, v in splits.items()))
 
-    if arch == "gelt":
+    if arch == "cnn":
+        model, n_param, spec = build_cnn(size, L=L)
+        paper_n = None
+        impl = None
+        print(f"CNN {target} {size} seed={seed}: {n_param} parameters "
+              f"(not gauge equivariant)")
+        print(f"  {spec}")
+    elif arch == "gelt":
         model, n_param, spec = build_gelt(target, size, L=L,
                                           mlp_zero_init=mlp_zero)
         paper_n = LCNN_NPARAM.get((target, "large"))
@@ -208,11 +231,14 @@ def main():
     print(f"  AdamW lr={lr} wd=0  epochs<={epochs} patience={patience} "
           f"batch={batch_size}  device={device}")
 
-    stem = (f"wilson_regression_{target}_{size}_{conv_impl}_s{seed}"
-            if arch == "lcnn"
-            else f"wilson_regression_gelt_{target}_{size}"
-                 + ("" if tmode == "average" else f"_{tmode}")
-                 + f"_s{seed}")
+    if arch == "lcnn":
+        stem = f"wilson_regression_{target}_{size}_{conv_impl}_s{seed}"
+    elif arch == "cnn":
+        stem = f"wilson_regression_cnn_{target}_{size}_s{seed}"
+    else:
+        stem = (f"wilson_regression_gelt_{target}_{size}"
+                + ("" if tmode == "average" else f"_{tmode}")
+                + f"_s{seed}")
     if tag:
         stem += f"_{tag}"
     ckpt = os.path.join(DUMP_DIR, stem + ".pth")
@@ -222,30 +248,37 @@ def main():
     _, pred = run_split(model, splits["test"], batch_size, device)
     mse_site, mse_avg = mse_pair(pred, splits["test"][2])
     r2_site, r2_avg = r2_pair(pred, splits["test"][2])
-    ref = PAPER_MSE_LCNN[target]
+    r2_within = r2_within_beta(pred, splits["test"][2], test_beta)
     # The paper's number is the L-CNN's. It is printed for the GELT arm too, as
-    # the scale of the problem, and is *not* a reproduction target there.
-    label = "paper" if arch == "lcnn" else "paper's L-CNN"
+    # the scale of the problem, and is *not* a reproduction target there. The
+    # CNN arm gets the Letter's CNN number instead, for the same reason.
+    ref = (PAPER_MSE_CNN if arch == "cnn" else PAPER_MSE_LCNN).get(target)
+    label = {"lcnn": "paper", "gelt": "paper's L-CNN",
+             "cnn": "paper's CNN"}[arch]
+    ref_s = f"{ref:.1e}" if ref is not None else "n/a"
     print(f"\n  test MSE (lattice-averaged, Fig. 3's convention): {mse_avg:.3e}"
-          f"   [{label}: {ref:.1e}]")
+          f"   [{label}: {ref_s}]")
     print(f"  test MSE (per site):                             {mse_site:.3e}")
     # The MSE is in the label's units squared and those change by an order of
     # magnitude across the four loops; R^2 is what says whether the task was
     # solved at all, and the two readings answer different questions.
     print(f"  test R^2:  avg {r2_avg:.9f}   per site {r2_site:.9f}")
+    print(f"  test R^2 within beta (per site, coupling removed): "
+          f"{r2_within:.9f}")
     print(f"  best val loss: {best_val:.4e}")
 
     dump = {
         "arch": arch, "target": target, "size": size, "seed": seed,
         "conv_impl": conv_impl if arch == "lcnn" else None,
         "gelt_spec": GELT_ARCHS[(target, size)] if arch == "gelt" else None,
+        "cnn_spec": CNN_ARCHS[size] if arch == "cnn" else None,
         "L": L, "n_param": n_param, "paper_n_param": paper_n,
         "lr": lr, "epochs": epochs, "patience": patience, "batch": batch_size,
         "init_w": init_w, "mlp_zero_init": mlp_zero, "run_tag": tag or None,
         "transport_mode": tmode if arch == "gelt" else None,
         "history": history, "best_val": best_val,
         "mse_site": mse_site, "mse_avg": mse_avg, "paper_mse": ref,
-        "r2_site": r2_site, "r2_avg": r2_avg,
+        "r2_site": r2_site, "r2_avg": r2_avg, "r2_within": r2_within,
         "test_pred": pred, "test_true": splits["test"][2], "test_beta": test_beta,
         "epochs_run": len(history["train"]),
     }
@@ -266,13 +299,14 @@ def main():
         except SystemExit as e:
             print(f"  [L={Lx}] skipped: {e}")
             continue
-        model.update_dims(Lx)
+        if arch == "lcnn":
+            model.update_dims(Lx)        # the CNN's convolutions take any L
         _, px = run_split(model, (Ux, Wx, yx), batch_size, device)
         ss, sa = mse_pair(px, yx)
         print(f"  [L={Lx}] test MSE avg {sa:.3e}  site {ss:.3e}")
         dump[f"transfer_L{Lx}"] = {"mse_site": ss, "mse_avg": sa,
                                    "pred": px, "true": yx, "beta": bx}
-    if extra_sizes:
+    if extra_sizes and arch == "lcnn":
         model.update_dims(L)
 
     path = os.path.join(DUMP_DIR, stem + ".pt")

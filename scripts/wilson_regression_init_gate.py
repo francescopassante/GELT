@@ -67,7 +67,6 @@ def field_profile(model, W, T):
 
 
 def main():
-    validate_argv()
     target = str(cfg("WR_TARGET", "W44")).upper()
     size = str(cfg("WR_SIZE", "matched")).lower()
     L = int(cfg("WR_L", 8))
@@ -77,6 +76,9 @@ def main():
     scales = [float(s) for s in
               str(cfg("WR_GATE_SCALES", "1,3,10,30")).split(",") if s]
     device = pick_device(cfg("WR_DEVICE", None))
+    # After every cfg() read, not before: validate_argv only knows the flags
+    # cfg() has already been asked for, so called first it refused them all.
+    validate_argv()
 
     if GELT_INIT_SCALE not in scales:
         raise SystemExit(
