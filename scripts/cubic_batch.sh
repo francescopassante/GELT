@@ -16,11 +16,16 @@
 #   phase 3  a1_7lv_ens{0,1}    all 48 on the two 7-level nets (d_model 24).
 #   phase 4  rnd4_ens{0,1,2}    the untrained 4-level nets (three per ensemble,
 #                         one group each) — only with CUBIC_RND=1.
-#   phase 5  lcnn_ens{0,1}      the matched L-CNN — only with CUBIC_LCNN=1.
+#   phase 5  lcnn_ens{0,1}      our matched L-CNN (ens0 = the p2 rerun) — only
+#                         with CUBIC_LCNN=1.
 #
 # Cost, estimated rather than measured: one element ≈ one eval pass over the
 # 400 test configurations (~3 min for a 4-level net), i.e. ~2.5 h per group
-# and ~13 h for phases 2–3. Progress is saved after every element and a restart
+# and ~13 h for phases 2–3. A group of three nets shares the input pipeline but
+# not the forward passes, and GELT's forward is dominated by its own transport,
+# so phase 4 is likely comparable to phases 2–3 together; the per-element
+# seconds in logs/a1_4lv_ens0.log are the measurement to extrapolate from.
+# Phases 4–5 run last, so they never delay the trained nets' results. Progress is saved after every element and a restart
 # resumes; a phase whose output exists is skipped.
 #
 # Check first, without running anything (no GPU needed):
@@ -106,12 +111,14 @@ else
 fi
 
 # ── phase 5 (opt-in): the matched L-CNN ──────────────────────────────────────
+# ens0 is the clean 20-epoch rerun in dumps/p2/, the one the record's table
+# uses: the 60-epoch run in dumps/lcnn_shootout/ put 71.8% of C(0) on one
+# configuration (notes/thesis_record.md §5.2) and must not be projected instead.
 if [ -n "${CUBIC_LCNN:-}" ]; then
-  for E in 0 1; do
-    T=$([ "${E}" = 0 ] && echo "" || echo "_ens${E}")
-    run_phase "lcnn_ens${E}" "${OUT}/best_glueball_lcnn_sm0-2-4-6${T}_a1_test_obars.pt" \
-      ${P} "dumps/lcnn_shootout/best_glueball_lcnn_sm0-2-4-6${T}_test_obars.pt"
-  done
+  run_phase lcnn_ens0 "${OUT}/best_glueball_lcnn_sm0-2-4-6_p2_a1_test_obars.pt" \
+    ${P} dumps/p2/best_glueball_lcnn_sm0-2-4-6_p2_test_obars.pt
+  run_phase lcnn_ens1 "${OUT}/best_glueball_lcnn_sm0-2-4-6_ens1_a1_test_obars.pt" \
+    ${P} dumps/lcnn_shootout/best_glueball_lcnn_sm0-2-4-6_ens1_test_obars.pt
 else
   echo "[$(stamp)] ── phase lcnn: not requested (CUBIC_LCNN=1 to add it)"
 fi
