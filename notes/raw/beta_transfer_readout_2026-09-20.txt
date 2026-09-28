@@ -1,7 +1,7 @@
 Verbatim output of the β-transfer study, V100, 2026-09-20.
 
-Kept in the repo for the same reason notes/m1_probe_readout_2026-09-16.txt and
-notes/z2_vortex_readout_2026-09-20.txt are: results/z2_vortex/ is gitignored
+Kept in the repo for the same reason notes/raw/m1_probe_readout_2026-09-16.txt and
+notes/raw/z2_vortex_readout_2026-09-20.txt are: results/z2_vortex/ is gitignored
 and lives only on the V100, so without this file the numbers in
 notes/beta_transfer.md §9 cannot be checked against anything.
 

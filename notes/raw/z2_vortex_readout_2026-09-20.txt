@@ -2,7 +2,7 @@ Z₂ vortex candidate — verbatim readings, 2026-09-19/20
 =======================================================================
 notes/where_attention_can_win.md §9.9 is the analysis. This file is the
 raw output it was computed from, tracked in git for the same reason
-notes/m1_probe_readout_2026-09-16.txt is: **the dumps under
+notes/raw/m1_probe_readout_2026-09-16.txt is: **the dumps under
 results/z2_vortex/probe/ are gitignored and live only on the V100**, so
 without this the numbers in §9.9 cannot be checked against anything.
 

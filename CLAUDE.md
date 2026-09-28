@@ -33,242 +33,68 @@ or "removed in the 2026-09-09 cleanup", that is where it went.
 ## Documents
 
 - `README.md` — **the reproduction guide**: main.tex section → script → artifact.
+- `notes/thesis_record.md` — **the single research record** (consolidated
+  2026-09-23). §1 is a ledger of every claim with its status (ESTABLISHED /
+  QUALIFIED / OPEN / RETRACTED / DISCARDED); §2–§8 give one consolidated
+  statement per aspect (validation, 0⁺⁺ spectroscopy, attention as an operator,
+  GELT vs L-CNN, the baseline, method, performance); §9 the live defects and
+  the main.tex sentences that need fixing; §10 the discarded studies; **§11 the
+  proposed runs**; §12 a concordance.
+- **The old notes were deleted on 2026-09-23** (`glueball_spectroscopy.md`,
+  `audit_2026-09-06.md`, `fable5.1_10-09_audit.md`, `operator_decomposition.md`,
+  `attention_as_operator.md`, `lcnn_shootout.md`, `lcnn_reference_switch.md`,
+  `where_attention_can_win.md`, `m1_probe.md`, `m1_probe_status.md`,
+  `beta_transfer.md`, `wilson_regression_1p1d.md`, `performance_audit.md`,
+  `update_2026-09-18.md`). Code comments and docstrings still cite them by
+  section; `notes/thesis_record.md` §12 maps each to its new home, and
+  `git show 570c208:notes/<file>` recovers the original.
+- `notes/prof_notes.md` — the supervisor's review of main.tex (2026-09-23) as
+  four work packages S1–S4 (fit-window stability, GEVP benchmark,
+  split/autocorrelations, A₁⁺⁺ projection), each with its reading fixed.
+- `notes/raw/` — the verbatim readouts whose dumps live only on the V100
+  (`m1_probe_readout_2026-09-16.txt`, `z2_vortex_readout_2026-09-20.txt`,
+  `beta_transfer_readout_2026-09-20.txt`) and, untracked, the figures of the
+  18 September update.
+- `notes/papers_review.md` (L-CNN, Nagai–Tomiya, CASK; sections 0–1 are the
+  architecture prerequisites) and `notes/resources.md` — literature.
 - `PLANS.md` — future directions. Proposals only; nothing there is implemented.
-- `notes/glueball_spectroscopy.md` — the run-by-run record of the SU(2) 0⁺⁺
-  program: the anisotropy pivot, the multi-level smeared inputs, Runs 4–5, the
-  §6.2 audit, the presentation layer, the replication.
-- `notes/lcnn_shootout.md` — the design record for the matched-parameter L-CNN
-  baseline: what "matched" means on four axes, why it is a switch inside
-  `train_glueball.py`, and the readings fixed in advance. **Run 2026-09-14:
-  parity** — ΔA₀(GELT − L-CNN) = +0.007 ± 0.007 (1.1σ), same mass, same
-  noise-to-signal (§9.3); the one asymmetry is robustness (§9.2).
-- `notes/wilson_regression_1p1d.md` — **the reproduction of the L-CNN half of
-  Fig. 3 of PRL 128, 032003**: 1+1D SU(2) Wilson-loop regression (1×1, 1×2, 2×2,
-  4×4) on 8×8, on the authors' own L-CB, at the parameter counts and
-  hyper-parameters the Supplemental Material prints. **One network per loop
-  shape, four runs** — Table V's three sizes and SM §VI.A's ten seeds are a
-  sweep whose minimum is the number in the panel, not three results, and the
-  default takes the largest size at one seed (§8). **Their baseline-CNN half is
-  deliberately not reproduced** (§1): 2 680 models over 264 architectures and
-  four activations, and it says nothing about whether our L-CNN is theirs. Holds
-  the β-ladder ambiguity (SM Table I says 11 couplings, SM §II says 10), the
-  one-chain-per-configuration departure from their MC, and **§4, the divergence
-  that forced `gelt/lcnn_exact.py`**. **Run and closed 2026-09-23.** The reproduction
-  succeeds on all four loops and *beats* the published MSEs — 8.6e−16 / 5.3e−16
-  / 1.9e−12 / 9.4e−9 against 2.2e−11 / 2.1e−9 / 1.1e−8 / 1.4e−7 — with the two
-  small loops sitting at the pipeline's **float32 rounding floor** (rms error
-  0.5 ε) rather than at an approximation error. The pre-registered R1 ("within
-  a factor of 10") does not pass as worded: three of four are outside it, on
-  the good side, and the criterion should have been one-sided. **The one
-  assumption everything rests on** is that Fig. 3's MSEs are lattice-averaged
-  (their `mse(global_average=True)` default, "for each example" in the caption,
-  and the CNN arm has a GAP so it cannot be per-site); read per-site instead,
-  `W^(4×4)` flips from 15× better to 3.9× worse.
-- `notes/where_attention_can_win.md` — **the architecture question's running
-  record, and the first thing to read before proposing a GELT-vs-L-CNN task.**
-  Both attempts and why each closed: the 0⁺⁺ tie (structural) and the flow-free
-  topology study (**stopped 2026-09-15**, measured). It separates the two
-  candidate mechanisms — *relative weighting* (M1, which **the probe's ablation
-  has now shown to pay, 6/6 cells, on a constructed target** — §1.2; it has
-  still never paid on a physics task) from *boundedness* (M2, observed three
-  times) — states the **four criteria** a
-  candidate task must now satisfy, and proposes the one experiment that targets
-  M2 directly (§8). §5's pre-flight rule is the cheap gate that stopped topology for
-  ~4 h instead of ~60–100: **measure the best classical method at the
-  architecture's own reach before building any training code.**
-  **§9 is attempt 4, and it is RUN and CLOSED (§9.9, 2026-09-20): a tie.**
-  Vortex-cluster geometry in 3D Z₂ on the cached ensembles, the first
-  candidate that is a physics observable and clears all four criteria.
-  **ΔR²(GELT − L-CNN) = −0.073 ± 0.051 on V1 at β = 0.7520** (six seeds
-  each, every arm at its own bracketed learning rate, 240 epochs,
-  batch = 1) — no difference, t = 1.4. Both architectures clear the
-  matched-depth classical bar [0.404, 0.577], which is the study's one
-  unambiguously positive statement. **The significant reading is
-  dispersion, and it goes the other way**: GELT's spread over
-  initialisations is 6.2× the L-CNN's (sd 0.123 vs 0.020, F = 38 on
-  (5,5) df, p < 0.002), below the classical bar in 3 of 6 seeds against
-  0 of 6 — see the robustness caveat under the L-CNN heading below.
-  **Qualified by attempt 5** (`notes/beta_transfer.md` §9.1): that holds
-  *in distribution only* — at the three other cached couplings the ratio
-  is 1.5× / 1.3× / 1.0×, GELT's spread barely moving and the L-CNN's
-  created by the shift (17× at β = 0.7560). Quote it with the coupling
-  named, not just the task.
-  M1 (`gelt` − `frozen`) = +0.066 and M3 (`gelt` − `gelt_single`) =
-  +0.018 at one seed, directional only. The verbatim readings for every
-  run are tracked at `notes/z2_vortex_readout_2026-09-20.txt`, because
-  the dumps they come from are gitignored and live only on the V100. **The pre-flight passes all
-  five gates on all four cached ensembles** (2026-09-18;
-  `scripts/z2_vortex_preflight.py`, `gelt/vortex_targets.py`,
-  `tests/test_vortex_targets.py`). At the chosen primary coupling β = 0.7520 the
-  best linear filter at Manhattan 8 reaches R² = 0.152 against 0.671 for the
-  best *local* classical algorithm at **uncapped** BFS depth and 1.0 for the
-  target, so the difficulty is routing, not density. 0.671 is **not** the bar
-  a 4-layer network is asked to clear — that is the matched-depth interval
-  [0.404, 0.577], the same BFS capped at 4 and 8 hops (§9.4). **The β ladder is fixed in §9.6: primary 0.7520,
-  replication 0.7450** — the two that rank first and second on headroom, on a
-  low linear ceiling and on a balanced cluster competition. Note the tension
-  §9.4 records: the linear ceiling *rises* towards β_c (0.106 → 0.280), so the
-  architecture question is cleanest where the physics is least critical. It also records a measured identity that changed the
-  design: **in Z₂ GELT's path-averaged transport is a hard vortex mask**
-  (`T_Δ² = (1 + P_enclosed)/2 ∈ {0,1}`) while the L-CNN's axis transport acts as
-  the identity, which is a *third* input-dependent weighting (M3) and forces a
-  2 × 2 design, `{softmax, frozen} × {average, single}`, rather than an A/B.
-- `notes/beta_transfer.md` — **attempt 5, run and closed 2026-09-20 (§9):
-  X-B fails as pre-registered.** The contrast favours GELT at 3 of 3 couplings
-  (+0.007, +0.310, +0.013) but p = 0.485 / 0.240 / 0.240, none under the 0.05
-  the claim required, so the adaptation hypothesis is **not supported**. Two
-  findings survive: **§9.9's 6.2× dispersion result is a property of the
-  training coupling** — one β away it is 1.5× / 1.3× / 1.0×, GELT's spread
-  unchanged and the L-CNN's *created by the shift* — so quote it as "at the
-  coupling both arms were trained on"; and **transfer failure is invisible in
-  distribution** (GELT's one collapsing seed is its 2nd best operator at β₀,
-  the L-CNN's three are ranked 3rd, 5th, 6th), so selecting on val loss does
-  not select a transferable operator, for either arm. The M2-shaped count
-  (1 of 6 seeds against 3 of 6) is the third appearance of that shape and is
-  worth nothing alone — Fisher p = 0.545, the threshold is post-hoc, and the
-  study's own pre-existing criterion reads 6 of 18 each, dead even. It does
-  **validate §8's third stressor**. Readings verbatim at
-  `notes/beta_transfer_readout_2026-09-20.txt`. The axis the four closed
-  attempts never varied: every A/B here
-  trained *and* tested at one coupling, which is precisely the setting in which
-  an input-dependent reweighting over offsets has nothing to earn. It crosses
-  §9.9's twelve V1 checkpoints with the four cached Z₂ ensembles — **no
-  training**, forward passes only — and reads the degradation per seed, so
-  §9.9's 6.2× dispersion cancels instead of drowning the comparison. Two
-  columns, *raw* and *affine* (a two-parameter recalibration fitted at the new
-  coupling, given to both arms): the primary reading is the affine one, because
-  a GELT advantage that survives a recalibration is about **routing** and not
-  about amplitude, and their difference is the amplitude piece, which is M2's
-  fingerprint rather than M1's. Readings X-A…X-E are pre-registered in §4, the
-  falsification hands the programme back to `where_attention_can_win.md` §8,
-  and §6 names the confounds — regression to the mean first.
-- `notes/m1_probe_status.md` — **the plain-language orientation for the M1
-  probe: read it before `m1_probe.md`.** What is being tested and why, the
-  arms and targets in one table each, the findings so far, what is running,
-  what to run when it finishes, and the six things not to re-break.
-- `notes/m1_probe.md` — **attempt 3, run and completed 2026-09-16 (132 runs).** The confound
-  `where_attention_can_win.md` §1 missed: GELT and the matched L-CNN differ in
-  *two* things (input-dependent offset weights **and** transport geometry), so
-  no GELT-vs-L-CNN number has ever measured M1. The clean test is GELT against
-  **GELT with the softmax frozen**, on three constructed per-site targets.
-  Holds the arm table, the four-criteria audit (criterion 4 is knowingly
-  violated — it is a mechanism assay, not a physics result), the pre-registered
-  readings R-A…R-E, and §3.1, where the pre-flight **changed the design before
-  any training code ran**. §3.2 is the production pre-flight (2026-09-15, both
-  ensembles, all gates pass): T0 exactly 1.0000, T1 headroom 0.92, T2 0.38 — and
-  the **radial linear filter equals the full-ball one to four decimals**, so the
-  M1-free ceiling is a five-parameter object and nothing that separates the arms
-  can be directional weighting.
-  **§0 is the one-page readout of what it found**, from the 90-run grid plus
-  parts 7 and 9: **M1 pays** — R-B = +0.144 on T2, 6/6 paired cells, p = 0.031,
-  with capacity controlled by `frozen_matched` — GELT and the L-CNN tie on
-  accuracy and differ 8× in dispersion; the softmax is worth ≈ 0.48 of R² at
-  matched parameters but **not** for the reason proposed (§7.6 withdraws the
-  non-negativity / normalisation / boundedness split: the T0 control says
-  trainability); **path averaging in the transport is a null on accuracy**
-  (§7.7) and is worth *less* on the mechanism target than on the calibration
-  one, which makes GELT's 3.9× step cost a choice here; and **part of GELT's
-  low dispersion is the transport rather than the attention** — the same network
-  fed a single-path `T` falls below R² = 0.70 in 2 of 12 cells and the projected
-  one in 3, against 0 of 12 for `gelt`. The verbatim readings for all 132 runs
-  are tracked at `notes/m1_probe_readout_2026-09-16.txt`, because the dumps they
-  come from are gitignored and live only on the V100.
-- `notes/attention_as_operator.md` — the design record for "the attention map is
-  a lattice operator": why ℓ_att failed and the correlator of the attention field
-  does not, the three arms, the Z₂ result (§6.1) and its transport to SU(2) (§9).
-  §8 records why the scan has four β and not five.
-- `notes/operator_decomposition.md` — `O_GELT = P + r` against the classical
-  span: what the network found, and (§5, 2026-09-12) the two controls it was
-  missing — the strengthened spans and the untrained network.
-- `notes/audit_2026-09-06.md` — the repo audit: the **Z₂ APE smearing defect**
-  (§2, live caveat), the fair-fight results and the corrections they forced
-  (§6.4/§6.5), the ranked plan (§4, re-ranked after the cleanup).
-- `notes/performance_audit.md` — the source of truth for anything touching the
-  GELT hot path: the four measured optimisations that landed, what was rejected,
-  and the ranked backlog.
-- `notes/papers_review.md` — literature review (L-CNN, Nagai–Tomiya, CASK).
-  Sections 0 (lattice primer) and 1 (L-CNN) are the architecture prerequisites.
-- `notes/resources.md` — textbooks and lecture notes, with a reading order.
-- `reports/` — the LaTeX write-ups and their PDFs: `paper/` (the full draft),
-  `glueball/` (spectroscopy), `attention/` (attention as operator). They pull
-  figures from `results/` via `\graphicspath`.
+- `reports/` — the LaTeX write-ups and their PDFs, pulling figures from
+  `results/` via `\graphicspath`.
 
 ## Status
 
-**Wilson-loop regression** (main.tex §Validation). GELT recovers per-site Wilson
-loops a CNN with orders of magnitude more parameters cannot. `train_gelt.py` and
-`train_cnn.py` are deliberately the same problem (D=3, L=8, Z₂, Haar links, 1×2
-loop, same splits); change one and change the other.
+The one-paragraph version of `notes/thesis_record.md` §1. Read the record
+before quoting any number.
 
-**0⁺⁺ glueball spectroscopy in 4D SU(2)** (main.tex §SU(2) Glueball
-spectroscopy). GELT trained as a variational operator on the Rayleigh loss
-`−C(1)/C(0)`, per-timeslice 3D, on an anisotropic lattice (L=12, Lt=24, β=2.4,
-ξ=3.0). Against the classical multi-level GEVP on the same smeared basis and the
-same held-out configurations: same mass, more ground-state weight —
-**ΔA₀ = +0.078 ± 0.022 (3.6σ)** over two independent ensembles, m_eff flat from
-Δ=1, and the enlarged GEVP+GELT basis collapses onto pure GELT. Two enablers,
-both hard-won: **anisotropy** (the isotropic lattice cannot resolve the 0⁺⁺ at
-all) and **multi-level smeared input channels** (with thin plaquettes the network
-only relearns APE×2's staple content).
-
-**Attention as a lattice operator** (main.tex §Attention as a physical field).
-The attention score is gauge invariant, so any reduction of the attention map is
-a local scalar lattice operator and its connected correlator has a mass. Measured
-on 3D Z₂ at four β approaching β_c ≈ 0.7614 (ξ = 2 … 6) and on anisotropic SU(2)
-at β = 2.4: ξ_A tracks the classical correlation length, and **training raises
-the attention field's ground-state overlap** far above both the random-init
-network and the classical GEVP (Z₂ ΔA₀ = +0.110 … +0.267; SU(2) +0.286 ± 0.056).
-The random-init arm tracks ξ too — so the *structural* claim (equivariant
-attention maps are lattice operators with a mass) is established by ξ_A, while
-the *learning* claim rests on ΔA₀. "The network discovers ξ" is **not**
-supportable.
-
-**The matched-parameter L-CNN** (the baseline main.tex names). Same inputs, loss,
-splits, estimator and parameter budget, only the block differs: **parity**.
-ΔA₀(GELT − L-CNN) = +0.012 ± 0.009 (1.3σ) over two ensembles, Δm consistent with
-zero, both beating the classical GEVP by the same margin (+0.077 ± 0.022 and
-+0.067 ± 0.020). So "a learned equivariant operator beats the GEVP" is not an
-attention artefact — and what attention buys has to be said precisely: the
-within-layer L1-ball reach, an attention field that is itself a measurable
-operator, 3.9× the step cost, and **robustness** — 3 of 9 L-CNN operators put
-36–98% of C(0) on a single configuration where 0 of 14 GELT ones exceed 1.0%
-(`notes/lcnn_shootout.md` §9–§9.2). **The robustness claim is
-task-dependent, not architectural** — on the Z₂ vortex task it reverses,
-GELT being 6.2× more dispersed over initialisations than the L-CNN
-(`notes/where_attention_can_win.md` §9.9). Say "on the SU(2) glueball
-task" wherever this is quoted. **And the reversal is itself
-coupling-dependent** (`notes/beta_transfer.md` §9.1, 2026-09-20): one β
-away from the training coupling the ratio is 1.5× / 1.3× / 1.0×, so the
-Z₂ result is "GELT is the dispersed arm *in distribution*", not "on this
-task". What survives all three measurements is narrower than either
-sentence: a **failure-rate** asymmetry in the predicted direction
-whenever the input distribution is stressed — 0-of-14 vs 3-of-9 (SU(2)),
-6-of-6 vs 3-of-6 (`m1_probe.md` §0), 1-of-6 vs 3-of-6 seeds under
-coupling transfer (Fisher p = 0.545) — directional three times,
-significant none. `where_attention_can_win.md` §8 is the experiment that
-would turn it into one measurement, and attempt 5 has now validated its
-third stressor.
-
-**The two audits.** (i) *Is the classical comparator a straw man?* Against the
-input-matched strengthened arm (`deep`), the spectroscopy claim survives:
-ΔA₀ = +0.097 ± 0.021 (4.6σ) combined. "Does real loop-shape variety close the
-gap?" is **answered** (`notes/fable5.1_10-09_audit.md` §8.1, superseding
-`notes/audit_2026-09-06.md` §6.5): dropping C(t0)'s near-null directions
-instead of flooring them makes `full` readable, and loop shapes close about 60%
-of the gap and leave a 1–2σ edge, ΔA₀ = +0.038 ± 0.027. `shapes` and
-`shapes_sm` still fall back on ens1, for a reason no whitening can fix — the
-GEVP at t0 = 1 maximises C(2)/C(1) while the gate tests C(2)/C(0). (ii) *What did the network find?* 12.9%/11.7%
-of `O_GELT`'s norm² lies outside the span of the whole classical basis on two
-ensembles, and removing it costs the entire advantage — ΔA₀ = +0.076 ± 0.019
-(4.0σ) at unchanged mass. Not a contact term. `r` alone is a poor operator
-(A₀ = 0.43) that wins by constructive interference. Both controls have since
-run (`notes/fable5.1_10-09_audit.md` §8.3): against the strong `deep` arm the
-7-level net is 12.8% outside with ΔA₀(GELT − P) = +0.097 ± 0.021, against the
-21-operator `full` arm 2.5% and +0.021 ± 0.009; 80% of the residual is
-rectangular loops the network rediscovered. **Untrained nets are further
-outside the span (16–74%) than the trained one**, so the norm fraction is
-architectural — what is learned is `Z_r/Z_G` (0.146 vs 0.047) and the sign of
-ΔA₀(net − P), which flips to −0.091 ± 0.042 without training.
+- **Validation.** Equivariance to 8.9e−16; samplers exact. GELT regresses a
+  per-site 1×2 loop a ~500k-parameter CNN cannot. Our L-CNN reproduces the
+  L-CNN half of PRL 128 032003 Fig. 3 and beats its MSEs *under the
+  lattice-averaged reading*. At a matched 39.6k parameters GELT solves W⁴ˣ⁴
+  (per-site R² = 0.99998) but at 16× the L-CNN's MSE; cause open.
+- **0⁺⁺ spectroscopy (SU(2), L=12, Lt=24, β=2.4, ξ=3).** Same mass as the GEVP,
+  ΔA₀ = +0.086 ± 0.017 (stat) ± 0.018 (fit window) against the 4-level GEVP on
+  the same inputs, three ensembles, 3.4σ with the window systematic (S1 and the
+  ens2 replication in `notes/prof_notes.md`), +0.095 ±
+  0.021 against the input-matched 7-level one, **only +0.038 ± 0.027 once loop
+  shapes are added**; A₀ saturates above ≈ 0.9. Learned, not architectural
+  (untrained nets are below the GEVP; the decomposition's sign flips); ~80% of
+  what the net adds is rectangular loops, ~2.5% is outside every classical
+  operator. Initialisation-robust (3 seeds: +0.066, +0.067, +0.076).
+- **Attention as an operator.** The attention field has a mass tracking ξ —
+  near-tautological, the random net does it too. Training raises its A₀ over
+  the random net (Z₂ +0.11…+0.27, SU(2) +0.29), but no control separates that
+  from inheritance from the trained output. main.tex's "untrained attention is
+  already better than the GEVP" rests on the broken Z₂ classical basis (caveat
+  1) and is false in SU(2).
+- **GELT vs L-CNN.** Ties our L-CNN on the glueball (+0.012 ± 0.009); beats
+  the authors' L-CNN on it (ahead in 4 of 4 pairings, median +0.101 on ens0,
+  GELT's worst run above their best — an accuracy gap whose cause,
+  representation or optimisation, is open); ties on Z₂ vortex geometry; loses
+  on W⁴ˣ⁴. Input-dependent offset weighting pays on a constructed target (6/6)
+  and on no physics task. What survives of "robustness" is a failure-rate
+  asymmetry on SU(2) tasks, reversed on Z₂ in distribution, absent in 1+1D.
+  **Path-averaged transport has never been shown to pay on accuracy and has
+  never been ablated on the glueball** (§11 P3 of the record).
 
 ## Layout
 
@@ -387,7 +213,9 @@ implementation (MIT, Favoni et al. 2012.12901), layer sources only, tracked so
     single operator in a basis's span, i.e. the apples-to-apples comparator for a
     single learned operator; `fit_cosh_correlator(C, dmin, dmax, sigma)` →
     `(m, A, χ²)` for `A·[e^(−mΔ) + e^(−m(Nt−Δ))]` (profiled-A grid scan +
-    parabolic refine — dependency-free, safe inside every jackknife sample). The
+    parabolic refine — dependency-free, safe inside every jackknife sample;
+    `cov=` in place of `sigma` makes it a correlated fit, a check and not the
+    estimator — see `scripts/fit_window_scan.py`). The
     ground-state overlap fraction is `A₀ = A·(1+e^(−m·Nt))/C(0)`.
 - **`probe_targets.py`** — the M1 probe's supervision (`notes/m1_probe.md`).
   `action_density` → `f(x) = 1 − Re Tr P̄(x)/nc`; `ball_reduce` → cumulative
@@ -493,7 +321,6 @@ implementation (MIT, Favoni et al. 2012.12901), layer sources only, tracked so
   right is only the sentence "this is the paper's network".
 - **`cnn_baseline.py`** — `LatticeCNN`: non-equivariant baseline; `Conv2d`/
   `Conv3d` for D=2/3 and a roll-based `_RollConvND` for D≥4.
-
 ### `scripts/`
 
 Flat and self-contained: each defines its own `evaluate` / `train_model` inline
@@ -814,7 +641,9 @@ subdirectories. `README.md` has the one-line table; the details that matter:
 
 ## Performance
 
-Full record and the algebra behind each number: `notes/performance_audit.md`.
+Summary in `notes/thesis_record.md` §8; the full record and the algebra behind
+each number are in the deleted `notes/performance_audit.md`
+(`git show 570c208:notes/performance_audit.md`).
 The ens1 replication logged **7.77 s/step, 1942 s/epoch** on a 32 GB V100 for a
 ~5k-parameter model. Four exactly-equivalent changes landed, each measured and
 each covered by a test:
@@ -868,7 +697,7 @@ loop-vs-index question, and worth a look after §5.1.
 ## Known caveats
 
 1. **Z₂ APE smearing is broken at the production `SMEAR_ALPHA = 0.5`**
-   (`notes/audit_2026-09-06.md` §2). With two spatial staples the update is
+   (`notes/thesis_record.md` §9). With two spatial staples the update is
    `V = (1−α)U + (α/2)(s₁+s₂)`: the exact identity for α < ½, a majority-vote
    automaton for α > ½, and at α = ½ exactly `V = 0` whenever the staples disagree
    with the link, where `Z2.project` sends `0 → +1` — a value that does not
@@ -919,7 +748,10 @@ python scripts/check_glueball_autocorrelation.py   # τ_int → production n_ski
 python scripts/measure_glueball.py           # classical 0⁺⁺ baseline + ensemble
 python scripts/train_glueball.py             # GELT as a variational operator
 python scripts/fit_glueball_overlap.py [dump]      # cosh fits + A₀ (offline)
+python scripts/fit_window_scan.py            # S1: windows, correlated χ², m_eff(1) (offline, seconds)
+python scripts/fit_estimator_mc.py           # S1: is the diagonal or the correlated fit biased? (offline, 15 s)
 bash   scripts/overnight_replication.sh      # fresh ensemble + retraining (~24 h)
+bash   scripts/ens2_batch.sh                 # the third ensemble (seed 2); never retrains ens1
 bash   scripts/curve_batch.sh                # the curve's random trace + 3 trainings
 GLUEBALL_ARCH=lcnn python scripts/train_glueball.py  # the matched-parameter L-CNN
 GLUEBALL_ARCH=lcnn_ref python scripts/train_glueball.py  # ...the authors' own
@@ -961,61 +793,14 @@ pytest tests
 
 ## Suggested next steps
 
-Ranked in `notes/audit_2026-09-06.md` §4, and unchanged by the cleanup:
-
-1. ~~The random-init control for the operator decomposition~~ — **done**
-   2026-09-12 from the curve's untrained dumps, no new GPU time
-   (`notes/fable5.1_10-09_audit.md` §8.3).
-2. **Fix the Z₂ smearing** (caveat 1) and add the α = 0.5 covariance case to
-   `tests/test_glueball.py`. Changing the Z₂ inputs needs a retrain for a clean
-   end-to-end statement; evaluating existing checkpoints on covariant inputs is
-   the cheap robustness check first.
-3. ~~Prune near-degenerate operators before the GEVP~~ — **done differently**
-   2026-09-10: truncated whitening (`SFF_TRUNCATE=1`), not pruning, made `full`
-   readable; pruning moves nothing (`notes/fable5.1_10-09_audit.md` §8.1).
-4. **Dump per-config Ō from `z2_attention_correlator.py`** so the decomposition
-   transports to the attention field without a GPU re-run.
-5. ~~The matched-parameter L-CNN shootout~~ — **done** 2026-09-14, and it landed
-   on the pre-registered **parity** (`notes/lcnn_shootout.md` §9). One arm is
-   provisional: the ens0 60-epoch run is unusable and the row uses a sweep arm
-   until a clean run exists (§9.1/§9.2).
-6. **Where attention can win, given parity** — `notes/where_attention_can_win.md`.
-   The flow-free topology study that used to sit here was **stopped 2026-09-15**
-   on a measurement, and its code is deleted (§11 of that note). The lesson is
-   the durable part: the target was the output of a classical smoother, and 48
-   APE steps with one fitted scalar reproduce it at R² = 0.978 — free, untrained,
-   and with more reach than any bounded receptive field. **Before proposing the
-   next A/B, run it past the four criteria in §6 and then run §5's pre-flight:
-   measure the best classical method at the architecture's own reach.** §8
-   proposes the one experiment aimed at the mechanism that *has* been observed
-   (boundedness, 0-of-14 vs 3-of-9), which costs a dozen short runs on data
-   already on disk. ~~**§9 is attempt 4**~~ — vortex-cluster geometry in 3D Z₂,
-   **run and closed 2026-09-20 on a tie** (§9.9): ΔR²(GELT − L-CNN) =
-   −0.073 ± 0.051 on V1 at β = 0.7520, six seeds each at bracketed per-arm
-   rates, both architectures above the matched-depth classical bar, and the
-   only significant separation is **dispersion, 6.2× against GELT** — which
-   **attempt 5 has since shown to be a property of the training coupling**
-   (`notes/beta_transfer.md` §9.1: 1.5× / 1.3× / 1.0× at the other three).
-   ~~**Attempt 5**~~ — β-transfer of these same frozen checkpoints — is
-   **run and closed 2026-09-20 on a null** (§9): X-B favours GELT at 3 of 3
-   couplings and at p ≥ 0.24, so the claim is not made, and the falsification
-   clause hands the programme to §8, whose third stressor attempt 5 has
-   incidentally validated. Note that the β = 0.7450 **replication** below
-   means a *retrain* there and is still not run — attempt 5 only evaluated
-   0.7520-trained nets at that coupling. What is
-   *not* run and is the cheap way to finish it: the β = 0.7450 replication,
-   V2 for every arm but `lcnn` (W-A's comparison half), and six seeds for
-   `frozen` / `gelt_single` / `frozen_single`, which would turn M1 = +0.066
-   and M3 = +0.018 from directions into numbers.
-7. ~~Run the M1 probe~~ — **done and complete** 2026-09-16, 132 runs, and it is
-   the first of three attempts in which M1 was measured to pay
-   (`notes/m1_probe.md` §0). Three cheap follow-ups, none needing new data:
-   **six seeds per ensemble** (the binding constraint on R-B′ and on both
-   dispersion readings, which are counts a sign test cannot resolve at n = 6),
-   `signed_bounded` at 1e−1 (its rate is still unbracketed), and
-   `PROBE_GATE_CONFIGS=64` on the GPU for the three transports' cost ratio.
-   **The claim that needs re-wording elsewhere first**: GELT's robustness is
-   attention *and* the shortest-path-averaged transport, not attention alone.
+`notes/thesis_record.md` §11, ranked by value to the thesis per GPU-hour, each
+with its reading fixed in advance: P1 the unsaturated m_eff(1) comparison
+against `deep`/`full` (offline); P2 the Z₂ attention table on covariant fat-link
+inputs; P3 the glueball with single-path transport; P4 the attention-inheritance
+control; P5 why GELT is the dispersed arm on Z₂; P6 what costs GELT the 16× on
+W⁴ˣ⁴; P7 robustness as one pre-registered failure count; P9 the main.tex text
+fixes; P10 whether the gap to the authors' L-CNN is representation or
+optimisation.
 
 ## Things to keep in mind
 

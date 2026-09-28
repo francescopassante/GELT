@@ -27,7 +27,7 @@ well-known observable in lattice QCD.
 > **2026-09-15:** the flow-free topology study went the same way — the Wilson
 > flow (`gelt/flow.py`), `scripts/measure_topology.py`, its design record and its
 > 13-page theory report. It was stopped on a measurement, not abandoned:
-> `notes/where_attention_can_win.md` keeps the numbers, the two generalised
+> `notes/thesis_record.md` §5.6 and §10 keep the numbers, the generalised
 > lessons and the criteria any future GELT-vs-L-CNN task has to clear.
 
 ---
@@ -43,7 +43,7 @@ repo.
 | §Validation and tests | "gauge equivariance is verified to machine precision in complex128" | `pytest tests/test_blocks.py` (equivariance + the naive-oracle equivalence); `python scripts/check_gelt_invariance.py` prints the drift (8.9e-16) |
 | §Validation and tests, `fig:wilson_loop_regression` | CNN (~500k par.) vs GELT (~1.5k par.) on a per-site 1×2 Wilson loop | `python scripts/train_cnn.py` and `python scripts/train_gelt.py` — same D, L, group, sampler, loop and splits by construction; scatters land in `results/wilson_regression/` |
 | §SU(2) Glueball spectroscopy, `tab:meff` + `fig:glueball_meff` | learned operator vs classical GEVP, m_eff(Δ) | *GPU:* `python scripts/measure_glueball.py` (ensemble + classical baseline), then `python scripts/train_glueball.py` |
-| §…, ΔA₀ = +0.078 ± 0.022 (3.6σ) | cosh fits, overlap A₀, correlated differences, `fig:glueball_overlap` | *offline:* `python scripts/fit_glueball_overlap.py dumps/best_glueball_gelt_sm0-2-4-6_test_obars.pt` (and the `_ens1` dump for the replication) |
+| §…, ΔA₀ = +0.078 ± 0.022 (3.6σ) | cosh fits, overlap A₀, correlated differences, `fig:glueball_overlap` | *offline:* `python scripts/fit_glueball_overlap.py dumps/best_glueball_gelt_sm0-2-4-6_test_obars.pt` (and the `_ens1` dump for the replication); its robustness — five fit windows, the correlated χ² and a correlated fit, m_eff(1) against the fitted mass: `python scripts/fit_window_scan.py`; which of the diagonal and correlated fits is biased, on synthetic correlators with the measured covariance: `python scripts/fit_estimator_mc.py` |
 | §…, the replication | the second, independently sampled ensemble | *GPU, ~24 h:* `bash scripts/overnight_replication.sh` |
 | §Attention as a physical field, `tab:train_rnd_gevp` | ξ_A and A₀, trained / random / GEVP, four β in 3D Z₂ | *GPU:* `python scripts/z2_beta_scan.py` (ensembles + classical mass), `Z2G_R=6 Z2G_N_USE=800 python scripts/train_z2_glueball.py <β>` once per β, then `python scripts/z2_attention_correlator.py`. *offline replot:* `ZAC_REPLOT=results/attention/z2_attention_correlator_diag_R6.pt python scripts/z2_attention_correlator.py` |
 | §…, `tab:su2_train_rnd_gevp` | the same measurement on SU(2) at β = 2.4 | *GPU, ~40 min:* `python scripts/su2_attention_correlator.py` |
@@ -52,18 +52,18 @@ Three audits of the above and one baseline, none of which main.tex quotes:
 
 | question | how |
 |---|---|
-| Is the classical comparator a straw man? | *offline:* `SFF_NOCACHE=1 python scripts/su2_fair_fight.py` reproduces the published ΔA₀; drop the flag (and give it the SU(2) ensemble) for the strengthened `deep` / `shapes` / `full` arms. Verdict in `notes/audit_2026-09-06.md` §6.4/§6.5 |
-| Did the network find operator content the classical basis cannot express? | *offline:* `python scripts/operator_decomposition.py` — 12.9% of the norm² outside the published span, ΔA₀ = +0.076 ± 0.019 (4.0σ). Add `--basis=dumps/su2_fair_fight_obars_run5.pt:deep` for the strong arm (+0.097 ± 0.021) and `--shape-span=…:full` for what `r` is made of (80% rectangular loops); `--m-ref` runs the untrained control, where ΔA₀ flips sign. `notes/operator_decomposition.md` |
-| Is the advantage the architecture, or just richer inputs? | *GPU, ~1.5 days:* `bash scripts/curve_batch.sh` (3 trained points + the untrained trace), then *offline:* one `SFF_TRUNCATE=1 SFF_BASES=1 python scripts/su2_fair_fight.py <dump>` per dump and `python scripts/input_architecture_curve.py`. A₀ against input content for classical / trained / untrained. Verdict in `notes/fable5.1_10-09_audit.md` §8.2 |
-| Is the advantage attention, or any gauge-equivariant network on the same inputs? | *GPU, one night:* `bash scripts/lcnn_shootout.sh` trains a matched-parameter L-CNN on the identical problem (`GLUEBALL_ARCH=lcnn`), then *offline:* `python scripts/fit_glueball_overlap.py <gelt dump> --vs=<lcnn dump>` differences the two inside every jackknife sample. **Parity:** ΔA₀(GELT − L-CNN) = +0.012 ± 0.009 (1.3σ), same mass, both beating the GEVP by the same margin — plus a robustness gap parity does not contain (3 of 9 L-CNN operators put 36–98% of C(0) on one configuration; 0 of 14 GELT ones exceed 1.0%). `notes/lcnn_shootout.md` §9 |
-| Does our L-CNN arm reproduce the paper it comes from? | *GPU for the ensemble, then CPU-minutes:* `bash scripts/wilson_regression.sh` — the L-CNN half of Fig. 3 of PRL 128, 032003: the 1+1D SU(2) datasets and **one network per Wilson-loop shape** at SM Table V's own architecture and hyper-parameters, against the four MSEs the Letter prints. `WR_CONV_IMPL=exact` is the architecture as *reported* (`gelt/lcnn_exact.py`); `ref` is the vendored code as *published*, one transported slot per layer wider. Their baseline-CNN half is not reproduced. Design record and pre-registered readings in `notes/wilson_regression_1p1d.md` |
+| Is the classical comparator a straw man? | *offline:* `SFF_NOCACHE=1 python scripts/su2_fair_fight.py` reproduces the published ΔA₀; drop the flag (and give it the SU(2) ensemble) for the strengthened `deep` / `shapes` / `full` arms. Verdict in `notes/thesis_record.md` §3.3 |
+| Did the network find operator content the classical basis cannot express? | *offline:* `python scripts/operator_decomposition.py` — 12.9% of the norm² outside the published span, ΔA₀ = +0.076 ± 0.019 (4.0σ). Add `--basis=dumps/su2_fair_fight_obars_run5.pt:deep` for the strong arm (+0.097 ± 0.021) and `--shape-span=…:full` for what `r` is made of (80% rectangular loops); `--m-ref` runs the untrained control, where ΔA₀ flips sign. `notes/thesis_record.md` §3.5 |
+| Is the advantage the architecture, or just richer inputs? | *GPU, ~1.5 days:* `bash scripts/curve_batch.sh` (3 trained points + the untrained trace), then *offline:* one `SFF_TRUNCATE=1 SFF_BASES=1 python scripts/su2_fair_fight.py <dump>` per dump and `python scripts/input_architecture_curve.py`. A₀ against input content for classical / trained / untrained. Verdict in `notes/thesis_record.md` §3.3 |
+| Is the advantage attention, or any gauge-equivariant network on the same inputs? | *GPU, one night:* `bash scripts/lcnn_shootout.sh` trains a matched-parameter L-CNN on the identical problem (`GLUEBALL_ARCH=lcnn`), then *offline:* `python scripts/fit_glueball_overlap.py <gelt dump> --vs=<lcnn dump>` differences the two inside every jackknife sample. **Parity:** ΔA₀(GELT − L-CNN) = +0.012 ± 0.009 (1.3σ), same mass, both beating the GEVP by the same margin — plus a robustness gap parity does not contain (3 of 9 L-CNN operators put 36–98% of C(0) on one configuration; 0 of 14 GELT ones exceed 1.0%). Against the *authors'* L-CNN (`GLUEBALL_ARCH=lcnn_ref`) GELT is ahead in every pairing and its worst run beats their best; whether that is representation or optimisation is open. `notes/thesis_record.md` §5.2 |
+| Does our L-CNN arm reproduce the paper it comes from? | *GPU for the ensemble, then CPU-minutes:* `bash scripts/wilson_regression.sh` — the L-CNN half of Fig. 3 of PRL 128, 032003: the 1+1D SU(2) datasets and **one network per Wilson-loop shape** at SM Table V's own architecture and hyper-parameters, against the four MSEs the Letter prints. `WR_CONV_IMPL=exact` is the architecture as *reported* (`gelt/lcnn_exact.py`); `ref` is the vendored code as *published*, one transported slot per layer wider. Their baseline-CNN half is not reproduced. Results, and the matched GELT arm on W⁴ˣ⁴ (`WR_ARCH=gelt`), in `notes/thesis_record.md` §2.3–2.4 |
 
 **Known caveat that touches the Z₂ table.** Projected Z₂ APE smearing has no
 tunable radius at any α, and at the production `SMEAR_ALPHA = 0.5` it is not
 gauge covariant: the classical Z₂ comparator is one operator, not four, and the
 Z₂ networks were trained on four input channels of which three are byte-identical.
 SU(2) is verified clean (1.4e-15), so the spectroscopy headline is untouched.
-Full measurement and fix in `notes/audit_2026-09-06.md` §2.
+Full measurement and fix in `notes/thesis_record.md` §9.
 
 ---
 
@@ -88,7 +88,8 @@ gelt/                  library (installed editable via pyproject.toml)
 scripts/               entry points, flat and self-contained (table below)
 tests/                 pytest: gauge invariance/equivariance, sampler exactness,
                        transport, glueball arithmetic
-notes/                 design records and the run-by-run experimental log
+notes/                 thesis_record.md (the single research record), raw/
+                       readouts, literature review
 reports/               LaTeX write-ups and their PDFs (paper / glueball /
                        attention)
 dumps/                 the two test-split Ō dumps — tracked on purpose
@@ -122,7 +123,10 @@ CLAUDE.md              module-by-module detail, conventions, status, caveats
 | `wilson_regression_figure.py` | the four scatter panels and the MSE table against the paper's own numbers — offline |
 | `wilson_regression.sh` | the whole Fig. 3 batch: data, four trainings, the figure |
 | `fit_glueball_overlap.py` | cosh fits, overlap A₀, correlated (Δm, ΔA₀) — offline |
-| `overnight_replication.sh` | fresh ensemble + from-scratch training, unattended |
+| `fit_window_scan.py` | the same estimator over five fit windows, both ensembles combined; correlated χ², correlated fit and its shrinkage scan; m_eff(1) against the fitted mass; the pre-registered readings; writes the thesis table (`.tex`) and figure (`.png`) beside its `.pt` — offline, seconds |
+| `fit_estimator_mc.py` | parametric bootstrap of those fits: pure-cosh truth, the measured joint covariance, 40-block experiments — bias and RMSE of each estimator, and the null of their disagreement — offline, 15 s |
+| `overnight_replication.sh` | fresh ensemble + from-scratch training, unattended — its phase 1 retrains ens1, so do not re-run it |
+| `ens2_batch.sh` | the third ensemble (seed 2): sampling + 4-level training, the fair-fight Ō cache, three untrained controls, the 7-level net on request |
 | `operator_decomposition.py` | O_GELT = P + r against the classical span, any fair-fight arm — offline |
 | `su2_fair_fight.py` | the strengthened classical arms — is the comparator fair? |
 | `z2_beta_scan.py` | 3D Z₂ classical mass vs β: the ensembles and the reference ξ |
@@ -136,12 +140,11 @@ CLAUDE.md              module-by-module detail, conventions, status, caveats
 | `probe_readings.py` | R-A…R-E, correlated ΔR², median over seeds — offline |
 | `z2_vortex_preflight.py` | the Z₂ vortex candidate's gate: five checks and the two classical ceilings at the architecture's reach — offline |
 
-The `probe_*` scripts belong to the M1 ablation of `notes/m1_probe.md`, run to
-completion 2026-09-16 (132 runs); `z2_vortex_preflight.py` belongs to the
-candidate proposed in `notes/where_attention_can_win.md` §9, which has a
-pre-flight but **no training code**. Neither produces anything in `main.tex`;
-the M1 probe's readings are in `notes/m1_probe.md` §0 and the vortex candidate's
-are pre-registered in §9.6 of the other note.
+The `probe_*` scripts belong to the M1 ablation, run to completion 2026-09-16
+(132 runs), and to the Z₂ vortex candidate (`PROBE_GROUP=z2`, run and closed on
+a tie 2026-09-20); `z2_vortex_preflight.py` is that candidate's gate. Neither
+produces anything in `main.tex`; both readings are in `notes/thesis_record.md`
+§5, with the verbatim readouts in `notes/raw/`.
 
 ---
 

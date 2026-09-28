@@ -17,6 +17,10 @@ artifacts, so they travel with the repo instead:
   init seeds at each of the three input depths on both ensembles: the curve's
   architecture-only trace. `meta["random_init"]` is True and there is no
   training loss (`best_val_loss` is inf).
+- `best_glueball_gelt_sm0-2-4-6_ens2_test_obars.pt`,
+  `…_ens2_rnd{0,1,2}_test_obars.pt`, `su2_fair_fight_obars_ens2.pt` — the third
+  ensemble (seed 2, `scripts/ens2_batch.sh`, 2026-09-28): the trained 4-level
+  net, three untrained ones, and every classical arm's Ō on its test split.
 - `su2_fair_fight_obars_run5.pt`, `su2_fair_fight_obars_ens1.pt` — every
   classical arm's Ō series on each ensemble's 400 test configurations
   (`published`, `deep`, `shapes`, `shapes_sm`, `full`), copied from the V100's
