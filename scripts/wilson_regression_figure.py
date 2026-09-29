@@ -135,7 +135,7 @@ def main():
             for t in str(cfg("WR_FIG_TARGETS", "")).split(",") if t.strip()]
     archs = [a.strip().lower()
              for a in str(cfg("WR_FIG_ARCHS", "")).split(",") if a.strip()]
-    archs = archs or list(ARCH_STYLE)
+    archs = archs or ["gelt", "cnn"]   # the figure: GELT and the two CNNs
     unknown = [a for a in archs if a not in ARCH_STYLE]
     if unknown:
         raise SystemExit(f"unknown arch(s) {unknown}; have {list(ARCH_STYLE)}")
@@ -155,33 +155,51 @@ def main():
     runs = [r for r in runs if r["arch"] in archs]
     targets = [t for t in LOOPS if any(r["target"] == t for r in runs)
                and (not only or t in only)]
-    ncol = 2 if len(targets) > 1 else 1
-    nrow = math.ceil(len(targets) / ncol)
-    fig, axes = plt.subplots(nrow, ncol, figsize=(4.0 * ncol, 3.5 * nrow),
+    ncol = 1                      # one column, one row per loop
+    nrow = len(targets)
+    fig, axes = plt.subplots(nrow, ncol, figsize=(4.2, 3.8 * nrow),
                              squeeze=False)
 
     table, payload = [], {}
     for i, target in enumerate(targets):
         ax = axes[i // ncol][i % ncol]
         m, n = LOOPS[target]
-        paper = PAPER_MSE_LCNN.get(target)
         lo = hi = None
         note = []
-        for arch in ("lcnn", "gelt", "cnn"):
-            best, cell = select(runs, target, arch, size)
+        # GELT plots its best size; the CNN plots both of its sizes.
+        series = []
+        for arch in ("gelt", "cnn", "lcnn"):
+            if arch not in archs:
+                continue
+            if arch == "cnn":
+                szs = sorted({r["size"] for r in runs if r["target"] == target
+                              and r["arch"] == "cnn"
+                              and (size is None or r["size"] == size)})
+                series += [("cnn", sz) for sz in szs]
+            else:
+                series.append((arch, size))
+        for arch, sz_plot in series:
+            best, cell = select(runs, target, arch, sz_plot)
             if best is None:
                 continue
             label, colour, marker, z = ARCH_STYLE[arch]
+            if arch == "cnn":
+                label = f"CNN {best['size']}"
+                colour = {"matched": "#7f7f7f", "large": "#1f77b4"}.get(
+                    best["size"], colour)
+                marker = {"matched": "s", "large": "D"}.get(best["size"], marker)
             pred, true = lattice_average(best)
             ax.scatter(pred, true, s=10, c=colour, marker=marker, alpha=0.6,
                        linewidths=0, zorder=z, label=label)
-            note.append(f"{label:5} {best['mse_avg']:.1e}")
+            note.append(f"{label:12} {best['mse_avg']:.1e}")
             ref = (PAPER_MSE_CNN if arch == "cnn"
                    else PAPER_MSE_LCNN).get(target)
             # One row per size present (the panel plots the starred one).
             sizes = sorted({r["size"] for r in runs if r["target"] == target
                             and r["arch"] == arch
                             and (size is None or r["size"] == size)})
+            if arch == "cnn":
+                sizes = [best["size"]]   # one series per CNN size
             for sz in sizes:
                 row_best, row_cell = select(runs, target, arch, sz)
                 vals = sorted(r["mse_avg"] for r in row_cell)
@@ -206,7 +224,8 @@ def main():
                                   min_mse_avg=vals[0], max_mse_avg=vals[-1],
                                   seed=row_best["seed"],
                                   path=row_best["_path"]))
-            payload[f"{arch}_{target}"] = dict(pred=pred, true=true,
+            payload[f"{arch}_{target}" + (f"_{best['size']}" if arch == "cnn"
+                                          else "")] = dict(pred=pred, true=true,
                                                mse_avg=best["mse_avg"])
             a = min(true.min().item(), pred.min().item())
             b = max(true.max().item(), pred.max().item())
@@ -214,8 +233,6 @@ def main():
             hi = b if hi is None else max(hi, b)
         if lo is None:
             continue
-        if paper is not None:
-            note.append(f"paper {paper:.1e}")
         pad = 0.08 * (hi - lo + 1e-9)
         ax.plot([lo - pad, hi + pad], [lo - pad, hi + pad], "k--", lw=0.8,
                 zorder=0)
@@ -229,7 +246,7 @@ def main():
         # rather than a picture.
         ax.text(0.03, 0.97, "\n".join(note), transform=ax.transAxes,
                 va="top", ha="left", fontsize=7, family="monospace")
-        if sum(1 for a in ARCH_STYLE if select(runs, target, a, size)[0]) > 1:
+        if len(series) > 1:
             ax.legend(loc="lower right", fontsize=8, frameon=False)
 
     for j in range(len(targets), nrow * ncol):
