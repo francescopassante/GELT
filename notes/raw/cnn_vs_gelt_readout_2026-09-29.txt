@@ -1,0 +1,31 @@
+Verbatim table of the GELT-vs-CNN Wilson-loop scan, 1+1D SU(2), V100,
+reported 2026-09-29.
+
+Kept in the repo for the same reason the other readouts here are: the dumps
+(dumps/wilson_regression_*.pt on the V100) are not tracked, so without this file
+the numbers in notes/thesis_record.md §2.5 cannot be checked against anything.
+
+Produced by, at commit 1e05e6f:
+  WR_ARCH=gelt,cnn WR_TARGETS=W22,W33,W44 WR_SEEDS=3 WR_PARTS=train,figure \
+    WR_FIG_TAG=cnn_vs_gelt bash scripts/wilson_regression.sh
+The lcnn rows are the earlier Fig. 3 reproduction dumps (§2.3-2.4), picked up
+by the figure's default glob; W22 lcnn is one seed.
+
+Columns: MSE_avg is Fig. 3's lattice-averaged convention; "paper" is the
+Letter's L-CNN number for lcnn/gelt rows and the Letter's baseline-CNN number
+for cnn rows; R2_within = 1 - MSE_site / Var(y | beta) (0 = knows the coupling
+and nothing else); * = the size the panel plots (lowest validation loss).
+
+loop   arch  size        N_par    MSE_avg     paper   /paper   MSE_site       R2_site     R2_within  site/avg   ep  cut seeds     median      worst
+---------------------------------------------------------------------------------------------------------------------------------------------------
+W22    lcnn  large*      13521   1.90e-12   1.1e-08  1.7e-04   2.53e-11   1.000000000   1.000000000      13.3   86    -     1   1.90e-12   1.90e-12
+W22    gelt  matched*    20873   1.30e-08   1.1e-08  1.2e+00   4.86e-07   0.999997990   0.999997864      37.5  100    -     3   1.68e-08   2.66e-08
+W22    cnn   large      523377   3.90e-03   4.0e-03  9.7e-01   2.11e-01   0.128759778   0.074377789      54.1   30    -     3   3.95e-03   3.95e-03
+W22    cnn   matched*    40055   4.00e-03   4.0e-03  1.0e+00   2.10e-01   0.131598345   0.077393537      52.5   31    -     3   3.99e-03   4.00e-03
+W33    gelt  matched*    39569   3.70e-08         -        -   2.21e-06   0.999991098   0.999991072      59.6  100    -     3   8.27e-08   2.86e-07
+W33    cnn   large      523377   5.03e-03         -        -   2.46e-01   0.005311426   0.002418312      48.9   28    -     3   5.03e-03   5.07e-03
+W33    cnn   matched*    40055   5.00e-03         -        -   2.46e-01   0.005653371   0.002761252      49.3   28    -     3   5.00e-03   5.00e-03
+W44    lcnn  large*      39905   9.41e-09   1.4e-07  6.7e-02   5.40e-07   0.999997840   0.999997839      57.4  100    -     3   1.09e-08   3.08e-08
+W44    gelt  matched*    39569   1.54e-07   1.4e-07  1.1e+00   3.93e-06   0.999984289   0.999984287      25.4  100    -     3   1.82e-07   4.71e-07
+W44    cnn   large      523377   4.26e-03   4.2e-03  1.0e+00   2.50e-01  -0.000074271  -0.000201380      58.7   27    -     3   4.26e-03   4.26e-03
+W44    cnn   matched*    40055   4.28e-03   4.2e-03  1.0e+00   2.50e-01  -0.000158318  -0.000285438      58.4   27    -     3   4.28e-03   4.29e-03

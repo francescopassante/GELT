@@ -53,7 +53,8 @@ or "removed in the 2026-09-09 cleanup", that is where it went.
   split/autocorrelations, A₁⁺⁺ projection), each with its reading fixed.
 - `notes/raw/` — the verbatim readouts whose dumps live only on the V100
   (`m1_probe_readout_2026-09-16.txt`, `z2_vortex_readout_2026-09-20.txt`,
-  `beta_transfer_readout_2026-09-20.txt`) and, untracked, the figures of the
+  `beta_transfer_readout_2026-09-20.txt`, `cnn_vs_gelt_readout_2026-09-29.txt`)
+  and, untracked, the figures of the
   18 September update.
 - `notes/papers_review.md` (L-CNN, Nagai–Tomiya, CASK; sections 0–1 are the
   architecture prerequisites) and `notes/resources.md` — literature.
@@ -67,7 +68,10 @@ The one-paragraph version of `notes/thesis_record.md` §1. Read the record
 before quoting any number.
 
 - **Validation.** Equivariance to 8.9e−16; samplers exact. GELT regresses a
-  per-site 1×2 loop a ~500k-parameter CNN cannot. Our L-CNN reproduces the
+  per-site 1×2 loop a ~500k-parameter CNN cannot; in 1+1D SU(2) it regresses
+  per-site 2×2, 3×3, 4×4 loops (R² ≥ 0.99998 with β removed) where a CNN at
+  40k or 523k parameters recovers ≤ 8% of the variance, none at 4×4. Our
+  L-CNN reproduces the
   L-CNN half of PRL 128 032003 Fig. 3 and beats its MSEs *under the
   lattice-averaged reading*. At a matched 39.6k parameters GELT solves W⁴ˣ⁴
   (per-site R² = 0.99998) but at 16× the L-CNN's MSE; cause open.
@@ -542,7 +546,9 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   the L-CB's ω is a free complex weight per (out, in, in, offset) and can be
   zero. The A/Bs, in order: `nhead` at fixed budget, then `alpha_mode="signed"`,
   then `WR_TRANSPORT_MODE=single` as a **control** on the retraction.
-  **`WR_ARCH=cnn`** (2026-09-28, wired, not yet run) is the non-equivariant
+  **`WR_ARCH=cnn`** (2026-09-28, **run**: `notes/thesis_record.md` §2.5 — GELT
+  R²_β ≥ 0.99998 on all three loops, the CNN 0.077 → 0.003 → 0.000 at both
+  sizes, on the Letter's own baseline-CNN MSEs) is the non-equivariant
   `LatticeCNN` on the same problem — raw re/im components of links *and*
   plaquettes, 24 channels, five/six 3×3 circular convs — at `matched`
   (40 055, never smaller than GELT's 39 569 / 20 873) and `large` (523 377,
@@ -555,6 +561,8 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   model that forms the loop. All four `wilson_regression*` entry points had
   `validate_argv()` *before* their `cfg()` reads, so every documented
   `--name=value` was refused; it now runs after them.
+  The figure takes `--fig-targets=` and `--fig-archs=` (e.g. `gelt,cnn` to drop
+  the L-CNN), offline from the dumps.
 - **`cubic_projection.py` / `cubic_batch.sh`** — S4: each trained net's Ō on
   its test split transformed by all 48 elements of O_h, the whole input
   pipeline rebuilt from the transformed links. Gated on the identity

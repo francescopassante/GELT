@@ -10,9 +10,10 @@ was replaced). Everything deleted is recoverable with
 `git show 570c208:notes/<file>`.
 
 Raw evidence that is not prose stays next to this file, in `notes/raw/`: the
-three verbatim readouts whose dumps live only on the V100
+verbatim readouts whose dumps live only on the V100
 (`m1_probe_readout_2026-09-16.txt`, `z2_vortex_readout_2026-09-20.txt`,
-`beta_transfer_readout_2026-09-20.txt`) and the six figures made for the
+`beta_transfer_readout_2026-09-20.txt`, and since 2026-09-29
+`cnn_vs_gelt_readout_2026-09-29.txt`) and the six figures made for the
 18 September update (`notes/raw/figures/`, untracked — `*.png` is gitignored).
 `notes/papers_review.md` and `notes/resources.md` are literature, not records,
 and are kept as they were.
@@ -36,9 +37,10 @@ and are kept as they were.
 | L1 | GELT and both L-CNNs are gauge equivariant to machine precision (8.9e−16, complex128) | ESTABLISHED | §2.1 |
 | L2 | The samplers are exact (2D SU(2) `I₂/I₁`, anisotropic ξ=1 at 0.1σ, batched multichain pulls ≤ 1.3σ) | ESTABLISHED | §2.1 |
 | L3 | GELT (~1.5k par.) regresses a per-site 1×2 Wilson loop that a ~500k-par. CNN cannot | ESTABLISHED | §2.2 |
-| L3′ | "GELT also comfortably regresses 2×2, 1×3, 2×3, 3×3 loops" (main.tex) | **no artifact or record anywhere in the repo** | §9 |
+| L3′ | "GELT also comfortably regresses 2×2, 1×3, 2×3, 3×3 loops" (main.tex) | **no artifact or record anywhere in the repo** for the Z₂ setting it is written in; an SU(2) replacement exists (L3″) | §9 |
+| L3″ | In 1+1D SU(2) GELT regresses per-site W²ˣ², W³ˣ³, W⁴ˣ⁴ (R²_β ≥ 0.99998) where a non-equivariant CNN at 40k and at 523k parameters gets R²_β = 0.077 → 0.003 → 0.000 | ESTABLISHED (3 seeds × 2 CNN sizes; the CNN lands on the Letter's own baseline-CNN MSEs) | §2.5 |
 | L4 | Our L-CNN reproduces the L-CNN half of PRL 128 032003 Fig. 3 and beats its four MSEs | ESTABLISHED *under the lattice-averaged MSE reading*; flips for W⁴ˣ⁴ under the per-site one | §2.3 |
-| L5 | At matched 39.6k parameters GELT solves W⁴ˣ⁴ (per-site R² = 0.99998) but at 16× the L-CNN's MSE | ESTABLISHED (n = 3 vs 3, disjoint ranges); cause OPEN | §2.4 |
+| L5 | At matched 39.6k parameters GELT solves W⁴ˣ⁴ (per-site R² = 0.99998) but at 16× the L-CNN's MSE | ESTABLISHED (n = 3 vs 3, disjoint ranges); cause OPEN; the same ordering, wider, on W²ˣ² (§2.5) | §2.4 |
 | L6 | The 0⁺⁺ needs an anisotropic lattice, smeared multi-level inputs and a per-timeslice network | ESTABLISHED (design facts) | §3.1 |
 | L7 | The learned operator has the classical mass and more ground-state weight than the 4-level GEVP on the same inputs: Δm_eff(1) = −0.028 ± 0.007 / −0.038 ± 0.008, ΔA₀ = +0.078 ± 0.022 (3.6σ) | ESTABLISHED, **replicated on a third ensemble**: three-ensemble ΔA₀ = +0.086 ± 0.017 (stat) ± 0.018 (window) = 3.4σ with the window systematic; Δm_eff(1) = −0.037 ± 0.004; ensembles consistent (p = 0.71); a fully correlated fit gives +0.049 ± 0.017 | §3.2 |
 | L8 | …and against stronger classical bases | **QUALIFIED**: +0.095 ± 0.021 vs the input-matched 7-level arm, only +0.038 ± 0.027 (1.4σ) once loop shapes are added; A₀ is saturated there | §3.3 |
@@ -147,6 +149,64 @@ across the lattice (site/avg ratio 26 vs 57 for the L-CNN, 64 if independent).
   non-monotone — 3e−3 never leaves `var(y)`, 1e−2 diverges, 1e−3 works — which
   contradicts `train_gelt.py`'s "raise the rate to beat the stall". Probably
   Adam's `lr/(√v+ε)` with `v ≈ 0`. One geometry; do not generalise either way.
+
+### 2.5 GELT against a non-equivariant CNN on W²ˣ², W³ˣ³, W⁴ˣ⁴ — ESTABLISHED
+
+The SU(2) version of main.tex's validation figure (§2.2), on §2.3's 1+1D
+problem: same datasets, splits, per-site MSE loss, AdamW at 1e−3, 100 epochs /
+patience 25. `WR_ARCH=cnn` is `LatticeCNN` on the raw re/im components of links
+*and* plaquettes (24 channels, 3×3 circular convs, receptive field ±5 ⊇ the
+4×4 loop), at `matched` 40 055 parameters and `large` 523 377 (main.tex's
+~500k). GELT is §2.4's W⁴ˣ⁴ network on W³ˣ³ and W⁴ˣ⁴ (39 569) and a 2-block
+one on W²ˣ² (20 873), so the CNN is never the smaller arm. W³ˣ³ is not in the
+Letter; older datasets get it from the float64 links (identical to the
+generator's label, checked). Verbatim table:
+`notes/raw/cnn_vs_gelt_readout_2026-09-29.txt`; figure
+`results/wilson_regression/fig3_cnn_vs_gelt.png` (V100).
+
+**The reading is R²_β = 1 − MSE_site / Var(y | β)**, not the plain R²: the
+labels span an 11-coupling ladder, and any network that can read the local mean
+plaquette gets the β dependence of ⟨W⟩ for free. R²_β = 0 is "knows the coupling,
+nothing else".
+
+| loop | GELT R²_β (best of 3) | CNN matched R²_β | CNN large R²_β | GELT `mse_avg` best / worst | CNN `mse_avg` | Letter's CNN |
+|---|---|---|---|---|---|---|
+| W²ˣ² | 0.9999979 | 0.077 | 0.074 | 1.3e−8 / 2.7e−8 | 4.0e−3 | 4.0e−3 |
+| W³ˣ³ | 0.9999911 | 0.0028 | 0.0024 | 3.7e−8 / 2.9e−7 | 5.0e−3 | — |
+| W⁴ˣ⁴ | 0.9999843 | −0.0003 | −0.0002 | 1.5e−7 / 4.7e−7 | 4.3e−3 | 4.2e−3 |
+
+- **GELT solves all three**; 1 − R²_β grows with the loop, 2.1e−6 → 8.9e−6 →
+  1.6e−5. The W⁴ˣ⁴ rows are §2.4's dumps.
+- **The CNN never forms the loop.** What it has beyond β is 8% of the
+  conditional variance at W²ˣ², 0.3% at W³ˣ³, nothing at W⁴ˣ⁴ (slightly below
+  the β-only predictor). Its plain per-site R² of 0.13 at W²ˣ² is mostly the
+  coupling. **13× the parameters buys nothing**: `large` is within noise of
+  `matched` at every loop.
+- **Not a budget or a seed**: every CNN run early-stopped at epoch 27–31 on
+  patience 25, i.e. its best epoch was 2–6 — it reaches its plateau at once and
+  stays there; the three seeds agree to < 1% (median ≈ worst). The learning rate
+  was not bracketed for the CNN (1e−3, the Letter's); that is the one knob left,
+  and the next point makes it an unlikely one.
+- **The CNN lands on the Letter's own baseline-CNN MSEs** — 3.9–4.0e−3 against
+  4.0e−3 at W²ˣ², 4.26e−3 against 4.2e−3 at W⁴ˣ⁴ — with a different
+  architecture, a per-site head instead of a global pool, and one run per cell
+  against their 2 680-model sweep. This reproduces the *number* of the half of
+  Fig. 3 §2.3 set aside, not their networks. Consistent with both sitting at the
+  floor β leaves, which R²_β ≈ 0 shows for ours at W⁴ˣ⁴; the floor of the
+  lattice-averaged MSE itself is not computed.
+- **GELT against the L-CNN on W²ˣ²** (a by-product, §5.1 A7): the L-CNN (13 521,
+  one seed, §2.3's run) is 6.8e3× lower on `mse_avg` and 1.9e4× per site, at
+  fewer parameters than GELT. Same ordering as W⁴ˣ⁴ (§2.4), wider; both R² ≈ 1.
+  GELT lands on the Letter's *published* L-CNN number at both loops (1.2× at
+  W²ˣ², 1.1× at W⁴ˣ⁴) — noted, not interpreted.
+- GELT's seed dispersion (worst/best `mse_avg`) is 2.0× / 7.7× / 3.1× across the
+  three loops; W³ˣ³ is the loose one.
+
+**What this licenses in main.tex**: "GELT regresses per-site 2×2, 3×3 and 4×4
+SU(2) Wilson loops (R² ≥ 0.99998 with the coupling dependence removed), where a
+non-equivariant CNN with 13× more parameters recovers < 8% of the variance at
+2×2 and none at 4×4." It does **not** license the sentence as written (§9 item
+4): that one is about Z₂ in 3D and 1×3 / 2×3 loops, which were not run.
 
 ---
 
@@ -420,6 +480,7 @@ with the trained output" are the same observation. §11 P4.
 | A4 | Z₂ 3D vortex-cluster size V1, β = 0.7520 | gelt vs lcnn, 6 seeds each, own bracketed rates | ΔR² = −0.073 ± 0.051 | sd 0.123 vs 0.020 (6.2×, F = 38) **against GELT** | tie |
 | A5 | A4's checkpoints at three other β, no retraining | same | contrast +0.007, +0.310, +0.013, p ≥ 0.24 | 1.5× / 1.3× (reversed) / 1.0×; collapses 1 of 6 seeds vs 3 of 6 (Fisher p = 0.545) | null |
 | A6 | 1+1D SU(2) W⁴ˣ⁴ regression | GELT vs authors' L-CNN (Letter's L-CB), 3 seeds | GELT 16× worse MSE, both R² > 0.99998 | 3.1× vs 3.3×, equal | L-CNN wins |
+| A7 | 1+1D SU(2) W²ˣ² regression (by-product of §2.5) | GELT (20.9k, 3 seeds) vs authors' L-CNN (13.5k, 1 seed) | GELT 6.8e3× worse `mse_avg`, both R² ≈ 1 | n = 1 on the L-CNN side | L-CNN wins |
 
 **The consolidated statement**: on accuracy GELT ties our L-CNN on the physics
 task (A1) and on the physics-observable candidate built to favour it (A4),
@@ -656,7 +717,8 @@ five attempts and is worth a section of the thesis on its own.
    −ln(C(2)/C(0))"; the code minimises −mean[C(1)/C(0), C(2)/C(0)] plus a
    (log C(0))² scale pin. Say what is run.
 4. **main.tex**: §2.2's "~1k" vs README's "~1.5k" parameters; the
-   2×2/1×3/2×3/3×3 claim with no artifact (L3′); §4.3's two sentences.
+   2×2/1×3/2×3/3×3 claim with no artifact (L3′) — replace it by §2.5's SU(2)
+   sentence, which has one; §4.3's two sentences.
 5. **β = 0.7520 reads low on every arm** in the Z₂ scan (the fair fight noticed
    it on the dual-truth comparison, −0.9% at best, −20.9% at worst); never
    explained. Check its fit window before quoting that row's ξ.
@@ -801,9 +863,10 @@ the designed M2 experiment (old `where_attention_can_win.md` §8): low statistic
 P7's failure criterion pooled across stressors. P5(ii) and A5 already exercise
 the other two stressors on Z₂.
 
-**P9 — no compute, text only.** §9 items 2–4 in main.tex; either run
-`train_gelt.py` on the 2×2, 1×3, 2×3, 3×3 loops and keep a scatter per loop, or
-delete the sentence.
+**P9 — no compute, text only.** §9 items 2–4 in main.tex. For the loop
+sentence (item 4) the SU(2) replacement now exists (§2.5, run 2026-09-28): swap
+the Z₂ claim for it, or run `train_gelt.py` on the Z₂ 2×2, 1×3, 2×3, 3×3 loops
+if the Z₂ wording is to stay.
 
 **Worth running only for completeness** (cheap, offline): the excited-state
 gate on the `deep` basis (`gevp_eigenvalues(..., truncate=True)`, second

@@ -43,7 +43,9 @@ non-equivariant arm.
 ``--dumps=<glob>`` overrides the default dump pattern, ``--out-tag=<s>`` names
 the artifacts, ``--size=<s>`` restricts to one architecture size (by default the
 lowest-validation-loss size present is used, which is the Letter's "best model"
-reading), ``--fig-targets=W22,W33,W44`` restricts the panels.
+reading), ``--fig-targets=W22,W33,W44`` restricts the panels and
+``--fig-archs=gelt,cnn`` the arms (panels and table both): the figure is
+rebuilt from the dumps, so dropping an arm never needs a rerun.
 """
 
 import glob
@@ -131,6 +133,12 @@ def main():
     size = cfg("WR_SIZE", None)
     only = [t.strip().upper()
             for t in str(cfg("WR_FIG_TARGETS", "")).split(",") if t.strip()]
+    archs = [a.strip().lower()
+             for a in str(cfg("WR_FIG_ARCHS", "")).split(",") if a.strip()]
+    archs = archs or list(ARCH_STYLE)
+    unknown = [a for a in archs if a not in ARCH_STYLE]
+    if unknown:
+        raise SystemExit(f"unknown arch(s) {unknown}; have {list(ARCH_STYLE)}")
     # After every cfg() read, not before: validate_argv only knows the flags
     # cfg() has already been asked for, so called first it refused them all.
     validate_argv()
@@ -144,6 +152,7 @@ def main():
     import matplotlib.pyplot as plt
 
     os.makedirs(RESULT_DIR, exist_ok=True)
+    runs = [r for r in runs if r["arch"] in archs]
     targets = [t for t in LOOPS if any(r["target"] == t for r in runs)
                and (not only or t in only)]
     ncol = 2 if len(targets) > 1 else 1
