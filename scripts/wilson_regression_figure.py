@@ -155,9 +155,9 @@ def main():
     runs = [r for r in runs if r["arch"] in archs]
     targets = [t for t in LOOPS if any(r["target"] == t for r in runs)
                and (not only or t in only)]
-    ncol = 1                      # one column, one row per loop
-    nrow = len(targets)
-    fig, axes = plt.subplots(nrow, ncol, figsize=(4.2, 3.8 * nrow),
+    nrow = 1                      # one row, one column per loop
+    ncol = len(targets)
+    fig, axes = plt.subplots(nrow, ncol, figsize=(4.2 * ncol, 3.8),
                              squeeze=False)
 
     table, payload = [], {}
