@@ -171,6 +171,12 @@ def _load_dump(path):
     ckpt = meta["checkpoint"]
     if not os.path.exists(ckpt) and os.path.dirname(ckpt) == "":
         ckpt = os.path.join("results/glueball", ckpt)
+    # The L-CNN's p2 rerun keeps its (gitignored) checkpoint beside its dump in
+    # dumps/p2/, not where its meta says; results/ is root-owned on the V100, so
+    # beside the dump is the one place a copied checkpoint can go.
+    beside = os.path.join(os.path.dirname(path), os.path.basename(ckpt))
+    if not os.path.exists(ckpt) and os.path.exists(beside):
+        ckpt = beside
     meta["checkpoint"] = ckpt
     return d, meta, arch
 

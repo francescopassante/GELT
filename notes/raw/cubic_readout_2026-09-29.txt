@@ -1,0 +1,464 @@
+==> logs/a1_4lv_ens0.log <==
+   [48/48] p321_r3      action 8e-16  classical 8.6e-05  ν 1.98e-01  [131 s]
+  best_glueball_gelt_sm0-2-4-6: non-invariance ν(g) max 2.217e-01 (p231_r12), median 1.992e-01
+    share of C(0): A1g 0.9819  A2g 0.0001  Eg 0.0033  T1g 0.0008  T2g 0.0090  A1u 0.0001  A2u 0.0001  Eu 0.0004  T1u 0.0026  T2u 0.0015
+    outside A1g: 0.0181   (C(0) of Ō_A1g / C(0) of Ō_e = 0.9814)
+    m_eff(1) Ō_e: 0.3696 ± 0.0163   m_eff(2): 0.3328 ± 0.0199
+    m_eff(1) Ō_A1g: 0.3685 ± 0.0166   m_eff(2): 0.3376 ± 0.0211
+   → results/glueball/cubic/cubic_best_glueball_gelt_sm0-2-4-6.pt
+   → results/glueball/cubic/best_glueball_gelt_sm0-2-4-6_a1_test_obars.pt
+
+==> logs/a1_4lv_ens1.log <==
+   [48/48] p321_r3      action 8e-16  classical 8.7e-05  ν 1.58e-01  [131 s]
+  best_glueball_gelt_sm0-2-4-6_ens1: non-invariance ν(g) max 2.516e-01 (p132_r3), median 2.171e-01
+    share of C(0): A1g 0.9809  A2g 0.0001  Eg 0.0129  T1g 0.0004  T2g 0.0028  A1u 0.0000  A2u 0.0001  Eu 0.0002  T1u 0.0016  T2u 0.0009
+    outside A1g: 0.0191   (C(0) of Ō_A1g / C(0) of Ō_e = 0.9739)
+    m_eff(1) Ō_e: 0.3522 ± 0.0142   m_eff(2): 0.3682 ± 0.0199
+    m_eff(1) Ō_A1g: 0.3463 ± 0.0143   m_eff(2): 0.3621 ± 0.0191
+   → results/glueball/cubic/cubic_best_glueball_gelt_sm0-2-4-6_ens1.pt
+   → results/glueball/cubic/best_glueball_gelt_sm0-2-4-6_ens1_a1_test_obars.pt
+
+==> logs/a1_4lv_ens2.log <==
+   [48/48] p321_r3      action 8e-16  classical 8.6e-05  ν 1.83e-01  [130 s]
+  best_glueball_gelt_sm0-2-4-6_ens2: non-invariance ν(g) max 2.102e-01 (p213_r1), median 1.895e-01
+    share of C(0): A1g 0.9827  A2g 0.0001  Eg 0.0052  T1g 0.0010  T2g 0.0061  A1u 0.0002  A2u 0.0001  Eu 0.0005  T1u 0.0020  T2u 0.0021
+    outside A1g: 0.0173   (C(0) of Ō_A1g / C(0) of Ō_e = 0.9804)
+    m_eff(1) Ō_e: 0.3332 ± 0.0176   m_eff(2): 0.2836 ± 0.0194
+    m_eff(1) Ō_A1g: 0.3298 ± 0.0178   m_eff(2): 0.2837 ± 0.0199
+   → results/glueball/cubic/cubic_best_glueball_gelt_sm0-2-4-6_ens2.pt
+   → results/glueball/cubic/best_glueball_gelt_sm0-2-4-6_ens2_a1_test_obars.pt
+
+==> logs/a1_7lv_ens0.log <==
+   [48/48] p321_r3      action 8e-16  classical 1.9e-04  ν 2.02e-01  [189 s]
+  best_glueball_gelt_sm0-2-4-6-8-12-16: non-invariance ν(g) max 2.403e-01 (p231_r3), median 2.161e-01
+    share of C(0): A1g 0.9789  A2g 0.0000  Eg 0.0056  T1g 0.0003  T2g 0.0129  A1u 0.0000  A2u 0.0000  Eu 0.0002  T1u 0.0009  T2u 0.0011
+    outside A1g: 0.0211   (C(0) of Ō_A1g / C(0) of Ō_e = 0.9780)
+    m_eff(1) Ō_e: 0.3568 ± 0.0161   m_eff(2): 0.3348 ± 0.0234
+    m_eff(1) Ō_A1g: 0.3538 ± 0.0160   m_eff(2): 0.3345 ± 0.0239
+   → results/glueball/cubic/cubic_best_glueball_gelt_sm0-2-4-6-8-12-16.pt
+   → results/glueball/cubic/best_glueball_gelt_sm0-2-4-6-8-12-16_a1_test_obars.pt
+
+==> logs/a1_7lv_ens1.log <==
+   [48/48] p321_r3      action 8e-16  classical 1.5e-04  ν 1.69e-01  [189 s]
+  best_glueball_gelt_sm0-2-4-6-8-12-16_ens1: non-invariance ν(g) max 1.818e-01 (p231_r123), median 1.607e-01
+    share of C(0): A1g 0.9879  A2g 0.0001  Eg 0.0036  T1g 0.0008  T2g 0.0037  A1u 0.0001  A2u 0.0001  Eu 0.0003  T1u 0.0018  T2u 0.0016
+    outside A1g: 0.0121   (C(0) of Ō_A1g / C(0) of Ō_e = 0.9859)
+    m_eff(1) Ō_e: 0.3270 ± 0.0132   m_eff(2): 0.3522 ± 0.0204
+    m_eff(1) Ō_A1g: 0.3242 ± 0.0126   m_eff(2): 0.3484 ± 0.0202
+   → results/glueball/cubic/cubic_best_glueball_gelt_sm0-2-4-6-8-12-16_ens1.pt
+   → results/glueball/cubic/best_glueball_gelt_sm0-2-4-6-8-12-16_ens1_a1_test_obars.pt
+
+==> logs/rnd4_ens0.log <==
+   → results/glueball/cubic/best_glueball_gelt_sm0-2-4-6_rnd1_a1_test_obars.pt
+  best_glueball_gelt_sm0-2-4-6_rnd2: non-invariance ν(g) max 1.496e+00 (p132_r13), median 1.334e+00
+    share of C(0): A1g 0.3808  A2g 0.0001  Eg 0.5824  T1g 0.0007  T2g 0.0117  A1u 0.0000  A2u 0.0003  Eu 0.0003  T1u 0.0083  T2u 0.0153
+    outside A1g: 0.6192   (C(0) of Ō_A1g / C(0) of Ō_e = 0.3753)
+    m_eff(1) Ō_e: 0.8607 ± 0.0504   m_eff(2): 0.6217 ± 0.1081
+    m_eff(1) Ō_A1g: 0.6042 ± 0.0320   m_eff(2): 0.5088 ± 0.0443
+   → results/glueball/cubic/cubic_best_glueball_gelt_sm0-2-4-6_rnd2.pt
+   → results/glueball/cubic/best_glueball_gelt_sm0-2-4-6_rnd2_a1_test_obars.pt
+
+==> logs/rnd4_ens1.log <==
+   → results/glueball/cubic/best_glueball_gelt_sm0-2-4-6_ens1_rnd1_a1_test_obars.pt
+  best_glueball_gelt_sm0-2-4-6_ens1_rnd2: non-invariance ν(g) max 1.517e+00 (p132_r23), median 1.347e+00
+    share of C(0): A1g 0.3741  A2g 0.0001  Eg 0.5889  T1g 0.0007  T2g 0.0116  A1u 0.0000  A2u 0.0003  Eu 0.0003  T1u 0.0083  T2u 0.0157
+    outside A1g: 0.6259   (C(0) of Ō_A1g / C(0) of Ō_e = 0.3707)
+    m_eff(1) Ō_e: 0.9048 ± 0.0638   m_eff(2): 0.7884 ± 0.1242
+    m_eff(1) Ō_A1g: 0.6201 ± 0.0300   m_eff(2): 0.5855 ± 0.0582
+   → results/glueball/cubic/cubic_best_glueball_gelt_sm0-2-4-6_ens1_rnd2.pt
+   → results/glueball/cubic/best_glueball_gelt_sm0-2-4-6_ens1_rnd2_a1_test_obars.pt
+
+==> logs/rnd4_ens2.log <==
+   → results/glueball/cubic/best_glueball_gelt_sm0-2-4-6_ens2_rnd1_a1_test_obars.pt
+  best_glueball_gelt_sm0-2-4-6_ens2_rnd2: non-invariance ν(g) max 1.513e+00 (p132_r13), median 1.353e+00
+    share of C(0): A1g 0.3753  A2g 0.0001  Eg 0.5876  T1g 0.0008  T2g 0.0117  A1u 0.0000  A2u 0.0003  Eu 0.0003  T1u 0.0084  T2u 0.0155
+    outside A1g: 0.6247   (C(0) of Ō_A1g / C(0) of Ō_e = 0.3791)
+    m_eff(1) Ō_e: 0.7522 ± 0.0579   m_eff(2): 1.0917 ± 0.1801
+    m_eff(1) Ō_A1g: 0.6172 ± 0.0296   m_eff(2): 0.5695 ± 0.0543
+   → results/glueball/cubic/cubic_best_glueball_gelt_sm0-2-4-6_ens2_rnd2.pt
+   → results/glueball/cubic/best_glueball_gelt_sm0-2-4-6_ens2_rnd2_a1_test_obars.pt
+
+==> logs/rnd4_ens2_s0.log <==
+     m_eff(Δ=3):  m·a_t = 0.272 ± 0.037
+     m_eff(Δ=4):  m·a_t = 0.345 ± 0.050
+m_eff(GELT) − m_eff(GEVP), blocked jackknife of the difference (test):
+     Δ=1:  +0.389 ± 0.068 (5.7σ)
+     Δ=2:  +0.514 ± 0.186 (2.8σ)
+     Δ=3:  +0.108 ± 0.253 (0.4σ)
+     Δ=4:  +0.450 ± 0.610 (0.7σ)
+Saved results/glueball/glueball_gelt_ens2_rnd0.png
+
+==> logs/rnd4_ens2_s1.log <==
+     m_eff(Δ=3):  m·a_t = 0.273 ± 0.037
+     m_eff(Δ=4):  m·a_t = 0.338 ± 0.050
+m_eff(GELT) − m_eff(GEVP), blocked jackknife of the difference (test):
+     Δ=1:  +0.255 ± 0.036 (7.1σ)
+     Δ=2:  +0.171 ± 0.066 (2.6σ)
+     Δ=3:  +0.045 ± 0.085 (0.5σ)
+     Δ=4:  +0.021 ± 0.124 (0.2σ)
+Saved results/glueball/glueball_gelt_ens2_rnd1.png
+
+==> logs/rnd4_ens2_s2.log <==
+     m_eff(Δ=3):  m·a_t = 0.273 ± 0.037
+     m_eff(Δ=4):  m·a_t = 0.342 ± 0.056
+m_eff(GELT) − m_eff(GEVP), blocked jackknife of the difference (test):
+     Δ=1:  +0.378 ± 0.060 (6.3σ)
+     Δ=2:  +0.796 ± 0.176 (4.5σ)
+     Δ=3:  +0.252 ± 0.278 (0.9σ)
+     Δ=4:  -0.184 ± 0.337 (0.5σ)
+Saved results/glueball/glueball_gelt_ens2_rnd2.png
+
+==> logs/lcnn_ens0.log <==
+device: cuda  elements: all
+── group: ensemble seed 0, input levels [0, 2, 4, 6], 1 net(s): best_glueball_lcnn_sm0-2-4-6_p2
+checkpoint results/glueball/best_glueball_lcnn_sm0-2-4-6_p2.pth not found (named by the dump's meta)
+
+==> logs/lcnn_ens1.log <==
+   [48/48] p321_r3      action 8e-16  classical 8.7e-05  ν 2.02e-01  [75 s]
+  best_glueball_lcnn_sm0-2-4-6_ens1: non-invariance ν(g) max 2.031e-01 (p321_r12), median 1.848e-01
+    share of C(0): A1g 0.9832  A2g 0.0001  Eg 0.0030  T1g 0.0013  T2g 0.0055  A1u 0.0002  A2u 0.0002  Eu 0.0007  T1u 0.0035  T2u 0.0022
+    outside A1g: 0.0168   (C(0) of Ō_A1g / C(0) of Ō_e = 0.9810)
+    m_eff(1) Ō_e: 0.3553 ± 0.0151   m_eff(2): 0.3695 ± 0.0205
+    m_eff(1) Ō_A1g: 0.3516 ± 0.0144   m_eff(2): 0.3653 ± 0.0196
+   → results/glueball/cubic/cubic_best_glueball_lcnn_sm0-2-4-6_ens1.pt
+   → results/glueball/cubic/best_glueball_lcnn_sm0-2-4-6_ens1_a1_test_obars.pt
+
+==> logs/lcnn_profile.log <==
+  ≈ 365 s/epoch at 234 steps/epoch  →  6.1 h for 60 epochs (the ens1 run early-stopped at 25)
+  reference: the ens1 run logged 7.77 s/step, 1942 s/epoch (V100, batch 6) — compare against that, not against a rebuilt baseline
+  peak CUDA memory 4.70 GiB
+
+── config_inputs, stage by stage (one pass, same shapes) ──
+  ape_smear ladder [0, 2, 4, 6]          488.7 ms    85.4%
+  plaquette_tensor ×4                     76.7 ms    13.4%
+  build_axis_transports K=2                6.8 ms     1.2%
+
+==> logs/lcnn_ref_gate.log <==
+   seed 0  field by layer: 4.95  105  7.73e+07  3.47e+29   |Ō|max 5.38e+28
+   seed 1  field by layer: 4.52  58.3  7.9e+05  1.46e+21   |Ō|max 3.24e+20
+   seed 2  field by layer: 4.81  288  2.04e+08  4.27e+31   |Ō|max 2.3e+30
+   worst field over seeds × configs: 7.502e+32   ** FAIL **
+
+wrote results/glueball/init_gate.pt
+
+VERDICT: ['lcnn_ref  scale 1.5'] exceed the gate. Pick a surviving scale before training — a run that starts here does not fail at construction, it fails after the first optimiser step.
+
+==> logs/lcnn_ref_profile.log <==
+
+Set TORCH_LOGS="+dynamo" and TORCHDYNAMO_VERBOSE=1 for more information
+
+
+You can suppress this exception and fall back to eager by setting:
+    import torch._dynamo
+    torch._dynamo.config.suppress_errors = True
+
+
+==> logs/lcnn_ref_rnd_ens0_s0.log <==
+     m_eff(Δ=3):  m·a_t = 0.335 ± 0.040
+     m_eff(Δ=4):  m·a_t = 0.290 ± 0.051
+m_eff(L-CNN (authors')) − m_eff(GEVP), blocked jackknife of the difference (test):
+     Δ=1:  +0.311 ± 0.075 (4.2σ)
+     Δ=2:  +0.044 ± 0.129 (0.3σ)
+     Δ=3:  +0.331 ± 0.223 (1.5σ)
+     Δ=4:  +0.047 ± 0.282 (0.2σ)
+Saved results/glueball/glueball_lcnn_ref_rnd0.png
+
+==> logs/lcnn_ref_rnd_ens0_s1.log <==
+GEVP ground state, basis = classical + L-CNN (authors') (blocked jackknife, test):
+     m_eff(Δ=1):  m·a_t = 0.098 ± 1.118
+     m_eff(Δ=2):  m·a_t = 0.657 ± 1.112
+     m_eff(Δ=3):  m·a_t = 0.281 ± 0.742
+     m_eff(Δ=4):  m·a_t = -0.151 ± 1.543
+m_eff(L-CNN (authors')) − m_eff(GEVP), blocked jackknife of the difference (test):
+     Δ=1:  +0.286 ± 2.269 (0.1σ)
+Saved results/glueball/glueball_lcnn_ref_rnd1.png
+
+==> logs/lcnn_ref_rnd_ens0_s2.log <==
+     m_eff(Δ=3):  m·a_t = 0.331 ± 0.036
+     m_eff(Δ=4):  m·a_t = 0.287 ± 0.051
+m_eff(L-CNN (authors')) − m_eff(GEVP), blocked jackknife of the difference (test):
+     Δ=1:  +0.454 ± 0.060 (7.5σ)
+     Δ=2:  +0.267 ± 0.129 (2.1σ)
+     Δ=3:  +0.365 ± 0.261 (1.4σ)
+     Δ=4:  +0.742 ± 0.733 (1.0σ)
+Saved results/glueball/glueball_lcnn_ref_rnd2.png
+
+==> logs/lcnn_ref_rnd_ens1_s0.log <==
+     m_eff(Δ=3):  m·a_t = 0.373 ± 0.044
+     m_eff(Δ=4):  m·a_t = 0.242 ± 0.237
+m_eff(L-CNN (authors')) − m_eff(GEVP), blocked jackknife of the difference (test):
+     Δ=1:  +0.240 ± 0.084 (2.9σ)
+     Δ=2:  +0.123 ± 0.121 (1.0σ)
+     Δ=3:  +0.075 ± 0.140 (0.5σ)
+     Δ=4:  -0.413 ± 0.192 (2.2σ)
+Saved results/glueball/glueball_lcnn_ref_ens1_rnd0.png
+
+==> logs/lcnn_ref_rnd_ens1_s1.log <==
+     APE×6:  r = +0.013
+GEVP ground state, basis = classical + L-CNN (authors') (blocked jackknife, test):
+     m_eff(Δ=1):  m·a_t = 0.390 ± 0.015
+     m_eff(Δ=2):  m·a_t = 0.184 ± 0.928
+     m_eff(Δ=3):  m·a_t = 0.583 ± 0.939
+     m_eff(Δ=4):  m·a_t = -0.421 ± 1.287
+m_eff(L-CNN (authors')) − m_eff(GEVP), blocked jackknife of the difference (test):
+Saved results/glueball/glueball_lcnn_ref_ens1_rnd1.png
+
+==> logs/lcnn_ref_rnd_ens1_s2.log <==
+     m_eff(Δ=3):  m·a_t = 0.384 ± 0.044
+     m_eff(Δ=4):  m·a_t = 0.392 ± 0.060
+m_eff(L-CNN (authors')) − m_eff(GEVP), blocked jackknife of the difference (test):
+     Δ=1:  +0.558 ± 0.081 (6.9σ)
+     Δ=2:  +0.430 ± 0.155 (2.8σ)
+     Δ=3:  -0.144 ± 0.199 (0.7σ)
+     Δ=4:  -0.012 ± 0.368 (0.0σ)
+Saved results/glueball/glueball_lcnn_ref_ens1_rnd2.png
+
+==> logs/lcnn_ref_shootout.log <==
+[2026-09-21 06:35:11]    FAILED  lcnn_ref_sweep_lr1e-3_is1.0 (see logs/lcnn_ref_sweep_lr1e-3_is1.0.log) — continuing
+[2026-09-21 06:35:12] ── phase lcnn_ref_sweep_lr3e-3_is1e-4: python -u scripts/train_glueball.py --arch=lcnn_ref --resume=0 --grad-checkpoint=0 --lcnn-ref-init-w=1.0 --ensemble-seed=0 --input-smear-levels=0,2,4,6 --epochs=10 --lr=3e-3 --lcnn-init-scale=1e-4 --run-tag=_sweep_lr3e-3_is1e-4
+[2026-09-21 06:43:31]    FAILED  lcnn_ref_sweep_lr3e-3_is1e-4 (see logs/lcnn_ref_sweep_lr3e-3_is1e-4.log) — continuing
+[2026-09-21 06:43:33] ── phase lcnn_ref_sweep_lr1e-3_is1e-4: python -u scripts/train_glueball.py --arch=lcnn_ref --resume=0 --grad-checkpoint=0 --lcnn-ref-init-w=1.0 --ensemble-seed=0 --input-smear-levels=0,2,4,6 --epochs=10 --lr=1e-3 --lcnn-init-scale=1e-4 --run-tag=_sweep_lr1e-3_is1e-4
+[2026-09-21 06:51:52]    FAILED  lcnn_ref_sweep_lr1e-3_is1e-4 (see logs/lcnn_ref_sweep_lr1e-3_is1e-4.log) — continuing
+[2026-09-21 06:51:52]    compare the four logs' best val Rayleigh loss, then run
+[2026-09-21 06:51:52]    LCNN_PARTS=2,3 LCNN_LR=<lr> LCNN_INIT=<scale> bash scripts/lcnn_shootout.sh
+[2026-09-21 06:51:52] batch done. lcnn_ref dumps:
+
+==> logs/lcnn_ref_sweep.log <==
+[2026-09-21 13:03:01]    OK  lcnn_ref_sweep_lr3e-4_is1.0
+[2026-09-21 13:03:01]    compare the four logs' best val Rayleigh loss, then run
+[2026-09-21 13:03:01]    LCNN_PARTS=2,3 LCNN_LR=<lr> LCNN_INIT=<scale> bash scripts/lcnn_shootout.sh
+[2026-09-21 13:03:01] batch done. lcnn_ref dumps:
+-rw-r--r-- 1 root root 386658 Sep 21 09:18 results/glueball/best_glueball_lcnn_ref_sm0-2-4-6_sweep_lr1e-2_is1.0_test_obars.pt
+-rw-r--r-- 1 root root 386658 Sep 21 11:48 results/glueball/best_glueball_lcnn_ref_sm0-2-4-6_sweep_lr1e-3_is1.0_test_obars.pt
+-rw-r--r-- 1 root root 386658 Sep 21 10:33 results/glueball/best_glueball_lcnn_ref_sm0-2-4-6_sweep_lr3e-3_is1.0_test_obars.pt
+-rw-r--r-- 1 root root 386658 Sep 21 13:02 results/glueball/best_glueball_lcnn_ref_sm0-2-4-6_sweep_lr3e-4_is1.0_test_obars.pt
+
+==> logs/lcnn_ref_sweep_lr1e-2_is1.0.log <==
+     APE×6:  r = +nan
+GEVP ground state, basis = classical + L-CNN (authors') (blocked jackknife, test):
+     m_eff(Δ=1):  m·a_t = 0.398 ± 0.016
+     m_eff(Δ=2):  m·a_t = 0.357 ± 0.025
+     m_eff(Δ=3):  m·a_t = 0.333 ± 0.036
+     m_eff(Δ=4):  m·a_t = 0.284 ± 0.050
+m_eff(L-CNN (authors')) − m_eff(GEVP), blocked jackknife of the difference (test):
+Saved results/glueball/glueball_lcnn_ref_sweep_lr1e-2_is1.0.png
+
+==> logs/lcnn_ref_sweep_lr1e-3_is1.0.log <==
+     m_eff(Δ=3):  m·a_t = 0.346 ± 0.032
+     m_eff(Δ=4):  m·a_t = 0.292 ± 0.047
+m_eff(L-CNN (authors')) − m_eff(GEVP), blocked jackknife of the difference (test):
+     Δ=1:  -0.017 ± 0.009 (1.9σ)
+     Δ=2:  -0.011 ± 0.016 (0.6σ)
+     Δ=3:  +0.024 ± 0.025 (0.9σ)
+     Δ=4:  +0.053 ± 0.040 (1.3σ)
+Saved results/glueball/glueball_lcnn_ref_sweep_lr1e-3_is1.0.png
+
+==> logs/lcnn_ref_sweep_lr3e-3_is1.0.log <==
+     m_eff(Δ=3):  m·a_t = 0.333 ± 0.036
+     m_eff(Δ=4):  m·a_t = 0.284 ± 0.053
+m_eff(L-CNN (authors')) − m_eff(GEVP), blocked jackknife of the difference (test):
+     Δ=1:  +0.957 ± 0.337 (2.8σ)
+     Δ=2:  +1.016 ± 1.435 (0.7σ)
+     Δ=3:  -0.184 ± 1.821 (0.1σ)
+     Δ=4:  -0.288 ± 2.038 (0.1σ)
+Saved results/glueball/glueball_lcnn_ref_sweep_lr3e-3_is1.0.png
+
+==> logs/lcnn_ref_sweep_lr3e-4_is1.0.log <==
+     m_eff(Δ=3):  m·a_t = 0.330 ± 0.035
+     m_eff(Δ=4):  m·a_t = 0.295 ± 0.049
+m_eff(L-CNN (authors')) − m_eff(GEVP), blocked jackknife of the difference (test):
+     Δ=1:  -0.000 ± 0.011 (0.0σ)
+     Δ=2:  +0.005 ± 0.016 (0.3σ)
+     Δ=3:  +0.011 ± 0.032 (0.4σ)
+     Δ=4:  +0.056 ± 0.046 (1.2σ)
+Saved results/glueball/glueball_lcnn_ref_sweep_lr3e-4_is1.0.png
+
+==> logs/lcnn_ref_train.log <==
+-rw-r--r-- 1 root root 386382 Sep 22 02:59 results/glueball/best_glueball_lcnn_ref_sm0-2-4-6_rnd0_test_obars.pt
+-rw-r--r-- 1 root root 386382 Sep 22 03:02 results/glueball/best_glueball_lcnn_ref_sm0-2-4-6_rnd1_test_obars.pt
+-rw-r--r-- 1 root root 386382 Sep 22 03:04 results/glueball/best_glueball_lcnn_ref_sm0-2-4-6_rnd2_test_obars.pt
+-rw-r--r-- 1 root root 386658 Sep 21 09:18 results/glueball/best_glueball_lcnn_ref_sm0-2-4-6_sweep_lr1e-2_is1.0_test_obars.pt
+-rw-r--r-- 1 root root 386658 Sep 21 11:48 results/glueball/best_glueball_lcnn_ref_sm0-2-4-6_sweep_lr1e-3_is1.0_test_obars.pt
+-rw-r--r-- 1 root root 386658 Sep 21 10:33 results/glueball/best_glueball_lcnn_ref_sm0-2-4-6_sweep_lr3e-3_is1.0_test_obars.pt
+-rw-r--r-- 1 root root 386658 Sep 21 13:02 results/glueball/best_glueball_lcnn_ref_sm0-2-4-6_sweep_lr3e-4_is1.0_test_obars.pt
+-rw-r--r-- 1 root root 386480 Sep 21 21:30 results/glueball/best_glueball_lcnn_ref_sm0-2-4-6_test_obars.pt
+
+==> logs/lcnn_ref_train_ens0.log <==
+     m_eff(Δ=3):  m·a_t = 0.337 ± 0.039
+     m_eff(Δ=4):  m·a_t = 0.282 ± 0.055
+m_eff(L-CNN (authors')) − m_eff(GEVP), blocked jackknife of the difference (test):
+     Δ=1:  +0.001 ± 0.010 (0.1σ)
+     Δ=2:  +0.004 ± 0.015 (0.3σ)
+     Δ=3:  +0.044 ± 0.024 (1.8σ)
+     Δ=4:  +0.024 ± 0.041 (0.6σ)
+Saved results/glueball/glueball_lcnn_ref.png
+
+==> logs/lcnn_ref_train_ens0_init1.log <==
+     m_eff(Δ=3):  m·a_t = 0.333 ± 0.036
+     m_eff(Δ=4):  m·a_t = 0.276 ± 0.062
+m_eff(L-CNN (authors')) − m_eff(GEVP), blocked jackknife of the difference (test):
+     Δ=1:  +0.033 ± 0.016 (2.1σ)
+     Δ=2:  +0.018 ± 0.033 (0.6σ)
+     Δ=3:  +0.049 ± 0.052 (0.9σ)
+     Δ=4:  +0.023 ± 0.075 (0.3σ)
+Saved results/glueball/glueball_lcnn_ref_init1.png
+
+==> logs/lcnn_ref_train_ens0_init2.log <==
+     m_eff(Δ=3):  m·a_t = 0.343 ± 0.034
+     m_eff(Δ=4):  m·a_t = 0.291 ± 0.050
+m_eff(L-CNN (authors')) − m_eff(GEVP), blocked jackknife of the difference (test):
+     Δ=1:  +0.002 ± 0.012 (0.2σ)
+     Δ=2:  +0.003 ± 0.018 (0.2σ)
+     Δ=3:  +0.055 ± 0.032 (1.7σ)
+     Δ=4:  +0.085 ± 0.051 (1.7σ)
+Saved results/glueball/glueball_lcnn_ref_init2.png
+
+==> logs/lcnn_ref_train_ens1.log <==
+     m_eff(Δ=3):  m·a_t = 0.355 ± 0.039
+     m_eff(Δ=4):  m·a_t = 0.378 ± 0.108
+m_eff(L-CNN (authors')) − m_eff(GEVP), blocked jackknife of the difference (test):
+     Δ=1:  -0.034 ± 0.010 (3.6σ)
+     Δ=2:  -0.030 ± 0.012 (2.5σ)
+     Δ=3:  -0.006 ± 0.023 (0.3σ)
+     Δ=4:  +0.016 ± 0.040 (0.4σ)
+Saved results/glueball/glueball_lcnn_ref_ens1.png
+
+==> logs/lcnn_rnd_ens0_s0.log <==
+     m_eff(Δ=2):  m·a_t = 1.399 ± 1.013
+     m_eff(Δ=3):  m·a_t = 0.760 ± 1.450
+     m_eff(Δ=4):  m·a_t = -0.160 ± 5.912
+m_eff(L-CNN) − m_eff(GEVP), blocked jackknife of the difference (test):
+     Δ=2:  -0.421 ± 0.339 (1.2σ)
+     Δ=3:  -0.230 ± 0.560 (0.4σ)
+     Δ=4:  -0.405 ± 0.614 (0.7σ)
+Saved results/glueball/glueball_lcnn_rnd0.png
+
+==> logs/lcnn_rnd_ens0_s1.log <==
+     m_eff(Δ=3):  m·a_t = 0.335 ± 0.036
+     m_eff(Δ=4):  m·a_t = 0.276 ± 0.049
+m_eff(L-CNN) − m_eff(GEVP), blocked jackknife of the difference (test):
+     Δ=1:  +0.562 ± 0.162 (3.5σ)
+     Δ=2:  -0.053 ± 0.246 (0.2σ)
+     Δ=3:  +0.281 ± 0.347 (0.8σ)
+     Δ=4:  +0.890 ± 1.681 (0.5σ)
+Saved results/glueball/glueball_lcnn_rnd1.png
+
+==> logs/lcnn_rnd_ens0_s2.log <==
+     m_eff(Δ=3):  m·a_t = 0.332 ± 0.035
+     m_eff(Δ=4):  m·a_t = 0.285 ± 0.051
+m_eff(L-CNN) − m_eff(GEVP), blocked jackknife of the difference (test):
+     Δ=1:  +0.677 ± 0.135 (5.0σ)
+     Δ=2:  +0.372 ± 0.169 (2.2σ)
+     Δ=3:  -0.036 ± 0.324 (0.1σ)
+     Δ=4:  +1.894 ± 3.473 (0.5σ)
+Saved results/glueball/glueball_lcnn_rnd2.png
+
+==> logs/lcnn_rnd_ens1_s0.log <==
+     m_eff(Δ=3):  m·a_t = -1.253 ± 0.710
+     m_eff(Δ=4):  m·a_t = -0.143 ± 1.381
+m_eff(L-CNN) − m_eff(GEVP), blocked jackknife of the difference (test):
+     Δ=1:  -0.415 ± 0.811 (0.5σ)
+     Δ=2:  -0.404 ± 0.024 (16.8σ)
+     Δ=3:  -0.382 ± 0.049 (7.8σ)
+     Δ=4:  -0.398 ± 0.114 (3.5σ)
+Saved results/glueball/glueball_lcnn_ens1_rnd0.png
+
+==> logs/lcnn_rnd_ens1_s1.log <==
+     m_eff(Δ=3):  m·a_t = 0.382 ± 0.044
+     m_eff(Δ=4):  m·a_t = 0.394 ± 0.062
+m_eff(L-CNN) − m_eff(GEVP), blocked jackknife of the difference (test):
+     Δ=1:  +0.778 ± 0.189 (4.1σ)
+     Δ=2:  +0.789 ± 0.477 (1.7σ)
+     Δ=3:  -0.795 ± 0.651 (1.2σ)
+     Δ=4:  +0.933 ± 1.822 (0.5σ)
+Saved results/glueball/glueball_lcnn_ens1_rnd1.png
+
+==> logs/lcnn_rnd_ens1_s2.log <==
+     m_eff(Δ=2):  m·a_t = 0.404 ± 0.024
+     m_eff(Δ=3):  m·a_t = 0.381 ± 0.045
+     m_eff(Δ=4):  m·a_t = 0.389 ± 0.060
+m_eff(L-CNN) − m_eff(GEVP), blocked jackknife of the difference (test):
+     Δ=1:  +0.859 ± 0.146 (5.9σ)
+     Δ=2:  +0.099 ± 0.214 (0.5σ)
+     Δ=3:  +0.586 ± 0.512 (1.1σ)
+Saved results/glueball/glueball_lcnn_ens1_rnd2.png
+
+==> logs/lcnn_shootout.log <==
+[2026-09-13 15:39:01]    OK  lcnn_sweep_lr1e-3_is1e-4
+[2026-09-13 15:39:01]    compare the four logs' best val Rayleigh loss, then run
+[2026-09-13 15:39:01]    LCNN_PARTS=2,3 LCNN_LR=<lr> LCNN_INIT=<scale> bash scripts/lcnn_shootout.sh
+[2026-09-13 15:39:01] batch done. L-CNN dumps:
+-rw-r--r-- 1 root root 386442 Sep 13 13:42 results/glueball/best_glueball_lcnn_sm0-2-4-6_sweep_lr1e-3_is1.0_test_obars.pt
+-rw-r--r-- 1 root root 386448 Sep 13 15:38 results/glueball/best_glueball_lcnn_sm0-2-4-6_sweep_lr1e-3_is1e-4_test_obars.pt
+-rw-r--r-- 1 root root 386442 Sep 13 12:43 results/glueball/best_glueball_lcnn_sm0-2-4-6_sweep_lr3e-3_is1.0_test_obars.pt
+-rw-r--r-- 1 root root 386448 Sep 13 14:40 results/glueball/best_glueball_lcnn_sm0-2-4-6_sweep_lr3e-3_is1e-4_test_obars.pt
+
+==> logs/lcnn_sweep_lr1e-3_is1.0.log <==
+     m_eff(Δ=3):  m·a_t = 0.349 ± 0.032
+     m_eff(Δ=4):  m·a_t = 0.304 ± 0.044
+m_eff(L-CNN) − m_eff(GEVP), blocked jackknife of the difference (test):
+     Δ=1:  -0.026 ± 0.007 (3.6σ)
+     Δ=2:  -0.019 ± 0.014 (1.3σ)
+     Δ=3:  +0.020 ± 0.021 (0.9σ)
+     Δ=4:  +0.047 ± 0.040 (1.2σ)
+Saved results/glueball/glueball_lcnn_sweep_lr1e-3_is1.0.png
+
+==> logs/lcnn_sweep_lr1e-3_is1e-4.log <==
+     m_eff(Δ=3):  m·a_t = 0.349 ± 0.033
+     m_eff(Δ=4):  m·a_t = 0.298 ± 0.043
+m_eff(L-CNN) − m_eff(GEVP), blocked jackknife of the difference (test):
+     Δ=1:  -0.027 ± 0.006 (4.2σ)
+     Δ=2:  -0.013 ± 0.013 (1.0σ)
+     Δ=3:  +0.023 ± 0.021 (1.1σ)
+     Δ=4:  +0.044 ± 0.042 (1.1σ)
+Saved results/glueball/glueball_lcnn_sweep_lr1e-3_is1e-4.png
+
+==> logs/lcnn_sweep_lr3e-3_is1.0.log <==
+     m_eff(Δ=3):  m·a_t = 0.345 ± 0.030
+     m_eff(Δ=4):  m·a_t = 0.306 ± 0.042
+m_eff(L-CNN) − m_eff(GEVP), blocked jackknife of the difference (test):
+     Δ=1:  -0.030 ± 0.007 (4.0σ)
+     Δ=2:  -0.018 ± 0.014 (1.3σ)
+     Δ=3:  +0.015 ± 0.020 (0.7σ)
+     Δ=4:  +0.047 ± 0.040 (1.2σ)
+Saved results/glueball/glueball_lcnn_sweep_lr3e-3_is1.0.png
+
+==> logs/lcnn_sweep_lr3e-3_is1e-4.log <==
+     m_eff(Δ=3):  m·a_t = 0.348 ± 0.032
+     m_eff(Δ=4):  m·a_t = 0.305 ± 0.044
+m_eff(L-CNN) − m_eff(GEVP), blocked jackknife of the difference (test):
+     Δ=1:  -0.030 ± 0.007 (4.2σ)
+     Δ=2:  -0.016 ± 0.014 (1.2σ)
+     Δ=3:  +0.017 ± 0.020 (0.8σ)
+     Δ=4:  +0.046 ± 0.040 (1.1σ)
+Saved results/glueball/glueball_lcnn_sweep_lr3e-3_is1e-4.png
+
+==> logs/lcnn_train_ens0.log <==
+     m_eff(Δ=2):  m·a_t = 0.885 ± 0.687
+     m_eff(Δ=3):  m·a_t = -2.033 ± 2.465
+     m_eff(Δ=4):  m·a_t = 1.652 ± 1.435
+m_eff(L-CNN) − m_eff(GEVP), blocked jackknife of the difference (test):
+     Δ=1:  -0.001 ± 0.037 (0.0σ)
+     Δ=2:  -0.076 ± 0.055 (1.4σ)
+     Δ=3:  +0.133 ± 0.114 (1.2σ)
+     Δ=4:  +0.214 ± 0.199 (1.1σaved results/glueball/glueball_lcnn.png
+
+==> logs/lcnn_train_ens0_p2.log <==
+     m_eff(Δ=3):  m·a_t = 0.344 ± 0.032
+     m_eff(Δ=4):  m·a_t = 0.294 ± 0.043
+m_eff(L-CNN) − m_eff(GEVP), blocked jackknife of the difference (test):
+     Δ=1:  -0.029 ± 0.007 (4.2σ)
+     Δ=2:  -0.014 ± 0.013 (1.1σ)
+     Δ=3:  +0.013 ± 0.020 (0.6σ)
+     Δ=4:  +0.034 ± 0.041 (0.8σ)
+Saved results/glueball/glueball_lcnn_p2.png
+
+==> logs/lcnn_train_ens1.log <==
+     m_eff(Δ=3):  m·a_t = 0.327 ± 0.034
+     m_eff(Δ=4):  m·a_t = 0.324 ± 0.118
+m_eff(L-CNN) − m_eff(GEVP), blocked jackknife of the difference (test):
+     Δ=1:  -0.035 ± 0.007 (5.0σ)
+     Δ=2:  -0.034 ± 0.013 (2.7σ)
+     Δ=3:  -0.011 ± 0.024 (0.5σ)
+     Δ=4:  -0.003 ± 0.040 (0.1σ)
+Saved results/glueball/glueball_lcnn_ens1.png

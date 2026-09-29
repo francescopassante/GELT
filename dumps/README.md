@@ -28,6 +28,14 @@ artifacts, so they travel with the repo instead:
   every arm offline in seconds. Their `gelt` entry is the 7-level net's; take
   the trained series from the dumps above, never from here.
 
+`cubic/` holds S4's A₁⁺⁺ projection (`scripts/cubic_batch.sh`, 2026-09-29;
+`notes/prof_notes.md` §S4): per net, `cubic_<stem>.pt` with the 48 Ō(gU)
+(`obar_g`, 3.7 MB each), the gates, ν(g) and the irrep shares of C(0); and
+`<stem>_a1_test_obars.pt`, the projected operator in the standard format, which
+every offline script reads by its `_ens<k>` tag like any other dump. Five
+trained GELT nets, nine untrained ones, our L-CNN on ens1 (ens0's p2 still to
+run). `cubic_…_gen.pt` is the generators-only gate run on Run 5.
+
 Two subdirectories hold the L-CNN shootout's dumps, which used to sit in a
 `lcnn_shootout/` directory at the repo root and were moved here so every tracked
 Ō dump lives in one place:
