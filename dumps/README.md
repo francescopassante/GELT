@@ -33,8 +33,10 @@ artifacts, so they travel with the repo instead:
 (`obar_g`, 3.7 MB each), the gates, ν(g) and the irrep shares of C(0); and
 `<stem>_a1_test_obars.pt`, the projected operator in the standard format, which
 every offline script reads by its `_ens<k>` tag like any other dump. Five
-trained GELT nets, nine untrained ones, our L-CNN on ens1 (ens0's p2 still to
-run). `cubic_…_gen.pt` is the generators-only gate run on Run 5.
+trained GELT nets, nine untrained ones, our L-CNN on ens1 and on ens0 (the p2
+rerun, whose output explodes on three configurations under five of the 48
+elements — `scripts/cubic_readout.py` flags it and prints the numbers without
+them). `cubic_…_gen.pt` is the generators-only gate run on Run 5.
 
 Two subdirectories hold the L-CNN shootout's dumps, which used to sit in a
 `lcnn_shootout/` directory at the repo root and were moved here so every tracked

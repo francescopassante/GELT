@@ -13,7 +13,13 @@ and the source dumps beside them, and prints, per net:
     A₀(Ō_A1) − A₀(Ō) and Δm_eff(1) inside one jackknife;
   - for untrained nets, m_eff(1) of both (their free cosh fit does not
     converge, see notes/prof_notes.md "Third ensemble", E6);
-  - inverse-variance combinations over the 4-level trained nets.
+  - inverse-variance combinations over the 4-level trained nets;
+  - **outliers**: an entry of some Ō_g more than ``OUTLIER_SD`` sd of Ō_e away
+    from Ō_e is an exploding output, not a symmetry violation (the L-CNN's p2
+    net: three configurations that are ordinary in their own orientation give
+    |Ō| up to 4e10 under five of the 48 elements). The net is flagged, and every
+    number above is recomputed *also* with those configurations removed from
+    all 48 elements — a diagnostic chosen after seeing the outlier, labelled so.
 
 Run:
     python scripts/cubic_readout.py
@@ -38,6 +44,7 @@ from gelt.glueball import connected_correlator, effective_mass  # noqa: E402
 
 CUBIC_DIR = "dumps/cubic"
 FRACTION_TOL = 1e-9  # recomputed vs stored irrep shares
+OUTLIER_SD = 1e3  # |Ō_g − Ō_e| in units of sd(Ō_e) that marks an exploding output
 
 
 def _ens(stem):
@@ -93,6 +100,13 @@ def fmt(v, e, sig=False):
     return s + (f" ({abs(v) / e:.1f}σ)" if sig else "")
 
 
+def outlier_configs(obar_g):
+    """Configurations where some Ō_g departs from Ō_e by more than OUTLIER_SD sd."""
+    e = obar_g[0]
+    dev = (obar_g - e).abs().amax(dim=(0, 2)) / (e - e.mean()).std()
+    return sorted((dev > OUTLIER_SD).nonzero().flatten().tolist())
+
+
 def main():
     elements = cubic_elements()
     files = sorted(f for f in glob.glob(f"{CUBIC_DIR}/cubic_*.pt") if not f.endswith("_gen.pt"))
@@ -118,6 +132,19 @@ def main():
               + f"   {nu[len(nu) // 2]:.3f} ({nu[-1]:.3f})"
               + f"   gates {gates[0]:.0e}/{gates[1]:.0e}/{gates[2]:.0e}")
         rows.append((stem, r, frac, a1))
+        bad = outlier_configs(r["obar_g"])
+        if bad:
+            keep = torch.tensor([i for i in range(r["obar_g"].shape[1]) if i not in bad])
+            og = r["obar_g"][:, keep]
+            fr = irrep_fractions(og, elements)
+            n_el = int(((r["obar_g"] - r["obar_g"][0]).abs().amax(dim=(1, 2))
+                        > OUTLIER_SD * (r["obar_g"][0] - r["obar_g"][0].mean()).std()).sum())
+            print(f"  ** {stem}: exploding output on configs {bad} under {n_el} of 48 elements "
+                  f"(max |Ō_g| {r['obar_g'].abs().max():.2e}); without them: outside A1g "
+                  f"{100 * (1 - fr['A1g']):.2f}%, parity-odd "
+                  f"{100 * sum(v for k, v in fr.items() if k.endswith('u')):.2f}%")
+            rows.append((stem + "  [outlier configs removed]", {**r, "obar_g": og,
+                         "_keep": keep}, fr, {"gelt_obar": og.mean(0)}))
 
     print("\ntrained nets — the fit_glueball_overlap estimator on Ō and Ō_A1 (window "
           f"{fgo.FIT_WINDOW}, block from the dump's meta)")
@@ -129,13 +156,19 @@ def main():
         td = t0 + 1 if fgo.GEVP_TD is None else fgo.GEVP_TD
         jb = int(meta.get("jack_block", 10))
         orig, a1o = src["gelt_obar"].double(), a1["gelt_obar"].double()
+        basis = src["Obar_basis"].double()
+        if "_keep" in r:
+            orig, basis = orig[r["_keep"]], basis[:, r["_keep"]]
+        elif outlier_configs(r["obar_g"]):
+            print(f"  {stem:<46} exploding outputs — see the outlier-removed row")
+            continue
         if rnd:
             mo, mso = meff1(orig, jb)
             ma, msa = meff1(a1o, jb)
             print(f"  {stem:<46} untrained: m_eff(1) Ō {mo:.3f}({1000 * mso:.0f})  "
                   f"Ō_A1 {ma:.3f}({1000 * msa:.0f})")
             continue
-        res = estimator(orig, a1o, src["Obar_basis"].double(), t0, td, jb)
+        res = estimator(orig, a1o, basis, t0, td, jb)
         print(f"  {stem:<46} [{arch} {lv} {_ens(stem)}]")
         for tag, mk, ak, dk, ek in (("Ō   ", "m_o", "A0_o", "dA0_o", "dmeff1_o"),
                                    ("Ō_A1", "m_a", "A0_a", "dA0_a", "dmeff1_a")):
@@ -144,13 +177,17 @@ def main():
                   f"ΔA0 vs GEVP {fmt(*res[dk], True)}  Δm_eff(1) vs GEVP {fmt(*res[ek], True)}")
         print(f"     paired A0(Ō_A1) − A0(Ō) {fmt(*res['A0_a-o'], True)}   "
               f"m {fmt(*res['m_a-o'])}   m_eff(1) {fmt(*res['meff1_a-o'], True)}")
-        comb.setdefault((arch, lv), []).append(res)
+        comb.setdefault((arch, lv) + (("outliers removed",) if "_keep" in r else ()),
+                        []).append(res)
 
     print("\ncombined (inverse variance)")
-    for (arch, lv), rs in comb.items():
+    lcnn = comb.pop(("L-CNN", "4lv"), []) + comb.pop(("L-CNN", "4lv", "outliers removed"), [])
+    if lcnn:
+        comb[("L-CNN", "4lv", "ens0 outlier configs removed")] = lcnn
+    for key, rs in comb.items():
         if len(rs) < 2:
             continue
-        print(f"  {arch} {lv}, {len(rs)} ensembles:")
+        print(f"  {' '.join(key)}, {len(rs)} ensembles:")
         for k, lab in (("A0_a-o", "paired A0(Ō_A1) − A0(Ō)"), ("dA0_o", "ΔA0 vs GEVP, Ō"),
                        ("dA0_a", "ΔA0 vs GEVP, Ō_A1"), ("meff1_a-o", "m_eff(1)(Ō_A1) − m_eff(1)(Ō)"),
                        ("dmeff1_a", "Δm_eff(1) vs GEVP, Ō_A1")):
