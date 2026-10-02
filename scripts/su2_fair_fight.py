@@ -77,7 +77,11 @@ the call graph.
   published   APE [0,2,4,6] × 1×1 — the paper's arm, straight from the dump
   deep        APE [0,2,4,6,8,12,16] × 1×1 — does more radius help?
   shapes      thin links × cubic-symmetrised R×T loops — extent without smearing
-  full        deep ladder × shapes — the strongest classical opponent
+  shapes_sm   APE [0,2,4,6] × the same five shapes — geometry at matched radius
+  full21      deep ladder × {1×1, 1×2, 2×2} — what `full` was until 2026-10-02,
+              i.e. the arm behind every `full` number recorded before that date
+  full        deep ladder × all five shapes, 35 operators — the strongest
+              classical opponent, a superset of every other arm
 
 -------------------------------------------------------------------------------
 PRE-REGISTERED OUTCOMES
@@ -109,9 +113,13 @@ Env knobs:
                           SFF_GEVP_EPS · s_max instead of flooring them
   SFF_PRUNE=<rho_max>     greedy collinearity pruning before the GEVP (off);
                           the kept set is chosen once and fixed across replicas
+  SFF_T0=<t0> SFF_TD=<td> GEVP reference times, overriding the dump's (1, 2).
+                          SFF_T0=0 is where the variational gate is a theorem,
+                          and the only setting at which `shapes` / `shapes_sm`
+                          pass it on every ensemble; td defaults to t0 + 1
   SFF_OUT=<path.pt>       output path; default su2_fair_fight_<dump stem>.pt for
                           a single dump, su2_fair_fight.pt for several, either
-                          with _trunc / _prune<ρ> appended
+                          with _trunc / _prune<ρ> / _gevp<t0>-<td> appended
   Every SFF_<NAME> also reads --<name>=value from argv.
 
 Run:  python scripts/su2_fair_fight.py
@@ -253,11 +261,23 @@ GEVP_TD_ = int(os.environ.get("SFF_GEVP_TD", 2))  # only for the Rayleigh gate
 TRUNCATE = _flag("truncate", "0") == "1"
 PRUNE = float(_flag("prune", "0") or 0)  # rho_max; 0 = off
 BASES = _flag("bases", "")
+# GEVP reference times. Unset, t0 is the dump's own (1) and td = t0 + 1, so every
+# existing number regenerates unchanged. At t0 = 1 the GEVP maximises C(td)/C(1)
+# while the variational gate tests C(2)/C(0): `shapes` and `shapes_sm` fall back
+# to a single member there (ens1; `shapes` on ens2 too) and no whitening rescues
+# them — at 20 operators a half-split v₀ reads A₀ = 0.21 ± 0.24. At t0 = 0 the
+# GEVP maximises the gate's own quotient and both pass on all three ensembles,
+# in-sample and half-split alike.
+T0 = _flag("t0", "")
+TD = _flag("td", "")
 
 # One output per dump (the curve needs one file per point), one for a multi-dump
 # run as before, and the estimator in the name so the WP1 settings do not
 # overwrite each other.
 _EST = ("_trunc" if TRUNCATE else "") + (f"_prune{PRUNE:g}" if PRUNE else "")
+if T0 or TD:
+    _t0 = int(T0) if T0 else 1
+    _EST += f"_gevp{_t0}-{int(TD) if TD else _t0 + 1}"
 
 
 def _stem(dump):
@@ -296,7 +316,16 @@ ARM_SPEC = {
     # radius can be told apart — `deep` is radius alone, `shapes_sm` geometry
     # alone at matched radius, `full` both.
     "shapes_sm": ([0, 2, 4, 6],              SHAPES_EXT,    False),
-    "full":      ([0, 2, 4, 6, 8, 12, 16],   SHAPES_FULL,   False),
+    # Until 2026-10-02 `full` was this 21-operator arm — the deep ladder with
+    # three of the five shapes — so it was not a superset of `shapes_sm` and
+    # "strongest classical opponent" was not true by construction. Every `full`
+    # number in notes/ and every kept artifact written before that date is this
+    # arm; it stays buildable under its own name so they remain reproducible.
+    "full21":    ([0, 2, 4, 6, 8, 12, 16],   SHAPES_FULL,   False),
+    # Deep ladder × every shape `shapes_sm` has: 35 operators, a superset of
+    # every other arm. Six of them (levels 8, 12, 16 × 2×3, 3×3) are in no obars
+    # cache written before the redefinition and need one GPU pass per ensemble.
+    "full":      ([0, 2, 4, 6, 8, 12, 16],   SHAPES_EXT,    False),
 }
 # Named before the run so the choice cannot be made after seeing the A₀ column.
 # SFF_STRONGEST re-points it; the verdict below additionally names whichever arm
@@ -308,8 +337,9 @@ ARMS = _flag("arms", ",".join(ARM_SPEC)).split(",")
 # deuteranopia; every series also carries a distinct marker, so identity is
 # never colour-alone.
 COLOR = {"gelt": "#0072B2", "published": "#D55E00", "full": "#009E73",
-         "deep": "#E69F00", "shapes": "#CC79A7"}
-MARKER = {"gelt": "o", "published": "s", "full": "^", "deep": "D", "shapes": "v"}
+         "deep": "#E69F00", "shapes": "#CC79A7", "full21": "#56B4E9"}
+MARKER = {"gelt": "o", "published": "s", "full": "^", "deep": "D", "shapes": "v",
+          "full21": "<"}
 
 
 # ── Smearing and loop shapes ──────────────────────────────────────────────────
@@ -525,8 +555,8 @@ def measure(dump_path, cache_path, cov_done):
     gelt = blob["gelt_obar"].double()
     dumped_basis = blob["Obar_basis"].double()
     meta = blob.get("meta", {})
-    t0 = int(meta.get("gevp_t0", 1))
-    td = t0 + 1 if fgo.GEVP_TD is None else fgo.GEVP_TD
+    t0 = int(T0) if T0 else int(meta.get("gevp_t0", 1))
+    td = int(TD) if TD else (t0 + 1 if fgo.GEVP_TD is None else fgo.GEVP_TD)
     jb = int(meta.get("jack_block", 10))
     B, Nt = gelt.shape
     dmin, dmax = fgo.FIT_WINDOW
@@ -674,8 +704,10 @@ def measure(dump_path, cache_path, cov_done):
     if KEEP_OBARS:
         ob_path = ("results/fair_fight/su2_fair_fight_obars_"
                    f"{_tag(dump_path)}.pt")
-        if cached or os.path.exists(ob_path):
+        if cached:
             print(f"  Ō cache {ob_path} exists — left untouched")
+        elif os.path.exists(ob_path):
+            _extend_obars(ob_path, raw_bases, labels_raw, names)
         else:
             torch.save({"dump": dump_path, "n_cfg": B,
                         "labels": {n: labels_raw[n] for n in names},
@@ -694,6 +726,60 @@ def measure(dump_path, cache_path, cov_done):
         print(f"  {n:<12} {a['m']:>8.4f} ± {a['m_err']:.4f} "
               f"{a['A0']:>8.4f} ± {a['A0_err']:.4f}{dd}")
     return out, cov_done
+
+
+def _extend_obars(path, bases, labels, names):
+    """Add to a kept Ō cache the operators it does not hold; replace no series.
+
+    Write-once is about the *series*: a later run must never swap a cached
+    operator for a recomputed, capped or pruned one. An arm that has since grown
+    (`full`, 21 → 35 operators) is a different matter — without this the GPU
+    pass that builds the six new operators would discard them, and the offline
+    route could never reach the arm. So an arm is written only when the cache
+    lacks the name or holds a strict subset of its operators, every operator
+    the cache already has is carried over verbatim under whatever arm it was
+    stored, and a run capped by SFF_MAXLEVEL adds nothing.
+    """
+    ob = torch.load(path, map_location="cpu", weights_only=False)
+    have = {}
+    # `published` last: its series are the dump's own, the other arms' are slices
+    # of one smearing table and agree with each other bit for bit, so an arm
+    # assembled from them is the arm the cache already held.
+    for n in sorted(ob["bases"], key=lambda n: n == "published"):
+        for lab, series in zip(ob["labels"][n], ob["bases"][n]):
+            have.setdefault(lab, series)
+    # Same configurations, or nothing is merged: the cache is keyed by ensemble
+    # only, and every operator both sides hold must be the same numbers.
+    for n in names:
+        for lab, series in zip(labels[n], bases[n]):
+            if lab not in have:
+                continue
+            old = have[lab].double()
+            if old.shape != series.shape or (
+                    (old - series).abs().max() / series.abs().mean().clamp_min(1e-30)
+                    ) > 1e-3:
+                print(f"  Ō cache {path}: `{lab}` differs from this run's — "
+                      "another set of configurations; left untouched")
+                return
+    added = []
+    for n in names:
+        if n not in ARM_SPEC:
+            continue
+        if len(labels[n]) != len(ARM_SPEC[n][0]) * len(ARM_SPEC[n][1]):
+            continue                       # capped: not the arm its name says
+        old = ob["labels"].get(n)
+        if old is not None and not set(old) < set(labels[n]):
+            continue
+        ob["bases"][n] = torch.stack([
+            have[lab] if lab in have else series.to(torch.float32)
+            for lab, series in zip(labels[n], bases[n])])
+        ob["labels"][n] = list(labels[n])
+        added.append(f"{n} ({len(labels[n])})")
+    if not added:
+        print(f"  Ō cache {path} exists and holds every arm — left untouched")
+        return
+    torch.save(ob, path)
+    print(f"  Ō cache {path} extended: {', '.join(added)}; no existing series replaced")
 
 
 def _rayleigh(series):
@@ -849,7 +935,11 @@ def report(rows):
         return
     best = max(challengers, key=_mean_A0)
     against = best if _mean_A0(best) > _mean_A0(STRONGEST) else STRONGEST
-    if against != STRONGEST:
+    if against != STRONGEST and STRONGEST not in names:
+        print(f"\n  the pre-registered `{STRONGEST}` was not built in this run; the "
+              f"verdict is taken\n  against `{against}` (A₀ = {_mean_A0(against):.3f}), "
+              "the strongest arm that was.")
+    elif against != STRONGEST:
         print(f"\n  `{against}` (A₀ = {_mean_A0(against):.3f}) came out above the "
               f"pre-registered `{STRONGEST}` (A₀ = {_mean_A0(STRONGEST):.3f});"
               f"\n  the verdict is taken against it.")
@@ -963,6 +1053,7 @@ def main():
           f"max level = {MAX_LEVEL} | estimator: "
           + ("truncate" if TRUNCATE else "floor") + f" eps {GEVP_EPS:g}"
           + (f", prune {PRUNE:g}" if PRUNE else "")
+          + (f", GEVP t0 = {T0 or 'dump'}, td = {TD or 't0 + 1'}" if T0 or TD else "")
           + (" | offline (SFF_BASES)" if BASES else "")
           + ("  [MATCHED INPUT: the classical arms see only the smearing levels "
              "the network was trained on]" if MAX_LEVEL <= max(tg.INPUT_SMEAR_LEVELS)
@@ -991,7 +1082,8 @@ def main():
                              "fit_window": fgo.FIT_WINDOW,
                              "smear_alpha": tg.SMEAR_ALPHA},
                     "estimator": {"truncate": TRUNCATE, "prune": PRUNE,
-                                  "gevp_eps": GEVP_EPS, "bases": BASES}}, OUT_PT)
+                                  "gevp_eps": GEVP_EPS, "bases": BASES,
+                                  "t0": T0, "td": TD}}, OUT_PT)
         print(f"  saved → {OUT_PT} ({len(rows)} ensembles)")
 
     if not rows:

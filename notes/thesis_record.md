@@ -43,7 +43,8 @@ and are kept as they were.
 | L5 | At matched 39.6k parameters GELT solves W⁴ˣ⁴ (per-site R² = 0.99998) but at 16× the L-CNN's MSE | ESTABLISHED (n = 3 vs 3, disjoint ranges); cause OPEN; the same ordering, wider, on W²ˣ² (§2.5) | §2.4 |
 | L6 | The 0⁺⁺ needs an anisotropic lattice, smeared multi-level inputs and a per-timeslice network | ESTABLISHED (design facts) | §3.1 |
 | L7 | The learned operator has the classical mass and more ground-state weight than the 4-level GEVP on the same inputs: Δm_eff(1) = −0.028 ± 0.007 / −0.038 ± 0.008, ΔA₀ = +0.078 ± 0.022 (3.6σ) | ESTABLISHED, **replicated on a third ensemble**: three-ensemble ΔA₀ = +0.086 ± 0.017 (stat) ± 0.018 (window) = 3.4σ with the window systematic; Δm_eff(1) = −0.037 ± 0.004; ensembles consistent (p = 0.71); a fully correlated fit gives +0.049 ± 0.017 | §3.2 |
-| L8 | …and against stronger classical bases | **QUALIFIED**: +0.095 ± 0.021 vs the input-matched 7-level arm, only +0.038 ± 0.027 (1.4σ) once loop shapes are added; A₀ is saturated there | §3.3 |
+| L7′ | The learned operator is a 0⁺⁺ (A₁⁺⁺) operator, not only gauge invariant at zero momentum | ESTABLISHED to 98%: 1.2–2.1% of C(0) outside A₁⁺⁺ over the five trained nets (mostly Eg + T2g), untrained nets 21–83% by init seed (Eg); L8 on the projected 7-level nets: +0.081 ± 0.020 vs `deep`, +0.027 ± 0.023 vs `full`; projecting changes A₀ by +0.005 ± 0.005 (4-level, three ensembles), projected headline ΔA₀ = +0.088 ± 0.016 ± 0.016 (3.9σ); between the pre-registered readings R1 and R2, adoption of the projected headline OPEN | prof_notes §S4 |
+| L8 | …and against stronger classical bases | **QUALIFIED**: +0.095 ± 0.021 vs the input-matched 7-level arm, only +0.038 ± 0.027 (1.4σ) once loop shapes are added; A₀ is saturated there. At (t₀, t_d) = (0, 1), where `shapes` / `shapes_sm` pass the gate: +0.085 ± 0.023 vs `deep`, +0.034 ± 0.014 vs `full`, and the **4-level** net is behind the shape bases (−0.034 ± 0.010 vs `full`) | §3.3 |
 | L9 | The advantage is learned, not architectural | ESTABLISHED (untrained nets below the GEVP at every input depth; decomposition sign flips) | §3.4 |
 | L10 | What was learned: ~80% of the out-of-span content is rectangular loops, ~2.5% of the norm² is outside every classical operator and carries ΔA₀ = +0.021 ± 0.009 | ESTABLISHED (estimator-dependent between 55% and 80%) | §3.5 |
 | L11 | "The classical smearing ladder is a converged geometric series" | RETRACTED (tail measured at ≈ 4%, non-monotone) | §3.5 |
@@ -275,6 +276,42 @@ estimator in the test (RMSE 0.016) and gives +0.054 ± 0.018 (3.0σ) —
 reported, not adopted. Each A₀ alone is biased up by +0.004 … +0.010 under
 the diagonal fit; it cancels in ΔA₀.
 
+**Autocorrelations and block size (S3 tasks 1–2, 2026-09-29,
+`scripts/block_size_scan.py`).** τ_int (Madras–Sokal, c = 6) of Ō averaged
+over t, on the 400 chain-ordered test configurations: ≤ 1.12 ± 0.31 saved
+configurations for thin, APE×6, GEVP-projected and GELT on all three
+ensembles (GELT = GEVP within errors); the per-configuration C(1) term 0.43–0.65;
+the b = 1 jackknife pseudo-values of every quantity 0.33–0.65, i.e.
+consistent with ½. ρ(t) (kept to t = 20 in the .pt, figure `…_rho.png`):
+GEVP and GELT significant only at t = 1–2 (ρ(1) = 0.12–0.34) and nearly
+identical; beyond the window, ~0.1 oscillations (ens0 t ≈ 10–11, ens2
+t ≈ 7–12, ens2 thin plaquette to t = 8) at 1–2σ per lag. Summed to t = 12 or
+20 instead of W, τ_int ≤ 1.56 — still 2τ ≈ 3 < b. σ(b) for b ∈ {1, 2, 5, 10, 20, 40}, fit weights fixed at
+b = 10 (gated on the per-ensemble ΔA₀ and Δm_eff(1) above): by the reading
+fixed beforehand (flag only if the three-ensemble mean of σ(b)/σ(10) exceeds
+1 + noise at *both* b = 20 and 40) **b = 10 is on the plateau for every
+quantity** — ratios at 20/40 are 0.84–1.09 — and nothing in chapter 5 is
+re-quoted. Combined ΔA₀ error 0.016–0.018 at every b ≤ 20. One caveat: the
+combined Δm_eff(1) error at b = 10 (0.0038) sits 17–25% *below* the b ≤ 5
+values (ens2 up to 39%); falling, not rising, with pseudo-value τ_int
+0.33–0.45, so a 40-block noise fluctuation rather than missed
+autocorrelation. At the most conservative b (= 1) it is −0.036 ± 0.005,
+6.9σ instead of 9.5σ.
+
+**Boundary-leakage check (S3 task 3, 2026-09-29, `scripts/gap_scan.py`).**
+ΔA₀ and Δm_eff(1) after dropping the first g ∈ {0, 5, 10, 20} test
+configurations (the only ones adjacent to the validation block), everything
+else as in the scan: [2,7], b = 10, fit weights and v₀ recomputed on the
+reduced sample; g = 0 gated on the per-ensemble values above. ΔA₀ (ens0 / ens1 /
+ens2 / combined): g = 0 +0.066(31) / +0.089(30) / +0.100(28) / +0.086(17);
+g = 5 +0.067(32) / +0.093(25) / +0.102(29) / +0.089(16); g = 10 +0.066(31) /
++0.094(31) / +0.099(29) / +0.087(17); g = 20 +0.061(32) / +0.081(29) /
++0.102(29) / +0.083(17). Largest shift from g = 0, in units of the g = 0
+error: 0.24σ (ens1, g = 20); the prof_notes reading ("beyond 1σ → escalate")
+does not fire. Δm_eff(1) combined −0.037 / −0.035 / −0.037 / −0.037 (±0.004–0.005).
+The g = 5 ens1 error (0.025) is smaller than at g = 0 (0.030) — a
+40-block fluctuation, not information. Thesis: ch. 4 `tab:gap_leakage`.
+
 **Plateau at Δ = 1 (S1 task 4).** m_eff(1) − m_fit([2,7]) for GELT, same
 jackknife sample: +0.037 ± 0.021 (run5), −0.022 ± 0.026 (ens1), **+0.013 ±
 0.016 combined (0.8σ)** → "compatible with a plateau from Δ = 1 within
@@ -295,6 +332,16 @@ built stronger arms and, after two false starts (below), gives one consistent
 picture. `deep` = 7 levels (0…16) × plaquette; `full` = 7 levels × {1×1, 1×2,
 2×2}, 21 operators. The network was retrained on the 7-level ladder so that
 inputs match `deep`.
+
+**Naming, 2026-10-02.** In `su2_fair_fight.py` this 21-operator arm is now
+`full21`, and `full` is 7 levels × the five shapes of `shapes_sm` (35
+operators, a superset of every arm). **Every `full` in this record is
+`full21`**; no 35-operator number exists yet — levels 8, 12, 16 × {2×3, 3×3}
+are in no obars cache and need one GPU pass per ensemble. Offline preview on
+the 29 operators already cached (`shapes_sm` ∪ `full21`, truncated, full
+sample, no jackknife), A₀ at (0,1) on run5 / ens1 / ens2: 0.962 / 1.030 /
+0.983 against `shapes_sm` 0.947 / 1.025 / 0.965 and `full21` 0.939 / 1.022 /
+0.966; at (1,2) the union falls back on ens1 and ens2.
 
 | comparison (combined, two ensembles) | ΔA₀ |
 |---|---|
@@ -339,7 +386,42 @@ trusted:
 - **The variational gate is a theorem only at t₀ = 0.** At (t₀, t_d) = (1, 2)
   the GEVP maximises C(2)/C(1), the A₀ gate tests C(2)/C(0); `shapes` and
   `shapes_sm` fall back on ens1 for that reason (at cond C(t₀) = 87), and no
-  whitening can rescue them. They are off the curve.
+  whitening can rescue them. They are off the (1,2) curve. **At t₀ = 0 they
+  pass on every ensemble** (2026-10-02, `SFF_T0=0`, next paragraph).
+
+**The fair fight at (t₀, t_d) = (0, 1)** (2026-10-02; `SFF_BASES=1
+SFF_TRUNCATE=1 SFF_T0=0 python scripts/su2_fair_fight.py <dumps>`, offline;
+without `SFF_T0` the same command reproduces every (1,2) number above). No arm
+falls back on any ensemble, 26 curve dumps included. ΔA₀ = GELT − arm:
+
+| arm | classical A₀ (run5 / ens1 / ens2) | 4-level GELT, three ensembles | 7-level GELT, run5 + ens1 |
+|---|---|---|---|
+| `published` | 0.864 / 0.942 / 0.847 | +0.067 ± 0.015 (4.5σ) | +0.110 ± 0.032 (3.4σ) |
+| `deep` | 0.902 / 0.958 / 0.888 | +0.031 ± 0.014 (2.3σ) | +0.085 ± 0.023 (3.6σ) |
+| `shapes` | 0.508 / 0.577 / 0.491 | +0.416 ± 0.037 | +0.458 ± 0.054 |
+| `shapes_sm` | 0.947 / 1.025 / 0.965 | **−0.037 ± 0.012 (3.2σ)** | +0.028 ± 0.011 (2.6σ) |
+| `full` | 0.940 / 1.022 / 0.966 | **−0.034 ± 0.010 (3.5σ)** | +0.034 ± 0.014 (2.4σ) |
+
+`published` and `deep` are S2's (0,1) row (`gevp_time_scan.py`: +0.067 ± 0.015,
++0.031 ± 0.014) by another route. Three things this changes. (i) `shapes` and
+`shapes_sm` are measurements, at a third to a half of the fallback's error.
+(ii) `shapes_sm` = `full` to 0.007 on every ensemble: with the five shapes at
+four levels, smearing levels 8–16 add nothing. (iii) **The 4-level GELT is no
+longer level with the shape bases** (−0.001 ± 0.021 vs `full`, +0.003 ± 0.032
+vs `shapes_sm` at (1,2)): at (0,1) it is behind both by ≈ 0.035, negative on
+all three ensembles. That is at classical A₀ ≈ 0.95–1.0, i.e. in the saturated
+region, so read it as "not ahead" and do not rank on it; the 7-level net stays
+ahead at ≈ 2.5σ. Not in-sample optimism of a 20-operator v₀: a half-split
+(v₀ from one half of the test split, scored on the other, swapped) gives
+−0.035 ± 0.013 vs `shapes_sm` and −0.033 ± 0.011 vs `full` (one-off check in
+`p1_meff_strong_basis.py`'s convention, no script in the repo), where the same
+half-split at (1,2) reads A₀ = 0.21 ± 0.24 for `shapes_sm`. The curve at (0,1)
+(`CURVE_EST=_trunc_gevp0-1 python scripts/input_architecture_curve.py`, written
+beside the canonical one): classical 0.894 at four levels and 0.926 at seven,
+ΔA₀ +0.054 ± 0.019 and +0.085 ± 0.023, rungs +0.024 ± 0.018 (4lv→7lv) and
+−0.223 ± 0.045 (thin→4lv), χ²/dof = 11.4 for a constant — R1/R2/R3 all read as
+at (1,2).
+
 - An earlier reading "parity at matched inputs, the claim does not survive"
   (against `full` on one ensemble, floor estimator) was **retracted** once both
   ensembles and the truncated estimator were in; so was "full's ΔA₀ swings 8×
@@ -732,6 +814,23 @@ five attempts and is worth a section of the thesis on its own.
    Δ = 1" sentences (l. 59, 406, 427, 436, 505) survive as "compatible with a
    plateau within errors" on both ensembles combined, not on the run5 table
    alone; lead with Δm_eff(1) = −0.032 ± 0.006 combined.
+8. **Open after the (0,1) fair fight (2026-10-02, §3.3).** (a) *Which pair
+   heads the fair-fight table is not decided*: the (1,2) table stands as
+   written and the (0,1) one sits beside it. S2's rule (the pair with the
+   highest classical A₀) points to (0,1), and "a 4-level GELT is worth the
+   21-operator basis" (−0.001 ± 0.021) then becomes "is behind it in the
+   saturated region" (−0.034 ± 0.010). (b)
+   `reports/curve/learned_operator_curve.tex` still says `shapes` and
+   `shapes_sm` fall back and that the selection rule "has no answer as written"
+   (table rows l. 482–483, paragraph l. 525–529); true at (1,2), to be amended
+   with the (0,1) rows. (c) The half-split check quoted in §3.3 has no script in
+   the repo. (d) `input_architecture_curve.py` knows run5 and ens1 only
+   (`ENSEMBLES`, and any other seed is labelled run5), so ens2 is in the
+   fair-fight table and not in the curve; no ens2 output exists under
+   `_trunc_gevp0-1` for that reason, and none must be written before the label
+   is fixed. (e) The canonical curve files (`input_architecture_curve.*`) are
+   the (1,2) ones, untouched; the (0,1) curve is
+   `input_architecture_curve_trunc_gevp0-1.*`.
 
 ---
 

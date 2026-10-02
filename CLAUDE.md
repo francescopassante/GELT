@@ -379,10 +379,20 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   complex `linalg.det`/`svd`) — use `SAC_DEVICE=cpu` for a smoke test.
 - **`su2_fair_fight.py`** — the strengthened classical arms (`published` /
   `deep` / `shapes` / `full`), gated on reproducing the published numbers first.
+  **`full` is 7 levels × all five shapes of `shapes_sm` (35 operators) since
+  2026-10-02; the 21-operator arm every earlier `full` number refers to is
+  `full21`.** Six of the 35 are in no cache yet (one GPU pass per ensemble,
+  which extends the cache without replacing a series), so until then `full`
+  is skipped offline and by-name readers of an old cache
+  (`operator_decomposition.py`, `p1_meff_strong_basis.py`) still get 21.
   `SFF_NOCACHE=1` runs the dump-only path offline. `SFF_BASES=1` runs **every**
   arm offline from the kept per-ensemble obars cache (now write-once);
   `SFF_TRUNCATE=1` / `SFF_PRUNE=<ρ>` are the estimator knobs of
   `notes/fable5.1_10-09_audit.md` WP1; `thin` is the curve's one-operator arm.
+  `SFF_T0` / `SFF_TD` override the GEVP reference times (default: the dump's
+  (1, 2), bit-identical); `SFF_T0=0` is where the variational gate is a theorem
+  and the only setting at which `shapes` / `shapes_sm` pass it on every
+  ensemble. Outputs carry `_gevp<t0>-<td>`.
   A single-dump run writes `su2_fair_fight_<dump stem>[_trunc][_prune<ρ>].pt`.
 - **`input_architecture_curve.py`** — A₀ against *input content* for three
   traces (classical GEVP, trained GELT, untrained GELT), assembled offline from
@@ -794,6 +804,8 @@ python scripts/train_glueball.py             # GELT as a variational operator
 python scripts/fit_glueball_overlap.py [dump]      # cosh fits + A₀ (offline)
 python scripts/fit_window_scan.py            # S1: windows, correlated χ², m_eff(1) (offline, seconds)
 python scripts/fit_estimator_mc.py           # S1: is the diagonal or the correlated fit biased? (offline, 15 s)
+python scripts/block_size_scan.py            # S3: τ_int of Ō and σ(jackknife block) (offline, seconds)
+python scripts/gap_scan.py                   # S3: ΔA₀ after dropping the first g test configs (offline, seconds)
 bash   scripts/overnight_replication.sh      # fresh ensemble + retraining (~24 h)
 bash   scripts/ens2_batch.sh                 # the third ensemble (seed 2); never retrains ens1
 python scripts/cubic_projection.py --smoke=1 # S4 plumbing (CPU, seconds)

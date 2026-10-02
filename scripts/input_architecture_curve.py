@@ -6,7 +6,8 @@ it: ground-state overlap as a function of the *input content* x handed to both
 methods, for the classical GEVP, a trained GELT and an untrained one.
 
     x ∈ { thin, 4lv, 7lv }   on the main chain (thin ⊂ 4lv ⊂ 7lv), plus the
-    off-chain classical points 4lv+5sh (`shapes_sm`) and 7lv+3sh (`full`).
+    off-chain classical points 4lv+5sh (`shapes_sm`), 7lv+3sh (`full21` —
+    `full` until 2026-10-02) and 7lv+5sh (`full`, once its outputs exist).
 
 Everything is read from the per-dump fair-fight outputs — this script fits
 nothing and re-estimates nothing, so the numbers here are the numbers that
@@ -15,6 +16,7 @@ nothing and re-estimates nothing, so the numbers here are the numbers that
 
     python scripts/input_architecture_curve.py                 # after the 26 runs below
     CURVE_EST=_trunc_prune0.99 python scripts/input_architecture_curve.py
+    CURVE_EST=_trunc_gevp0-1 python scripts/input_architecture_curve.py   # SFF_T0=0 inputs
 
 Its inputs are produced by, for every dump in `dumps/`:
 
@@ -53,7 +55,9 @@ EST = os.environ.get("CURVE_EST", "_trunc")  # estimator suffix of the inputs
 # every x (thin, the 4lv width control, 7lv). A net at another width is kept as
 # the width control and drawn apart, never averaged into the trace.
 WIDTH = int(os.environ.get("CURVE_WIDTH", 24))
-OUT = "results/fair_fight/input_architecture_curve"
+# The canonical curve is the `_trunc` one; any other estimator suffix (pruning,
+# `_trunc_gevp0-1` for the t0 = 0 GEVP) writes beside it under its own name.
+OUT = "results/fair_fight/input_architecture_curve" + ("" if EST == "_trunc" else EST)
 SATURATED = 0.90  # combined classical A₀ at or above which a point is excluded
 # The slim figure: the three-trace curve reduced to the two traces the claim is
 # made of (classical GEVP, trained GELT) and the one difference that states it.
@@ -69,11 +73,30 @@ SLIM = os.environ.get("CURVE_SLIM", "0") == "1"
 CHAIN = {
     "thin": ("thin", "thin", "published"),
     "4lv": ("4lv", "published", "deep"),
-    "7lv": ("7lv", "deep", "full"),
+    # The rung beyond 7lv is the 21-operator arm the readings were registered
+    # against, under the name it has carried since `full` grew to 35 operators.
+    "7lv": ("7lv", "deep", "full21"),
 }
-OFFCHAIN = {"4lv+5sh": "shapes_sm", "7lv+3sh": "full"}
+OFFCHAIN = {"4lv+5sh": "shapes_sm", "7lv+3sh": "full21", "7lv+5sh": "full"}
 ENSEMBLES = ("run5", "ens1")
 COLOR = {"classical": "#D55E00", "trained": "#0072B2", "random": "#888888"}
+
+
+def _row(res):
+    """A fair-fight output's row, with a pre-redefinition `full` renamed.
+
+    `su2_fair_fight.py`'s `full` was 7 levels × 3 shapes (21 operators) until
+    2026-10-02 and is 7 levels × 5 shapes (35) since; the old arm is `full21`.
+    An output written before carries the 21 operators under the old name. The
+    row stores each arm's labels, so which arm it is can be read rather than
+    assumed from the file's date.
+    """
+    row = torch.load(res, weights_only=False)["rows"][0]
+    if len(row.get("labels", {}).get("full", [])) == 21 and "full21" not in row["arms"]:
+        for key in ("arms", "delta", "labels", "gevp"):
+            if "full" in row.get(key, {}):
+                row[key]["full21"] = row[key].pop("full")
+    return row
 
 
 def manifest():
@@ -107,7 +130,7 @@ def manifest():
             "trace": "random" if rnd else "trained",
             "seed": int(m.group(1)) if m else int(meta.get("init_seed", 0)),
             "width": width,
-            "row": torch.load(res, weights_only=False)["rows"][0],
+            "row": _row(res),
         })
     return out
 
@@ -291,7 +314,9 @@ def figure(pts, comb, delta, resolvable):
         v = comb_of(name, "classical")
         if v:
             i = chain.index("4lv" if name.startswith("4lv") else "7lv")
-            a.errorbar([i + 0.26], [v[0]], yerr=[v[1]], fmt="^", ms=9, mfc="none",
+            # the two 7lv shape points would otherwise sit on top of each other
+            dx = 0.39 if name == "7lv+5sh" else 0.26
+            a.errorbar([i + dx], [v[0]], yerr=[v[1]], fmt="^", ms=9, mfc="none",
                        color=COLOR["classical"], label=f"classical, {name}")
     a.legend(fontsize=8, loc="lower right")
     a.set_ylabel(r"$A_0$ — ground-state overlap")
