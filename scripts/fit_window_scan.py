@@ -92,7 +92,10 @@ the numbers printed above them.
 Offline, seconds, no GPU: reads the tracked ``dumps/*_test_obars.pt``.
 
 Run:
-    python scripts/fit_window_scan.py [dump.pt ...] [--windows=2-7,3-7,2-6]
+    python scripts/fit_window_scan.py [dump.pt ...] [--windows=2-7,3-7,2-6] [--block=100]
+
+--block= overrides the dump's jack_block (a 40k-config high-statistics dump from
+scripts/high_stat_eval.py needs ~100: its meta carries 10 → 4000 blocks).
 """
 
 import math
@@ -108,7 +111,7 @@ import torch  # noqa: E402
 # Refuse a flag this script does not read, before anything else sees argv: an
 # unrecognised --name=value would otherwise run the defaults while the command
 # line claimed otherwise (the probe's validate_argv discipline).
-_KNOWN_FLAGS = ("--windows=",)
+_KNOWN_FLAGS = ("--windows=", "--block=")
 _bad = [a for a in sys.argv[1:] if a.startswith("--") and not a.startswith(_KNOWN_FLAGS)]
 if _bad:
     raise SystemExit(f"unknown flag(s) {_bad}; known: {list(_KNOWN_FLAGS)}")
@@ -137,6 +140,7 @@ WINDOWS = (
 if REFERENCE not in WINDOWS:
     WINDOWS = [REFERENCE] + WINDOWS  # every row is read against it
 
+_BLOCK = next((int(a.split("=", 1)[1]) for a in sys.argv[1:] if a.startswith("--block=")), None)
 _POSITIONAL = [a for a in sys.argv[1:] if not a.startswith("--")]
 DEFAULT_DUMPS = [
     "dumps/best_glueball_gelt_sm0-2-4-6_test_obars.pt",
@@ -153,7 +157,7 @@ PUBLISHED_DMEFF1 = {"run5": (-0.028, 0.007), "ens1": (-0.038, 0.008)}
 PUBLISHED_TOL = 1.5e-3  # the printed rounding, with room for the 4e-7 drift
 # A custom run must not overwrite the canonical output.
 OUT = "results/glueball/fit_window_scan" + (
-    "_custom" if (_flag or _POSITIONAL) else "") + ".pt"
+    "_custom" if (_flag or _POSITIONAL or _BLOCK) else "") + ".pt"
 
 FIT_KEYS = ["m_g", "A0_g", "m_p", "A0_p", "dm", "dA0"]
 MEFF_KEYS = ["meff1_g", "meff2_g", "meff1_p", "meff2_p", "mfit_g", "mfit_p",
@@ -226,7 +230,7 @@ def scan_dump(path):
     meta = blob.get("meta", {})
     t0 = int(meta.get("gevp_t0", 1))
     td = t0 + 1 if fgo.GEVP_TD is None else fgo.GEVP_TD
-    jb = int(meta.get("jack_block", 10))
+    jb = _BLOCK or int(meta.get("jack_block", 10))
     B, Nt = gelt_obar.shape
     n_blk = -(-B // jb)
     print(f"── {os.path.basename(path)} ({_tag(path)}): {B} test configs × Nt = {Nt}, "
