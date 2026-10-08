@@ -40,6 +40,8 @@ Environment overrides (the SAC_* knobs of su2_attention_correlator also apply:
 SAC_N_EVAL, SAC_SEED, SAC_CHUNK, SAC_KEEP, SAC_DEVICE):
     SAD_RANDOM_SEEDS=5   number of random initialisations (seeds RANDOM_SEED + k).
     SAD_SMOKE=1          tiny lattice, random links, random nets only.
+    SAD_NETS=a,b         run only these networks (names as in the dump).
+    SAD_OUT=<path>       output file.
 
 Writes ``dumps/su2_attention_series.pt`` (≈ 0.3 GB at the defaults).
 """
@@ -60,13 +62,19 @@ tg = sac.tg
 SMOKE = sac.SMOKE
 N_RANDOM = int(os.environ.get("SAD_RANDOM_SEEDS", 5))
 BETA = sac.BETAS[0]
-OUT = ("dumps/su2_attention_series_smoke.pt" if SMOKE
-       else "dumps/su2_attention_series.pt")
+OUT = os.environ.get("SAD_OUT") or (
+    "dumps/su2_attention_series_smoke.pt" if SMOKE
+    else "dumps/su2_attention_series.pt")
+# SAD_NETS=trained_ens0,random_s0 restricts the run to those networks (e.g. to
+# add one net to an existing dump: su2_attention_analysis.py merges dumps of the
+# same ensemble). Empty = all.
+ONLY = [n for n in os.environ.get("SAD_NETS", "").split(",") if n]
 
 # The three networks behind the chapter-5 headline, one per training ensemble.
 # A missing checkpoint is skipped with a warning rather than aborting the run.
 TRAINED_CKPTS = {} if SMOKE else {
-    f"trained_ens{k}": tg.CHECKPOINT.replace(".pth", "" if k == 0 else f"_ens{k}.pth")
+    f"trained_ens{k}": tg.CHECKPOINT if k == 0
+    else tg.CHECKPOINT.replace(".pth", f"_ens{k}.pth")
     for k in (0, 1, 2)
 }
 
@@ -118,17 +126,23 @@ def main():
           f"seed {sac.ENSEMBLE_SEED} | {N_RANDOM} random inits")
     nets = {}
     for name, path in TRAINED_CKPTS.items():
+        if ONLY and name not in ONLY:
+            continue
         if os.path.exists(path):
             nets[name] = sac.build_model(ckpt=path)
             print(f"  {name}: {path}")
         else:
             print(f"  ** {name}: no checkpoint at {path} — skipped **")
     for k in range(N_RANDOM):
+        if ONLY and f"random_s{k}" not in ONLY:
+            continue
         nets[f"random_s{k}"] = sac.build_model(seed=sac.RANDOM_SEED + k)
+    if not nets:
+        raise SystemExit(f"no network to run (SAD_NETS={ONLY})")
     taps = {name: ResidualTap(m) for name, m in nets.items()}
     # Same ℓ = |Δ|₁ table as su2_attention_correlator.main (real dtype: α is a
     # real softmax, a complex weight would promote the reduction).
-    offsets = nets["random_s0"].gemhsa_models[0].offsets
+    offsets = next(iter(nets.values())).gemhsa_models[0].offsets
     dist = torch.tensor([sum(abs(c) for c in o) for o in offsets],
                         dtype=torch.float32, device=sac.device)
 
@@ -182,7 +196,7 @@ def main():
                             + ["readout"],
             "checkpoints": {n: p for n, p in TRAINED_CKPTS.items() if n in nets},
             "random_seeds": {f"random_s{k}": sac.RANDOM_SEED + k
-                             for k in range(N_RANDOM)},
+                             for k in range(N_RANDOM) if f"random_s{k}" in nets},
             "smoke": SMOKE,
         },
     }

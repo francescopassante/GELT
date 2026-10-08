@@ -32,7 +32,9 @@ does every statistic on CPU, in minutes:
   number for (trained_ens0, random_s0), which must reproduce the original
   +0.286(56) since random_s0 is the original random arm's seed.
 
-    ../GELT/.venv/bin/python scripts/su2_attention_analysis.py [dump] [--block=10]
+    ../GELT/.venv/bin/python scripts/su2_attention_analysis.py [dump[,dump…]] [--block=10]
+
+Several comma-separated dumps of the same ensemble are merged network-wise.
 
 Writes ``results/attention/su2_attention_analysis.pt``.
 """
@@ -273,8 +275,31 @@ def legacy(blob):
             "dA0_err": dd["dA0_err"] if dd else float("nan")}
 
 
+def load_merged(paths):
+    """One blob from comma-separated dumps of the SAME ensemble (nets merged).
+
+    The thin-link level of the classical basis is a plaquette sum over the raw
+    configurations, so two dumps of the same ensemble agree on it bit-exactly.
+    """
+    blobs = [torch.load(p, weights_only=False) for p in paths.split(",")]
+    blob = blobs[0]
+    for other in blobs[1:]:
+        if not torch.equal(other["classical"][0], blob["classical"][0]):
+            raise SystemExit("dumps are not of the same ensemble (thin plaquettes differ)")
+        clash = set(other["nets"]) & set(blob["nets"])
+        if clash:
+            raise SystemExit(f"network(s) in more than one dump: {sorted(clash)}")
+        blob["nets"].update(other["nets"])
+        blob["meta"]["checkpoints"].update(other["meta"].get("checkpoints", {}))
+        blob["meta"]["random_seeds"].update(other["meta"].get("random_seeds", {}))
+    # Fixed order: trained by ensemble, then random by seed.
+    blob["nets"] = dict(sorted(blob["nets"].items(),
+                               key=lambda kv: (not kv[0].startswith("trained"), kv[0])))
+    return blob
+
+
 def main():
-    blob = torch.load(DUMP, weights_only=False)
+    blob = load_merged(DUMP)
     res, prep, B, Nt = run(blob)
     nets = list(blob["nets"])
     trained = [n for n in nets if n.startswith("trained")]
