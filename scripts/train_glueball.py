@@ -196,8 +196,24 @@ GEMHSA_LAYERS = 4  # the value path is bilinear, so loop degree doubles per
 #                    branched staple content is far deeper within the same
 #                    radius-6 support.
 NHEAD = 2  # 2 heads: still tiny (~5k params) but feeds head-specialization study
-D_QKV = 6  # even (RoPE) and ≥ 2·D = 6 so every spatial axis gets a real rotation
-#            (caveat 3: pair_axis = p % D leaves axes unrotated when d_qkv < 2D)
+D_QKV = _env_int("GLUEBALL_D_QKV", 6)  # even (RoPE) and ≥ 2·D = 6 so every
+#            spatial axis gets a real rotation (caveat 3: pair_axis = p % D
+#            leaves axes unrotated when d_qkv < 2D). Overridable only so the
+#            frozen-α arm below can be matched in parameters.
+# The M1 ablation on the physics task (thesis_record §5.3: M1 had paid on a
+# constructed target and had never been tested on the 0⁺⁺). "frozen" replaces
+# the input-dependent softmax score by a softmax over a learned (head, offset)
+# logit table — same transport, same value path, still convex
+# (gelt/blocks.py GEMHSA docstring). It drops Q_s, K and RoPE, so at d_qkv 6 it
+# has 9545 real DOFs against 15693; d_qkv 10 gives 14793 (0.94×), the same
+# matching rule as the M1 probe's `frozen_matched` (probe_common.ARMS).
+ALPHA_MODE = _env_str("GLUEBALL_ALPHA_MODE", "softmax").lower()
+if ALPHA_MODE not in ("softmax", "frozen"):
+    raise SystemExit(f"GLUEBALL_ALPHA_MODE must be 'softmax' or 'frozen' (got {ALPHA_MODE!r})")
+if ALPHA_MODE != "softmax" and ARCH != "gelt":
+    raise SystemExit("GLUEBALL_ALPHA_MODE applies to GLUEBALL_ARCH=gelt only")
+if D_QKV % 2 or (ALPHA_MODE == "softmax" and D_QKV < 6):
+    raise SystemExit(f"d_qkv must be even and ≥ 6 with RoPE (got {D_QKV})")
 # Residual-stream width. It must be >= in_channels = 3·len(INPUT_SMEAR_LEVELS),
 # so a ladder longer than 5 levels needs it raised (--d-model=24) — which widens
 # the net and stops the comparison against Run 5 being matched-parameter. A
@@ -373,6 +389,8 @@ INPUT_SMEAR_LEVELS = _env_levels("GLUEBALL_INPUT_SMEAR_LEVELS", (0, 2, 4, 6))
 # stem, so a GELT and an L-CNN run can never collide.
 ARCH_TAG = (
     ("" if D_MODEL == 16 else f"_d{D_MODEL}")
+    + ("" if ALPHA_MODE == "softmax" else f"_{ALPHA_MODE}")
+    + ("" if D_QKV == 6 else f"_q{D_QKV}")
     if ARCH == "gelt"
     else (
         ""
@@ -554,6 +572,7 @@ def _build_model():
         qk_init_scale=QK_INIT_SCALE,
         mlp_zero_init=False,
         d_model=D_MODEL,
+        alpha_mode=ALPHA_MODE,
         grad_checkpoint=GRAD_CHECKPOINT,
         # 3 spatial-plaquette channels per smearing level (see INPUT_SMEAR_LEVELS).
         in_channels=3 * len(INPUT_SMEAR_LEVELS),
@@ -781,7 +800,8 @@ def main():
         )
     else:
         print(
-            f"GELT(D=3, R={R}, layers={GEMHSA_LAYERS}, d_qkv={D_QKV}, d_model={D_MODEL}) | "
+            f"GELT(D=3, R={R}, layers={GEMHSA_LAYERS}, d_qkv={D_QKV}, d_model={D_MODEL}, "
+            f"alpha={ALPHA_MODE}) | "
             f"input smear levels {list(INPUT_SMEAR_LEVELS)} | params {n_params:,} "
             f"({n_real:,} real)"
         )
@@ -1032,6 +1052,8 @@ def main():
                 "ensemble_seed": ENSEMBLE_SEED,
                 "init_seed": INIT_SEED,
                 "d_model": D_MODEL,
+                "d_qkv": D_QKV,
+                "alpha_mode": ALPHA_MODE,
                 "random_init": RANDOM_INIT,
                 # The architecture that produced gelt_obar. The key name stays
                 # `gelt_obar` whatever ARCH is: every offline consumer
