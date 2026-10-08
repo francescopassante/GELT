@@ -264,7 +264,15 @@ def build_model(ckpt=None, seed=None):
         in_channels=3 * len(tg.INPUT_SMEAR_LEVELS),
     ).to(device)
     if ckpt is not None:
-        model.load_state_dict(torch.load(ckpt, map_location=device, weights_only=True))
+        # Checkpoints older than _OffsetGather carry no `_nbr_idx_inv`: a
+        # geometric index buffer the model builds for itself. That key alone may
+        # be missing; everything else loads strictly (as in cubic_projection.py).
+        sd = torch.load(ckpt, map_location=device, weights_only=True)
+        missing, unexpected = model.load_state_dict(sd, strict=False)
+        missing = [k for k in missing if not k.endswith("._nbr_idx_inv")]
+        if missing or unexpected:
+            raise SystemExit(f"{ckpt}: state_dict mismatch — missing {missing}, "
+                             f"unexpected {unexpected}")
     # The per-layer attention stash is opt-in (it retains a
     # (B, H, n_off, *Λ) tensor per layer); this study reads it.
     model.set_introspection(store_attention=True)
