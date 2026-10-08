@@ -8,15 +8,18 @@ does every statistic on CPU, in minutes:
   sample, A₀ = A(1 + e^{−m Nt})/C(0), GEVP projection at (t0, td) = (1, 2) with
   v₀ recomputed in every replica, blocked jackknife with b = 10. Network bases
   (24 attention channels, 16 residual channels per stage) are standardised and
-  the GEVP truncates the directions of C(t0) below 1e-4 · s_max (the fair-fight
-  convention for bases larger than four); the classical 4-level basis goes
-  through the same projection (the chapter checked truncation and floor agree
-  there to the third decimal).
+  the GEVP truncates the directions of C(t0) below eps · s_max, eps = 1e-2 by
+  default (--eps=). The fair fight's 1e-4 fails here: the trained attention
+  channels are nearly collinear, C(1) spans four decades, and at 1e-4 the GEVP
+  picks directions where C(1) and C(2) are both tiny and their ratio is noise —
+  the projection then has C(1)/C(0) ≈ 0.15 against 0.65 for its own best
+  channel. The variational check below flags exactly that. The classical
+  4-level basis goes through the same projection.
 * **Arms per network**: its own output Ō; the attention field (all 24 channels,
   and per block, 6 channels); the residual stream per stage (Re Tr W_c / N,
   16 channels, stage ℓ = stream entering block ℓ, last = entering the readout).
   Each basis is quoted by its GEVP projection and by its best single channel
-  (chosen once on the full sample).
+  (largest C(1)/C(0), chosen once on the full sample).
 * **Trained − random** with two separate errors: (conf) the blocked jackknife
   of the difference of the means on the shared configurations, and (init) the
   spread between networks, √(s²_tr/n_tr + s²_rnd/n_rnd). The second is the one
@@ -62,7 +65,7 @@ BLOCK = int(_FLAGS.get("block", 10))
 WINDOW = (2, 7)
 M_RANGE = (0.05, 1.5)
 T0, TD = 1, 2
-EPS = 1e-4
+EPS = float(_FLAGS.get("eps", 1e-2))
 OUT = os.environ.get("SAA_OUT") or (
     "results/attention/su2_attention_analysis"
     + ("_smoke" if "smoke" in os.path.basename(DUMP) else "") + ".pt")
@@ -148,22 +151,18 @@ def prepare(specs, B):
         basis = standardize(basis)
         proj = project(basis)
         entry = {"basis": basis, "sig": sigma_of(proj, B)}
+        Cp = connected_correlator(proj)
+        entry["rq_gevp"] = (Cp[1] / Cp[0]).item()
         if basis.shape[0] > 1:
-            best, best_a0 = None, -np.inf
-            for i in range(basis.shape[0]):
-                C = connected_correlator(basis[i])
-                if C[0] <= 0:
-                    continue
-                try:
-                    _, a0 = fit(basis[i], None)
-                except Exception:  # noqa: BLE001 — a channel that cannot be fitted is skipped
-                    continue
-                if np.isfinite(a0) and a0 > best_a0:
-                    best, best_a0 = i, a0
-            if best is not None:
-                single = basis[best]
-                entry["single_idx"] = best
-                entry["single_sig"] = sigma_of(single, B)
+            # Best single channel by the Rayleigh quotient C(1)/C(0) — the
+            # network's own criterion, read off the correlator alone. Selecting
+            # by fitted A₀ instead rewards pathological fits (A₀ > 1).
+            rq = torch.stack([(c[1] / c[0]) for c in
+                              (connected_correlator(basis[i]) for i in range(basis.shape[0]))])
+            best = int(rq.argmax())
+            entry["single_idx"] = best
+            entry["rq_single"] = rq[best].item()
+            entry["single_sig"] = sigma_of(basis[best], B)
         prep[key] = entry
     return prep
 
@@ -203,6 +202,8 @@ def run(blob):
             "A0": full[2 * j + 1].item(), "A0_err": err[2 * j + 1].item(),
             "A0_samples": samples[:, 2 * j + 1],
             "n_ops": prep[k]["basis"].shape[0],
+            "rq": prep[k]["rq_gevp" if kind == "gevp" else "rq_single"],
+            "rq_single": prep[k].get("rq_single"),
         }
     return res, prep, B, Nt
 
@@ -365,6 +366,13 @@ def main():
                 for r in randoms))
 
     print("\nchecks:")
+    # Variational check: a GEVP projection whose Rayleigh quotient is below that
+    # of its own best member has picked a noise direction of C(t0).
+    bad = [f"{k[0]}:{k[1]} ({v['rq']:.3f} < {v['rq_single']:.3f})"
+           for k, v in res.items() if k[2] == "gevp" and v.get("rq_single") is not None
+           and v["rq"] < v["rq_single"] - 0.02]
+    print(f"  variational check, GEVP C(1)/C(0) below its best channel: "
+          + (", ".join(bad) if bad else "none"))
     nulls = {}
     for n in nets:
         if (n, "attn") in prep:
