@@ -45,8 +45,11 @@ and are kept as they were.
 | L7 | The learned operator has the classical mass and more ground-state weight than the 4-level GEVP on the same inputs: Δm_eff(1) = −0.028 ± 0.007 / −0.038 ± 0.008, ΔA₀ = +0.078 ± 0.022 (3.6σ) | ESTABLISHED, **replicated on a third ensemble**: three-ensemble ΔA₀ = +0.086 ± 0.017 (stat) ± 0.018 (window) = 3.4σ with the window systematic; Δm_eff(1) = −0.037 ± 0.004; ensembles consistent (p = 0.71); a fully correlated fit gives +0.049 ± 0.017 | §3.2 |
 | L7′ | The learned operator is a 0⁺⁺ (A₁⁺⁺) operator, not only gauge invariant at zero momentum | ESTABLISHED to 98%: 1.2–2.1% of C(0) outside A₁⁺⁺ over the five trained nets (mostly Eg + T2g), untrained nets 21–83% by init seed (Eg); L8 on the projected 7-level nets: +0.081 ± 0.020 vs `deep`, +0.027 ± 0.023 vs `full`; projecting changes A₀ by +0.005 ± 0.005 (4-level, three ensembles), projected headline ΔA₀ = +0.088 ± 0.016 ± 0.016 (3.9σ); between the pre-registered readings R1 and R2, adoption of the projected headline OPEN | prof_notes §S4 |
 | L8 | …and against stronger classical bases | **QUALIFIED**: +0.095 ± 0.021 vs the input-matched 7-level arm, only +0.038 ± 0.027 (1.4σ) once loop shapes are added; A₀ is saturated there. At (t₀, t_d) = (0, 1), where `shapes` / `shapes_sm` pass the gate: +0.085 ± 0.023 vs `deep`, +0.034 ± 0.014 vs `full`, and the **4-level** net is behind the shape bases (−0.034 ± 0.010 vs `full`) | §3.3 |
+| L8′ | On its **own training loss** the 4-level net is behind the shape bases on the same four levels (ΔL = +0.021 ± 0.003 vs `shapes_sm`, +0.028 ± 0.003 vs `full`, three ensembles, classical arm cross-fitted) and adds nothing to them (−0.0003 ± 0.0004); the 7-level net ties `full` (−0.002 ± 0.004) and adds −0.004 ± 0.001 | ESTABLISHED (2026-11-12, offline) | §3.8 |
+| L8″ | The true ground-state overlap of the 4-level net is ≈ 0.88 (fit-free, 40k configurations), not the 0.93 a one-state fit on [2,7] reads: "A₀ saturates above ≈ 0.9" is the estimator, not the operators | ESTABLISHED for one net | §3.8 |
 | L9 | The advantage is learned, not architectural | ESTABLISHED (untrained nets below the GEVP at every input depth; decomposition sign flips) | §3.4 |
-| L10 | What was learned: ~80% of the out-of-span content is rectangular loops, ~2.5% of the norm² is outside every classical operator and carries ΔA₀ = +0.021 ± 0.009 | ESTABLISHED (estimator-dependent between 55% and 80%) | §3.5 |
+| L10 | What was learned: ~80% of the out-of-span content is rectangular loops, ~2.5% of the norm² is outside every classical operator | ESTABLISHED (estimator-dependent between 55% and 80%) | §3.5 |
+| L10′ | …and that ~2.5% carries ΔA₀ = +0.021 ± 0.009 | **RETRACTED** (2026-10-21): a fitted-mass artifact (m_G − m_P = +0.010 ± 0.004); at a common reference mass removing it gives −0.011 ± 0.005 (35-op `full`), −0.008 ± 0.005 (`full21`) | §3.5 |
 | L11 | "The classical smearing ladder is a converged geometric series" | RETRACTED (tail measured at ≈ 4%, non-monotone) | §3.5 |
 | L12 | GELT's glueball result is initialisation-robust | ESTABLISHED at n = 3 (ens0: +0.066, +0.067, +0.076) | §3.6 |
 | L13 | The attention map is a gauge-invariant lattice operator with a mass tracking ξ | ESTABLISHED, but it is close to a theorem — the random net does it too | §4.1 |
@@ -335,13 +338,66 @@ inputs match `deep`.
 
 **Naming, 2026-10-02.** In `su2_fair_fight.py` this 21-operator arm is now
 `full21`, and `full` is 7 levels × the five shapes of `shapes_sm` (35
-operators, a superset of every arm). **Every `full` in this record is
-`full21`**; no 35-operator number exists yet — levels 8, 12, 16 × {2×3, 3×3}
-are in no obars cache and need one GPU pass per ensemble. Offline preview on
-the 29 operators already cached (`shapes_sm` ∪ `full21`, truncated, full
-sample, no jackknife), A₀ at (0,1) on run5 / ens1 / ens2: 0.962 / 1.030 /
-0.983 against `shapes_sm` 0.947 / 1.025 / 0.965 and `full21` 0.939 / 1.022 /
-0.966; at (1,2) the union falls back on ens1 and ens2.
+operators, a superset of every arm). **Every `full` elsewhere in this record
+is `full21`.**
+
+**The 35-operator `full` at (t₀, t_d) = (0, 1)** (2026-10-02, V100 pass for the
+six missing operators, then `SFF_BASES=1 SFF_TRUNCATE=1 SFF_T0=0`; outputs
+`su2_fair_fight_full35_{4lv,7lv}_trunc_gevp0-1.pt`). No fallback on any
+ensemble; 14 of 35 directions kept (cond C(t₀) ≈ 1.8e10); the superset
+ordering holds on every ensemble.
+
+| arm | classical A₀ (run5 / ens1 / ens2) | 4-level GELT, three ensembles | 7-level GELT, run5 + ens1 |
+|---|---|---|---|
+| `shapes_sm` (20) | 0.947 / 1.025 / 0.965 | −0.037 ± 0.012 (3.2σ) | +0.028 ± 0.011 (2.6σ) |
+| `full21` (21) | 0.940 / 1.022 / 0.966 | −0.034 ± 0.010 (3.5σ) | +0.034 ± 0.014 (2.4σ) |
+| **`full` (35)** | 0.965 / 1.034 / 0.999 | **−0.060 ± 0.015 (4.0σ)** | **+0.015 ± 0.010 (1.5σ)** |
+
+Per ensemble, 4-level: −0.062 ± 0.029, −0.020 ± 0.032, −0.075 ± 0.021;
+7-level: −0.010 ± 0.016, +0.032 ± 0.013. Three things. (i) Levels 8–16 on the
+two large shapes are not nothing: `full` is above `shapes_sm` by 0.018 / 0.009
+/ 0.034, which qualifies (ii) of the paragraph below ("smearing levels 8–16
+add nothing" was `full21` against `shapes_sm`, i.e. without those six
+operators). (ii) The 7-level net's lead over the strongest classical basis
+drops from 2.4σ to 1.5σ and changes sign on run5: against a basis with its own
+inputs plus loop shapes it is **level, not ahead**. (iii) The 4-level net is
+behind on all three ensembles.
+
+**Not in-sample optimism.** Half-split (v₀ from one half of the test split,
+scored on the other, swapped; one-off check, same convention as the one that
+cleared `shapes_sm` and `full21`, whose −0.035 ± 0.013 and −0.033 ± 0.011 it
+reproduces): 4-level GELT − `full` = **−0.054 ± 0.016 (3.5σ)** (−0.067 ±
+0.030, −0.020 ± 0.034, −0.061 ± 0.022), 7-level **+0.012 ± 0.015 (0.8σ)**
+(−0.015 ± 0.023, +0.032 ± 0.020); classical A₀ 0.970 / 1.033 / 0.985. So the
+in-sample numbers above carry ≈ 0.005 of optimism, not the effect. **At (1,2)
+the 35-operator arm is not a measurement**: the same half-split reads A₀ =
+0.72 ± 0.74, 0.18 ± 0.12, 0.54 ± 1.05, as `shapes_sm` does there. **The caveat
+that stays:** the classical A₀ is 0.97–1.03, inside the saturated region where
+this record says not to rank — read the 4-level result as "behind a basis with
+loop shapes at every smearing level", the 7-level one as "level with it".
+
+**The decomposition does not move** (`operator_decomposition.py`, 7-level net,
+`--basis=…:deep --shape-span=…:full`, now the 35-operator span; artifacts
+`operator_decomposition_deep_7lv_full35`, `…_rnd_fitok_full35`): the fraction
+of r's norm² inside the shape span is 0.766 ± 0.004 (run5) and 0.826 ± 0.004
+(ens1), against 0.758 and 0.819 on the 21-operator span — §3.5's "80%" stands,
+and the six added operators hold under one point of what the network found.
+Untrained nets: 0.004–0.009, as before. The canonical `…_deep_7lv` artifacts
+are the 21-operator ones and are reproduced exactly by `--shape-span=…:full21`.
+
+**P1 against the 35-operator `full`** (2026-10-03, `p1_meff_strong_basis.py`,
+whose arms are now `published`, `deep`, `full21`, `full`; the `full21` rows
+reproduce the old `full` rows digit for digit). 7-level GELT − `full`,
+Δm_eff(1) [Δm_eff(2)], run5 + ens1: (0,1) half-split **+0.001 ± 0.003 (+0.4σ)**
+[+0.003 ± 0.005], (0,1) in-sample +0.003 ± 0.003 (+1.1σ) [+0.004 ± 0.004];
+(1,2) half-split −0.15 ± 0.18 (not a measurement), (1,2) in-sample
++0.006 ± 0.005 (run5 alone: ens1 is ±0.06). |Δ| < 2σ everywhere → by the P1
+reading, "matches" — level with the 35-operator basis on the unsaturated metric
+too, sign now positive. 4-level GELT − `full`, three ensembles, (0,1)
+half-split: **+0.027 ± 0.004 (6.8σ)**, behind. The row was added after the
+readings were fixed for the 21-operator arm. Thesis: ch. 5 `tab:p1_meff`, row
+`full35` (the thesis keeps `full` for the 21-operator arm and calls this one
+`full35`).
 
 | comparison (combined, two ensembles) | ΔA₀ |
 |---|---|
@@ -433,27 +489,39 @@ At every input depth the untrained net is **below** the classical GEVP (last
 table), so the advantage needs training. The decomposition (§3.5) sharpens it:
 for the trained net, deleting its out-of-span part costs the whole advantage;
 for an untrained net, deleting it *helps* (ΔA₀(net − P) = +0.097 ± 0.021
-trained, −0.091 ± 0.042 untrained, four converged seeds).
+trained, −0.091 ± 0.042 untrained, four converged seeds). The sign flip holds
+at a common reference mass too (2026-10-21, §3.5): +0.123 ± 0.011 trained,
+−0.106 ± 0.018 untrained (mean ± s.e.m. over the four nets, each between
+−0.06 and −0.14); these are the values of the thesis figure
+(`fig:decomposition_rnd`, regenerated 2026-10-22).
 
-### 3.5 What the network found — ESTABLISHED, one sentence retracted
+### 3.5 What the network found — ESTABLISHED, two sentences retracted
 
 Operators are vectors with inner product C_ab(0), so O_GELT = P + r with P the
 projection onto a classical span is exact, not fitted. P is the strongest
 possible classical opponent for *this* operator, so ΔA₀(GELT − P) is a lower
 bound on the advantage over the span.
 
-| span (7-level net, combined) | norm² outside | Z_r/Z_G | ΔA₀(GELT − P) |
-|---|---|---|---|
-| 4 levels | 0.211 | 0.229 | +0.157 ± 0.027 |
-| 7 levels (`deep`) | 0.128 | 0.146 | +0.097 ± 0.021 |
-| `full` (21 ops) | 0.025 | 0.013 | +0.021 ± 0.009 (2.3σ) |
+ΔA₀(GELT − P) is read two ways: from two free-mass single-state fits (each
+operator its own m, the original column), and at the common m_ref = m_G that
+defines Z_r/Z_G (`a0ref_*` in `operator_decomposition.py`, added 2026-10-21).
+Only the second keeps Z_G = Z_P + Z_r additive, and it is the one the thesis
+quotes.
+
+| span (7-level net, combined) | norm² outside | Z_r/Z_G | ΔA₀(GELT − P), free-mass fits | ΔA₀(GELT − P), common m_ref |
+|---|---|---|---|---|
+| 4 levels | 0.211 | 0.229 ± 0.009 | +0.157 ± 0.027 | +0.185 ± 0.015 |
+| 7 levels (`deep`) | 0.128 | 0.146 ± 0.007 | +0.097 ± 0.021 | +0.123 ± 0.011 |
+| `full21` (21 ops) | 0.025 | 0.013 ± 0.004 | +0.021 ± 0.009 (2.3σ) | −0.008 ± 0.005 (1.6σ) |
+| `full` (35 ops, the thesis row) | 0.024 | 0.011 ± 0.004 | +0.022 ± 0.009 (2.5σ) | −0.011 ± 0.005 (2.3σ) |
 
 - **Mechanism: constructive interference.** `r` alone is a poor operator
   (A₀ ≈ 0.4); it wins by adding coherently to P, not by being good.
 - **Content**: 80% of `r` against `deep` lies in span{`full`} — rectangular
   loops the network rediscovered (55–60% if `full` is truncated to the
   directions the estimator trusts). The rest, ~2.5% of the norm², is outside
-  every classical operator in the repo and still carries +0.021 ± 0.009.
+  every classical operator in the repo: content the network built, with no
+  resolved effect on A₀ (second RETRACTED bullet below).
 - **Distance from the span is architectural, direction is learned**: untrained
   nets are 16–74% outside, the trained one 12.8%; 0.3% of an untrained residual
   is loop-shaped against 80% of the trained one. Quote Z_r/Z_G and the sign
@@ -464,6 +532,31 @@ bound on the advantage over the span.
 - **RETRACTED**: "the classical ladder is a converged geometric series whose
   tail is worth ≈ 2%". Rungs 8, 12, 16 measured 1.2%, 2.1%, 1.0%; the 4 → 7
   level span absorbs 40% of the learned out-of-span norm.
+- **RETRACTED (2026-10-21)**: "the ~2.5% outside every classical operator
+  carries ΔA₀ = +0.021 ± 0.009" (+0.022 ± 0.009 against the 35-operator
+  `full`). That is a difference of two free-mass fits, and P's fit has the
+  lower mass: m_G − m_P = +0.009 ± 0.004 (`full21`) / +0.010 ± 0.004 (`full`),
+  almost all of it on ens1 (+0.013 / +0.015 ± 0.005), so P extrapolates to a
+  lower amplitude at Δ = 0. At the common m_ref, removing r leaves A₀
+  unchanged or slightly better: −0.008 ± 0.005 (`full21`), −0.011 ± 0.005
+  (`full`; run5 −0.013 ± 0.007, ens1 −0.010 ± 0.007), and for `full` it moves
+  by < 0.001 over m_ref ∈ m_G ± 0.02 and at m_ref = m_P. This is what the norm
+  and the amplitude predict: with additive amplitudes
+  A₀(G) − A₀(P) ≃ [(2z − f)·A₀(G) − f·A₀(r)]/(1 − f), with z = Z_r/Z_G from
+  C_Gr (exact up to the C_Gr − C_rG noise, which per ensemble is ≈ ±0.009);
+  the combined `full` values f = 0.0243, z = 0.0107, A₀(G) = 1.014,
+  A₀(r) = 0.337 give −0.0114 against −0.0114 measured. The 4-level and `deep`
+  rows survive the same check with larger margins, and so does the untrained
+  sign flip (§3.4). Raised by the supervisor's final review; the thesis now
+  quotes only the common-mass values (ch. 5 `tab:decomposition`,
+  `fig:decomposition_rnd`, conclusions), keeps one sentence on the free-mass
+  +0.022, and no longer claims that the out-of-span piece improves the
+  operator. **Rule**: compare G with P at a common mass; a free-mass
+  ΔA₀(G − P) folds in the fitted-mass difference whenever that is resolved —
+  on all four spans, free − common ≈ (2.8–3.4)·(m_G − m_P), the lever arm of
+  the extrapolation from [2, 7] to Δ = 0. Artifacts:
+  `results/glueball/operator_decomposition_{published,deep,full21,full}_7lv_commonmass_2026-10-21.pt`
+  and `…_deep_7lv_rnd_fitok_commonmass_2026-10-21.pt`.
 
 ### 3.6 Initialisation robustness of the GELT operator — ESTABLISHED (n = 3)
 
@@ -478,6 +571,71 @@ One (β, ξ, L), strong-coupling spatial lattice, no continuum limit; A₀ > 1 o
 ens1 is a fit artifact of a nearly pure operator (report 1 − A₀ with its sign);
 bit-reproducibility of pre-2026-09-08 dumps is gone at the 4e−7 level (the
 smearing rewrite) — five orders below any error bar.
+
+### 3.8 Where the headroom is — ESTABLISHED (2026-11-12, offline)
+
+`python scripts/variational_headroom.py` (20 s; `results/glueball/variational_headroom.txt`).
+Four measurements with no fit window, no fit model and no A₀ estimator.
+
+**(1) The true overlap is ≈ 0.88, and the plateau starts at Δ ≈ 5.** On the 40k
+chain the 4-level ens2 net has cosh m_eff(Δ = 0…7) = 0.3758(12), 0.3472(15),
+0.3385(20), 0.3308(29), 0.3260(38), 0.3187(52), 0.3194(65), 0.3128(83). The
+fit-free purity η(a) = C(a)²/(C(0)C(2a)) → A₀ (a → ∞), corrected for the
+backward-propagating term at m_ref = 0.313, is 0.971(1), 0.948(4), 0.918(9),
+0.891(17), 0.877(27) at a = 1…5. The one-state fit on [2,7] reads 0.9335(53) for
+the same net on the same chain. So §3.3's "above ≈ 0.9 the observable is
+saturated" is a property of that estimator: every operator in this record is
+≈ 10–15% from pure, and the contaminant decays slowly (gap ≈ 0.3 a_t⁻¹, i.e. a
+state near 2m).
+
+**(2) The net is behind on its own loss.** L = −mean[C(1)/C(0), C(2)/C(0)] on the
+test split, the classical arm projected at (0,1) and **cross-fitted** (v from
+the even jackknife blocks, scored on the odd ones, swapped). ΔL = L(net) −
+L(classical), positive = the net is behind:
+
+| | `published` | `deep` | `shapes_sm` | `full` |
+|---|---|---|---|---|
+| 4-level net, three ensembles | −0.045 ± 0.003 | −0.023 ± 0.003 | **+0.021 ± 0.003 (7.9σ)** | **+0.028 ± 0.003 (8.5σ)** |
+| 7-level net, run5 + ens1 | −0.067 ± 0.005 | −0.052 ± 0.004 | −0.007 ± 0.003 | −0.002 ± 0.004 |
+
+`shapes_sm` is 20 operators built from the *same four smearing levels* the
+4-level net is fed. This is the quantity the net was trained to minimise, so
+losing here is not saturation and not the A₀ estimator.
+
+**(3) The net adds nothing to the span.** L(arm ∪ net) − L(arm), cross-fitted:
+4-level net added to `shapes_sm` −0.0003 ± 0.0004, to `full` −0.0006 ± 0.0007;
+7-level net added to `full` −0.0037 ± 0.0014 (2.7σ). For this objective the
+4-level operator is a sub-optimal point *inside* the span of smeared
+rectangles — the loss-level version of §3.5's "it rediscovered rectangular
+loops", and stronger than it.
+
+**(4) Euclidean completeness.** For a span S and probe G,
+η_S(a) = c(a)ᵀC_S(0)⁻¹c(a)/C_GG(2a) with c_i(a) = ⟨O_i(t) G(t ± a)⟩ equals
+⟨G|T^a P_S T^a|G⟩/⟨G|T^{2a}|G⟩: 1 − η is the share of the Euclidean-evolved
+state outside the span, and η_S(a → ∞) is the largest true overlap any operator
+of S can have (`tests/test_headroom.py`, on a known spectrum). At high
+statistics the 4-level `published` basis recovers none of what the net misses
+(span net: 0.971(1), 0.945(4), 0.903(9); span `published` ∪ net: 0.972(1),
+0.946(4), 0.905(9), raw). On the 400-configuration splits `full` ∪ net reads
+0.983(7), 0.958(19) at a = 1, 2 — not distinguishable from the net alone, and
+too noisy at a ≥ 3 to give the 35-operator basis's ceiling. **The missing
+measurement is `full` on a high-statistics chain.**
+
+**Two explanations ruled out the same day.**
+- *"The transport is thin while the plaquettes are smeared, so the loop-doubling
+  step does not close."* `python scripts/hybrid_transport_probe.py` (CPU, 9 s,
+  12 × 6³): the hybrid P_n·T₀P_nT₀† correlates 0.995–0.999 with the clean
+  smeared 1×2 rectangle at zero momentum and loses 0.003–0.010 of C(1)/C(0).
+  Not the bottleneck.
+- *"Train at a longer lag."* In a linear span, moving the GEVP from (0,1) to
+  (0,2), (0,4), (1,2), (1,3) changes the signal-to-noise at Δ = 5 by +0.5…+2.7%
+  at most (table 1 of the script, half-split on the 40k chain); (2,3) is worse.
+  The (0,1) vector is already within 3% of the best the span can do: the span,
+  not the lag, limits a linear method.
+
+**What this leaves.** Either the function class, as gradient descent on the
+Rayleigh loss explores it, stops at rectangles and short of their optimum, or
+the loss does. §11 P11 separates the two.
 
 ---
 
@@ -966,6 +1124,87 @@ the other two stressors on Z₂.
 sentence (item 4) the SU(2) replacement now exists (§2.5, run 2026-09-28): swap
 the Z₂ claim for it, or run `train_gelt.py` on the Z₂ 2×2, 1×3, 2×3, 3×3 loops
 if the Z₂ wording is to stay.
+
+**P11 — transfer-matrix distillation: is it the class or the loss? V100, one
+training (~8 h), then forward-only.** Written 2026-11-12; nothing below has run.
+The identity: with U_t the spatial links of slice t (the Markov state of the
+transfer matrix) and y any observable on other slices,
+g*(U) = E[y(t + a) | U_t = U] = (T^a ŷψ₀)(U)/ψ₀(U), i.e. the multiplication
+operator ĝ* acts on the vacuum as T^a ŷ|0⟩. The regression function of the
+future on the present *is* the Euclidean-evolved operator, as a legitimate
+single-timeslice operator with C_g*(Δ) = C_y(Δ + 2a) — the filter a multilevel
+update buys with nested Monte Carlo, amortised into a function fitted once
+(checked on a known spectrum, `tests/test_headroom.py`). In a linear span it is
+one power-iteration step of C(0)⁻¹C(a), whose ceiling is §3.8's η.
+`scripts/train_distill.py`: teacher = the trained 4-level net, frozen; student
+= the same architecture **started from the teacher's weights** (so the class is
+held fixed and only the objective changes), regressing the teacher's own
+per-site field at t ± 2 onto slice t, block-averaged over 3³ plus the
+zero-momentum error; selection on the validation loss of that objective, the
+start being a candidate. `bash scripts/tmd_batch.sh` (ens2 first: it has the
+high-statistics teacher), readout `scripts/tmd_readout.py`, paired on the test
+split, then `TMD_HS=1` for both nets on one fresh 40k chain.
+*Readings* (also in the readout's docstring, which applies them):
+**R-T1** ΔL(student − teacher) < 0 at ≥ 3σ and Δ cosh m_eff(1), m_eff(2) < 0 at
+≥ 2σ each → the Rayleigh loss, not the class, was the limit; quote ΔL, the
+realised share of the ideal shift m_S(Δ) = m_T(Δ + 4), and η. **R-T2** in
+addition L(`full` ∪ student) − L(`full`) < 0 at ≥ 3σ (the teacher's is −0.0006 ±
+0.0007) → ground-state content outside all 35 classical operators.
+**R-T0** |ΔL| < 2σ → the student is its teacher: the class, as explored from
+that start, does not contain the evolved operator at this lag; the 0⁺⁺ on this
+lattice is exhausted for this architecture and the thesis sentence is "a point
+inside the span of smeared rectangles". One follow-up only (`TMD_LAGS=1`), then
+stop. **R-T−** ΔL > 0 at ≥ 3σ → a validation/test mismatch to understand first.
+Honest prior: R-T0 is as likely as R-T1. Independent of the outcome, the
+forward-only run this record is missing is **`full` on a high-statistics
+chain** (§3.8 (4)): it gives the 35-operator basis's true ceiling η(a → ∞) and
+needs a streaming version of `su2_fair_fight.py`'s basis builder, not written.
+
+**P12 — the Yang–Mills vacuum wavefunctional, learned by force matching. V100,
+one night (`bash scripts/vacuum_batch.sh`, ~10–12 h).** Written 2026-11-18;
+nothing below has run at production size. A new observable, not a 0⁺⁺ rerun:
+the spatial links of one slice are distributed as ψ₀² (to e^{−m·Nt}), and
+∇ log ψ₀² = −∇S_s + E[F_temp | slice] exactly (Lie derivatives, Haar measure;
+`gelt/vacuum.py`). A scalar gauge-invariant net trained so that its Lie
+gradient matches the temporal force on the slice's links converges to the
+exact vacuum — first derivatives only, the existing ensembles only. Three
+things make it a measurement rather than a fit: (i) a **conditional chain**
+with the slice frozen (`frozen=` in the SU(2) sweeps) gives replicas of the
+force, hence an *absolute* error ε = ‖g − E[F|U]‖²/‖E[F|U]‖² with the noise
+removed; (ii) **exact relative weights** ψ₀²(U′)/ψ₀²(U) along configuration
+ladders, by reweighting with Bennett's acceptance ratio — ground truth no
+model saw; (iii) the classical comparators are fitted by the *same* loss in
+closed form (least squares): `dr` (ψ₀² ∝ e^{−β′S_s}, the dimensional-reduction
+form), thin and smeared loop shapes, a Greensite–Olejník-type B·K·B with a
+free radial kernel, and their union `full` (28 operators). The nets are
+residual over `full` with a zero-initialised readout, so a run starts at
+ε(full) and any gain is structure the classical ansatz lacks.
+Pre-flight (local, 8 × 4³, plumbing only): Stein's identity on the slice
+marginal holds at z = −0.2 (z = −174 with the temporal force's sign flipped,
+`tests/test_vacuum.py`); 13% of the temporal force's variance is predictable
+from the slice; the conditional autocorrelation plateaus.
+*Readings* (also in `scripts/vacuum_readout.py`, which applies them):
+**V0** gate — plateau (first − last late point within 2σ) and Stein |z| < 4 on
+the production slices, else nothing is read. **V1** the predictable fraction,
+reported. **V2** ε(dr) … ε(full), reported; 1 − ε(dr) is the share of the
+vacuum score a rescaled 3D Wilson action explains. **V3** per net,
+gain = ε(full) − ε(net + full): **R-V1** > 0 at ≥ 3σ → the network finds vacuum
+structure outside every classical ansatz tested ("substantial" if ≥ 25% of
+ε(full)); **R-V0** |gain| < 2σ → at this resolution the classical ansatz is
+the vacuum as far as this network can tell; **R-V−** < 0 at ≥ 3σ → selection
+did not carry over, understand first. **V4** softmax vs frozen α, paired: the
+Greensite–Olejník kernel depends on the field through the covariant
+Laplacian, so this is the first physics target on which theory *predicts* M1
+pays; ≥ 3σ → it does, else a tie. **V5** per ladder passing G-RW (forward and
+backward estimates of each rung agree; at most max(1, 5%) rungs off at 3σ): a
+model is *validated* on a family if χ²/dof < 2 and max|Δ|/σ < 4; the net
+*beats* the classical ansatz if its χ² is under half of `full`'s on both
+`noise` and `plane`. `smear` (toward the APE-smoothed slice) is off the
+training distribution: reported only.
+Publishable if V3 reads R-V1 and V5 validates the net where `full` fails; a
+quantitative map of the 3+1D SU(2) vacuum (V2 + V5) is a result even under
+R-V0. Honest prior: R-V0 is likelier than R-V1 — on the smoke lattice `dr`
+alone already leaves ε ≈ 0.14 and `full` ε ≈ 0.05.
 
 **Worth running only for completeness** (cheap, offline): the excited-state
 gate on the `deep` basis (`gevp_eigenvalues(..., truncate=True)`, second

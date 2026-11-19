@@ -292,6 +292,154 @@ offline) is the natural completion and should be run as part of this package.
   than the strongest classical basis on an unsaturated metric"; |Δ| < 2σ →
   "matches a 21-operator basis from 7 inputs").
 
+**Task 5 (two-state fit) — done 2026-10-01, stopped by its own rule**
+(`python scripts/two_state_fit.py`, offline, 2 s). C_i = A_i φ(m₀) + B_i φ(m₁),
+m₀ < m₁ shared by GELT and the (1,2)-projected `published` GEVP, amplitudes
+profiled out in closed form, window [1,8] (dof 10), whole fit and v₀ redone in
+every jackknife sample. **m₁ is not constrained**: jackknife m₁ = 0.59 ± 0.47
+(run5), 0.77 ± 0.54 (ens1), and on ens2 it sits at the grid edge (1.5) in 40/40
+samples; the correlated A₀'s are unmeasurable (GELT 0.57 ± 0.80 on run5,
+1.03 ± 0.35 on ens1), m₀ itself is 0.27 ± 0.17 / 0.37 ± 0.08 / 0.310 ± 0.034
+against ±0.01 in the one-state fit, and χ²/dof = 0.02–0.09 (more parameters than
+the 400-configuration data can fix). So, as the task anticipated, **m₁ is
+unconstrained at this statistics; stop** — the per-ensemble ΔA₀ (+0.09 ± 0.09,
++0.22 ± 0.07, +0.125 ± 0.017) are all positive but the ens2 one is a one-state
+fit with a pinned dummy state and the combined number (+0.13 ± 0.02) must not be
+quoted. The one-state ΔA₀ stays the estimator; the two-state attempt goes in the
+text as "a shared-mass two-state fit does not constrain the first excited mass
+on 400 configurations (m₁ = 0.6–0.8 ± 0.5)". It does not test the p = 0.057
+misspecification question either way.
+
+**Task 5, high statistics — 2026-10-03.** The 400-configuration limit is the
+test split, not the method: the network is frozen (checkpoint chosen on its own
+validation split), so `scripts/high_stat_eval.py` samples a fresh SU(2) chain
+(same L, Lt, β, ξ, seed 1002, n_skip 5), runs the forward pass only and builds
+the classical APE basis on the *same* configurations, streaming (40k configs
+would be ~210 GB). **40 000 configurations, ens2's net.** Ō on the new chain
+matches the original test split (GELT mean −554.60 vs −554.56, std 0.981 vs
+0.972; thin 2539.8 vs 2540.0). τ_int of Ō ≈ 0.5–0.8 saved configs (0.5 =
+uncorrelated), so the configurations are effectively independent; jackknife
+block 100 (400 blocks). Dump: `dumps/best_glueball_gelt_sm0-2-4-6_ens2_hs_test_obars.pt`.
+
+- Two-state shared-mass fit, `python scripts/two_state_fit.py
+  --dump=<dump> --block=100`, window [1,8], dof 10: **m₀ = 0.3145 ± 0.0036**,
+  **m₁ = 0.726 ± 0.087** (at the grid edge in 0/400 samples; was 40/40 on
+  400 configs), A₀ GELT 0.846 ± 0.023, A₀ GEVP 0.724 ± 0.025, **ΔA₀ = +0.1222
+  ± 0.0048** (statistical only). χ²/dof = 0.03: diagonal weights on a
+  ~85%-one-common-mode correlation matrix, as before; not an error signal.
+- One-state fit, [2,7], same dump (`fit_glueball_overlap.py`): GELT m = 0.3294
+  ± 0.0026, A₀ = 0.9335 ± 0.0053; projected GEVP m = 0.3376 ± 0.0029, A₀ =
+  0.8458 ± 0.0057. **ΔA₀ = +0.0878 ± 0.0030** (29σ; the original ens2 was
+  +0.100 ± 0.028), but **Δm = −0.0082 ± 0.0011 (7.7σ)**: at this statistics the
+  two one-state masses are *not* equal, so "same mass as the GEVP" is
+  qualified. Both sit above the two-state m₀ = 0.3145, i.e. both are
+  contaminated by the first excited state in [2,7], the GEVP more (lower A₀).
+  Window scan on the same dump (`fit_window_scan.py <dump> --block=100
+  --windows=2-7,3-7,2-6,3-8,4-9,5-10`, V100 not needed afterwards; output
+  `fit_window_scan_custom.*`):
+
+  | window | Δm | ΔA₀ (diag) | corr. χ²/dof GELT (p) |
+  |---|---|---|---|
+  | [2,7] | −0.0082 ± 0.0011 | +0.0878 ± 0.0030 | 12.1 (0.00) |
+  | [3,7] | −0.0065 ± 0.0014 | +0.0925 ± 0.0045 | 4.1 (0.01) |
+  | [2,6] | −0.0084 ± 0.0010 | +0.0877 ± 0.0029 | 12.7 (0.00) |
+  | [3,8] | −0.0061 ± 0.0014 | +0.0934 ± 0.0046 | 4.3 (0.00) |
+  | [4,9] | −0.0046 ± 0.0018 | +0.0978 ± 0.0068 | 2.2 (0.07) |
+  | [5,10] | −0.0045 ± 0.0023 | +0.0964 ± 0.0102 | 0.56 (0.69) |
+
+  Readings. (i) **The one-state [2,7] fit is misspecified**: correlated χ²/dof
+  12 (p ≈ 0) for both operators; the p = 0.057 of the 400-configuration run
+  was the same effect at low power. The model fits (p = 0.69) only from
+  [5,10]. This answers task 2's open question: excited-state contamination in
+  the published window is real. (ii) **Δm shrinks with the window start**, from
+  −0.0082 (7.7σ) at [2,7] to −0.0045 ± 0.0023 (2.0σ) at [5,10]; both masses
+  fall (GELT 0.3294 → 0.3171, GEVP 0.3376 → 0.3216) towards the two-state
+  m₀ = 0.3145 ± 0.0036 and are still above it. So "same mass" holds only at
+  the ~2σ level on the latest window, where the errors are 4–5× larger; a
+  residual cannot be excluded or shown. (iii) **ΔA₀ is positive at every
+  window (≥ 9.5σ) but drifts up with the start**, +0.088 → +0.096…+0.098; spread
+  0.0100. By the pre-registered task-1 rule (spread < the [2,7] error 0.0030)
+  it is **not stable**, so: **ΔA₀ = +0.088 ± 0.003 (stat) ± 0.005 (window)**,
+  15σ with the window. (The rule's threshold is the statistical error, so it
+  tightens as statistics grow; applied as written.) (iv) **Task 4: not a
+  plateau at Δ = 1**: GELT d = m_eff(1) − m_fit = +0.0174 ± 0.0024 (7.2σ), so
+  the main.tex sentences (l. 59, 406, 427, 436, 505) take the "reduced
+  excited-state contamination already at Δ = 1" branch — for this net at
+  this statistics; at 400 configs the same test did not exclude a plateau.
+  (v) **Open**: Δm_eff(1)(GELT − GEVP) = −0.0218 ± 0.0009 here against
+  −0.041 ± 0.005 published for ens2 (3.8σ apart). Not understood — a
+  400-configuration fluctuation or a definition difference; the scan's
+  published-value gate was not run on a custom dump. Check before quoting
+  the −0.041.
+- What this is and is not. It is the precise value for **one net**; the
+  headline ΔA₀ = +0.086 ± 0.017 combines three nets and three ensembles, so
+  it contains the net-to-net spread (+0.066…+0.076 over three init seeds) and
+  the high-statistics number does not replace it. No headline is chosen by
+  which number is larger. The reading that was fixed: the high-statistics run
+  *confirms* the original ens2 value if |ΔA₀(hs) − ΔA₀(400)| < 2σ of the
+  latter (it is: 0.012 vs 0.028 for the one-state fit) and tests the
+  one-state fit's excited-state bias through m₁ and Δm. Still stat only: the
+  window systematic (±0.018) now dominates and is the next number.
+- Scripts: `two_state_fit.py` gained `--dump=` and `--block=`;
+  `fit_window_scan.py` gained `--block=`. Running `fit_glueball_overlap.py`
+  on any dump overwrites `results/glueball/glueball_overlap.png`.
+
+**Task 2 — done 2026-10-01** (`python scripts/gevp_time_scan.py`, offline, 5 s;
+printout in `results/glueball/gevp_time_scan.txt`). 4-level GELT against the
+v₀-projected `published` and `deep`, window [2,7], three ensembles combined by
+inverse variance; gate: (1,2) reproduces ΔA₀ = +0.066 / +0.089 (run5 / ens1)
+and the three-ensemble +0.086.
+
+| (t₀, t_d) | GEVP A₀ | ΔA₀ vs `published` | Δm_eff(1) | GEVP A₀ (`deep`) | ΔA₀ vs `deep` |
+|---|---|---|---|---|---|
+| (0,1) | 0.873 | +0.067 ± 0.015 | −0.043 ± 0.005 | 0.907 | +0.031 ± 0.014 |
+| (1,2) | 0.852 | +0.086 ± 0.017 | −0.037 ± 0.004 | 0.878 | +0.055 ± 0.020 |
+| (1,3) | 0.828 | +0.104 ± 0.020 | −0.038 ± 0.005 | 0.870 | +0.045 ± 0.025 |
+| (2,3) | 0.601 | +0.32 ± 0.17 | −0.10 ± 0.08 | 0.637 | +0.30 ± 0.19 |
+
+*Reading.* (2,3) is not a measurement: C(2), C(3) are too noisy for a 4- or
+7-operator GEVP, the projected operator's A₀ collapses to 0.6 and the errors
+are 10× larger — the three ensembles agree on that, so it is the pair and not
+one chain. It is reported and excluded from the reading. On the three usable
+pairs ΔA₀ vs `published` moves by −1.09σ / +1.09σ of the (1,2) error, i.e.
+just past the "< 1σ" threshold, so **the larger-shift branch applies**: the
+table reports the scan, and the conservative headline is the (t₀, t_d) with the
+highest classical A₀, **(0,1): ΔA₀ = +0.067 ± 0.015 (4.5σ) vs `published`**,
+and **+0.031 ± 0.014 (2.2σ) vs `deep`** (was +0.055 ± 0.020). Both stay
+positive on every usable pair and Δm_eff(1) (−0.037 … −0.043, ≥ 7σ vs
+`published`) hardly moves; the GEVP's own plateau is stable at m_fit =
+0.34–0.35 and m_eff(1) = 0.39 across them. The point for the text: (0,1)
+is the pair that solves the network's own objective, and it is where the
+classical arm is strongest, so the `deep` margin shrinks to 2.2σ there.
+
+**Task 3 (= P1) — done 2026-10-01** (`python scripts/p1_meff_strong_basis.py`,
+offline, 10 s; full printout in `results/glueball/p1_meff_strong_basis.txt`).
+Δm_eff = m_eff^GELT − m_eff^classical, classical arm projected with
+`gevp_ground_vector(truncate=True, eps=1e-4)`, v₀ refitted inside every
+delete-block jackknife sample. Gates passed: 4-level GELT − `published`,
+floor whitening, in-sample, reproduces −0.0279(72) / −0.0381(84). Combined
+run5 + ens1, **7-level GELT**, Δm_eff(1) [Δm_eff(2)]:
+
+| classical arm | (1,2) half-split | (1,2) in-sample | (0,1) half-split | (0,1) in-sample |
+|---|---|---|---|---|
+| `published` | −0.056(8) [−0.040(12)] | −0.053(7) [−0.042(12)] | −0.059(8) [−0.048(11)] | −0.058(8) [−0.047(11)] |
+| `deep` | −0.042(9) [−0.027(10)] | −0.031(6) [−0.028(10)] | −0.039(7) [−0.034(9)] | −0.038(6) [−0.033(8)] |
+| `full` | −0.022(25) [0.000(23)] | +0.004(9) [+0.004(12)] | −0.006(4) [−0.005(5)] | −0.004(4) [−0.004(5)] |
+
+*Reading (record P1).* Against `full`: |Δm_eff(1)| < 2σ in all four variants
+(−0.9σ, +0.4σ, −1.5σ, −1.1σ) → **"matches a 21-operator basis from 7
+inputs"**; the ≤ −3σ branch is not reached. Against `deep` the 7-level net
+leads at 2.6–6.0σ on Δm_eff(1) and Δm_eff(2) in every variant, so the same-input
+advantage survives on an unsaturated metric, and it is the shapes that remove it.
+Caveats: (i) half-split (1,2) vs `full` has errors 3–10× the others (run5 ±0.080):
+200 configurations cannot fix v₀ for 21 operators at t₀ = 1, so only the (0,1)
+rows constrain `full`; (ii) the 4-level net, same estimator, ahead of `published`
+(−0.041(6)) is level with `deep` (−0.004(8)) and **behind `full`** in-sample
+(+0.038(7) at (1,2), +0.017(3) at (0,1) — 5.9σ and 5.6σ, three ensembles), i.e.
+on m_eff(1) the 4-level net does not match the 21-operator basis, which A₀
+(saturated) could not show; (iii) ens2 has no 7-level dump. Not a selection:
+all twelve cells are printed.
+
 ---
 
 ## S3 — Train/test separation and Monte Carlo autocorrelations
@@ -341,6 +489,11 @@ facts, from the code:
    ≫ τ_int) and show ΔA₀ does not move. For SU(2) this also answers "is the
    fit sample independent of model selection": val sits between train and
    test, so train↔test are ≥ 200 saved configurations apart.
+   **Done 2026-09-29** (`scripts/gap_scan.py`, offline, seconds, gated on the
+   per-ensemble ΔA₀ at g = 0): the largest shift of ΔA₀ from g = 0 is 0.24σ
+   (ens1, g = 20); combined +0.086 / +0.089 / +0.087 / +0.083 for
+   g = 0 / 5 / 10 / 20. The reading below does not fire. Numbers in
+   `thesis_record.md` §3.2; thesis ch. 4 `tab:gap_leakage`.
 4. **Selection honesty** (text): checkpoint selection is on val only, but the
    *hyper-parameters and protocol* (input levels, width, the 7-level retraining)
    were chosen with test-split results in view during development — say so, and
@@ -483,6 +636,94 @@ Next: `CUBIC_DRY_RUN=1 bash scripts/cubic_batch.sh`, then the batch on the V100
 (phase 1 = the gates on Run 5 in minutes, then ~13 h estimated for the five
 trained nets); copy `results/glueball/cubic/` to `dumps/cubic/`; task 3 offline.
 
+**Correction (2026-09-29, same day):** the first version of this outcome and
+commit `1fee29a`'s message said untrained nets are "62%" non-scalar; that was
+seed 2 only (the log tails show one net per group). The nine range from 21% to
+83%, set by the init seed.
+
+**Outcome (2026-09-29).** Batch run with `CUBIC_RND=1 CUBIC_LCNN=1`: every
+gate passed on every net (anchor at g = e; action 8e-16; classical Ō
+invariant to 0.9–1.9e-4 sd), 131 s per element for a 4-level net, 189 s for a
+7-level one, 75 s for the L-CNN. The L-CNN on ens0 did not run (the p2
+checkpoint is not in the V100's `results/glueball/`; the script now also looks
+beside the dump — copy `dumps/p2/best_glueball_lcnn_sm0-2-4-6_p2.pth` there
+and re-run the batch, ~1 h). Dumps in `dumps/cubic/`, the verbatim log tails in
+`notes/raw/cubic_readout_2026-09-29.txt`.
+
+*The L-CNN on ens0 (p2), run 2026-09-30.* Under 5 of the 48 elements, one
+(configuration, timeslice) of 9600 gives |Ō| between 1.6e4 and 4.2e10 against
+a typical 55 ± 0.9. The same three configurations (27, 157, 349) account for all
+of it, and they are ordinary in their own orientation. This is an exploding
+output on equally probable configurations, not non-scalar content, and it is the
+robustness asymmetry of record §5 seen through the symmetry. No GELT net departs
+from its own Ō_e by more than 4 sd on any of its 48 × 400 × 24 evaluations
+(L-CNN ens1: 0.95 sd). Without the three configurations, a diagnostic chosen
+after seeing them: outside A1g 2.14% (T2g 0.6%, T1u 0.5%, parity-odd 1.0%),
+δA₀ = +0.014 ± 0.009, ΔA₀ projected +0.072 ± 0.027. Combined with ens1:
+δA₀ = +0.008 ± 0.006.
+
+*Task 2 — how scalar is it.* Share of C(0) outside A1g (augmented-sample
+definition above), and ν(g) = the per-element change of δŌ:
+
+| net | outside A1g | largest non-A1 parts | ν(g) median (max) |
+|---|---|---|---|
+| 4-level, run5 / ens1 / ens2 | 1.81% / 1.91% / 1.73% | T2g 0.9%, Eg 0.3% / Eg 1.3%, T2g 0.3% / T2g 0.6%, Eg 0.5% | 0.20 / 0.22 / 0.19 (≤ 0.25) |
+| 7-level, run5 / ens1 | 2.11% / 1.21% | T2g 1.3%, Eg 0.6% / Eg 0.4%, T2g 0.4% | 0.22 / 0.16 (≤ 0.24) |
+| our L-CNN, ens1 | 1.68% | T2g 0.6%, T1u 0.4% | 0.18 (0.20) |
+| untrained 4-level, 9 nets | 21–83% by init seed (rnd0 83%, rnd1 21%, rnd2 62%, the same on every ensemble) | **Eg 20–82%** | 0.78–1.56 |
+
+The non-A₁ part of the trained operators is mostly Eg + T2g, the two cubic
+irreps the continuum 2⁺⁺ subduces to (60–88% of the non-scalar part for GELT).
+Parity-odd content sums to ≤ 0.5% (0.7% for the L-CNN). Untrained nets are far
+from scalar, by an amount set by the init seed (Eg 20–82%: an operator that
+weights the three planes differently is A1g ⊕ Eg). **Training removes that almost
+entirely** (Eg → 0.3–1.3%), although nothing in the loss asks for it explicitly:
+the 0⁺⁺ ground state is the only state the Rayleigh bound rewards. This is a
+second "learned, not architectural" fact next to L9.
+
+*Task 3 — does projecting change the result.* A₀(Ō_A1g) − A₀(Ō), same
+configurations, correlated jackknife (`fit_glueball_overlap.py <a1> --vs=<orig>`):
+
+| net | run5 | ens1 | ens2 | combined |
+|---|---|---|---|---|
+| 4-level | +0.003 ± 0.008 | −0.007 ± 0.011 | +0.014 ± 0.008 | **+0.005 ± 0.005** |
+| 7-level | −0.002 ± 0.012 | −0.019 ± 0.008 | — | −0.013 ± 0.007 |
+| L-CNN | — | +0.004 ± 0.007 | — | — |
+
+Three-ensemble headline on the projected 4-level operators
+(`fit_window_scan.py dumps/cubic/…_a1_…`; written to the `_custom` outputs;
+every per-net number here is printed by `python scripts/cubic_readout.py`):
+**ΔA₀ = +0.088 ± 0.016 (stat) ± 0.016 (window) = 3.9σ with the window
+systematic** (per ensemble +0.068(29), +0.082(28), +0.113(28); p = 0.52),
+against +0.086 ± 0.017 ± 0.018 (3.4σ) unprojected. ≥ 4.3σ statistical in every
+window. Δm_eff(1) = −0.039 ± 0.003 (was −0.037 ± 0.004). The plateau test
+still passes (d = +0.016 ± 0.013, 1.2σ). The correlated fit gives +0.053 ± 0.016
+(was +0.049 ± 0.017).
+
+*Against the readings fixed above:*
+- **R1** (non-A₁ ≲ 1% and ΔA₀ unchanged): ΔA₀ is unchanged (+0.005 ± 0.005,
+  i.e. 0.3σ of the headline's error), but the non-A₁ share is 1.2–2.1%. That is
+  not "≲ 1%", so R1 is **not met as written**.
+- **R2** (non-A₁ sizeable and projected A₀ higher): the projected A₀ is not
+  significantly higher (1.0σ paired), and 2% is hard to call sizeable.
+- **R3** (projected ΔA₀ lower by > 1σ): not triggered for the 4-level nets.
+  For the 7-level ens1 net the drop is −0.019 ± 0.008. That is 2.3σ of the
+  paired error but 0.5σ of that net's ΔA₀ error (±0.038), and "1σ" in R3 means
+  the headline's σ. So R3 is not triggered. L8 re-derived on the projected
+  7-level operators (`SFF_BASES=1 SFF_TRUNCATE=1 su2_fair_fight.py` on the two
+  `_a1` dumps, reproducing +0.131 / +0.095 / +0.038 on the originals first):
+  vs `published` +0.119 ± 0.028, vs `deep` **+0.081 ± 0.020 (4.0σ)**, vs `full`
+  **+0.027 ± 0.023 (1.2σ)**, vs `shapes_sm` +0.042 ± 0.029. The reading of L8
+  is unchanged.
+- The outcome therefore sits **between R1 and R2**: a ~2% non-scalar
+  admixture that changes nothing measurable. Not adopted yet, a decision for the
+  author: take R2's action, i.e. quote the projected operator as the result
+  (+0.088 ± 0.016 ± 0.016). This is the conservative reading of the
+  supervisor's point, not a selection on the number, because it moves the
+  headline by +0.002. The thesis sentence either way: "the learned operator is
+  an A₁⁺⁺ scalar to 98% of its C(0); the remainder is mostly E/T₂ (2⁺⁺-like);
+  projecting it onto A₁⁺⁺ changes A₀ by +0.005 ± 0.005".
+
 ---
 
 ## Third ensemble (ens2) — readings fixed 2026-09-27, before it exists
@@ -565,6 +806,14 @@ ensembles; `fit_window_scan.py` and `fit_estimator_mc.py` print every number):
   vs `deep` +0.055 ± 0.020 (2.7σ), vs `full` −0.001 ± 0.021, vs `shapes_sm`
   +0.003 ± 0.032 — a 4-level GELT is worth the 21-operator classical basis
   and no more, as on two ensembles.
+- **…and at (t₀, t_d) = (0, 1)** (2026-10-02, `SFF_T0=0`; `shapes` /
+  `shapes_sm` fall back at (1,2) and pass here on every ensemble): vs `deep`
+  +0.031 ± 0.014 (2.3σ), vs `full` **−0.034 ± 0.010 (3.5σ)**, vs `shapes_sm`
+  **−0.037 ± 0.012 (3.2σ)** — at S2's conservative pair the 4-level GELT is
+  behind the shape bases, in the saturated region (classical A₀ 0.95–1.0).
+  7-level GELT (run5 + ens1): vs `deep` +0.085 ± 0.023, vs `full`
+  +0.034 ± 0.014, vs `shapes_sm` +0.028 ± 0.011. Table in
+  `notes/thesis_record.md` §3.3.
 
 ## main.tex sentences these packages touch
 

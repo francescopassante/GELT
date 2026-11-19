@@ -360,6 +360,65 @@ def gevp_ground_vector(
     return v0 * torch.sign(v0[v0.abs().argmax()])
 
 
+def gevp_vectors(
+    C: torch.Tensor, t0: int = 0, td: int = 1, eps: float = 1e-12, truncate: bool = False
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Every generalized eigenvector of  C(td) v = λ C(t0) v, descending in λ.
+
+    The multi-state companion of :func:`gevp_ground_vector`: column n of ``V``
+    defines the projected operator of level n, Ō_n(t) = Σ_i V[i, n] Ō_i(t), so a
+    fixed set of columns is a fixed *subspace* that can be carried to another
+    sample (the half-split / out-of-sample readouts). Same whitening (floor, or
+    ``truncate``), each column normalised to vᵀ C(t0) v = 1 and its sign fixed by
+    its largest-|·| component, as for the ground vector.
+
+    The default (t0, td) = (0, 1) is the pair at which the eigenvalues are the
+    Ritz values of the transfer matrix in the basis's span, i.e. the pair at
+    which each λ_n is a variational bound (see :func:`kyfan_trace`).
+
+    ``C`` : ``(Nt, n_ops, n_ops)``. Returns ``(lams (k,), V (n_ops, k))``, k ≤ n_ops.
+    """
+    C = 0.5 * (C + C.transpose(-1, -2))  # symmetrise the noisy estimator
+    W = _whiten(C[t0], eps, truncate)  # Wᵀ C[t0] W = I, (n_ops, k)
+    M = W.transpose(-1, -2) @ C[td] @ W
+    M = 0.5 * (M + M.transpose(-1, -2))
+    lam, Q = torch.linalg.eigh(M)  # ascending
+    lam, Q = lam.flip(-1), Q.flip(-1)
+    V = W @ Q
+    pick = V.abs().argmax(dim=0)
+    return lam, V * torch.sign(V[pick, torch.arange(V.shape[1])])
+
+
+def kyfan_trace(C0: torch.Tensor, Cd: torch.Tensor, ridge: float = 0.0) -> torch.Tensor:
+    """Σ_n λ_n of the K×K problem  C(Δ) v = λ C(0) v, i.e. Tr[C(0)⁻¹ C(Δ)].
+
+    The multi-state variational objective (the K-state generalisation of the
+    Rayleigh quotient C(Δ)/C(0), to which it reduces at K = 1). For K
+    per-timeslice operators the λ_n are the Ritz values of T^Δ, T the transfer
+    matrix, in their span, so
+
+      * each λ_n ≤ e^{−E_n Δ} (Hylleraas–Undheim–MacDonald / Cauchy interlacing:
+        the n-th Ritz value bounds the n-th level, excited ones included), and
+      * Σ_{n<K} λ_n ≤ Σ_{n<K} e^{−E_n Δ} (Ky Fan), with equality iff the span is
+        the top-K eigenspace of T.
+
+    It depends on the span only: C → A C Aᵀ for any invertible A (the GL(K)
+    freedom of a linear readout) leaves it unchanged, so no orthogonality has to
+    be imposed between the K operators for the optimum to be K distinct states.
+    Computed on the correlation-normalised matrices D C D, D = diag(C(0))^{-1/2},
+    which leaves the trace unchanged and makes ``ridge`` (added to D C(0) D)
+    dimensionless. Differentiable; batched over leading axes.
+
+    ``C0``, ``Cd`` : ``(..., K, K)``, symmetric. Returns ``(...)``.
+    """
+    d = C0.diagonal(dim1=-2, dim2=-1).rsqrt()
+    R0 = C0 * d[..., :, None] * d[..., None, :]
+    Rd = Cd * d[..., :, None] * d[..., None, :]
+    if ridge:
+        R0 = R0 + ridge * torch.eye(R0.shape[-1], dtype=R0.dtype, device=R0.device)
+    return torch.linalg.solve(R0, Rd).diagonal(dim1=-2, dim2=-1).sum(-1)
+
+
 def gevp_effective_mass(lams: torch.Tensor) -> torch.Tensor:
     """Per-state effective mass m_n(Δ) = log[λ_n(Δ)/λ_n(Δ+1)] from GEVP eigenvalues.
 

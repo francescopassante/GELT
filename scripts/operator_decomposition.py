@@ -264,7 +264,11 @@ def load_arm(spec, n_cfg):
 def _lab(x):
     """Row label for a basis member: an APE level from a dump, a fair-fight
     label ('n4·2x2') from an arm."""
-    return x if isinstance(x, str) else f"APE×{x}"
+    if isinstance(x, str):
+        # 'n4·1x1' → 'APE×4' (the plaquette ladder); other shapes keep the label
+        n, _, shape = x.partition("·")
+        return f"APE×{n[1:]}" if shape == "1x1" and n[:1] == "n" else x
+    return f"APE×{x}"
 
 
 def analyse(dump, i=0):
@@ -372,6 +376,7 @@ def analyse(dump, i=0):
     names = [
         "frac_out", "z_share", "m_G", "a0_G", "m_P", "a0_P", "m_r", "a0_r",
         "m_V", "a0_V", "dA0_GP", "dA0_GV", "dm_GP",
+        "a0ref_G", "a0ref_P", "a0ref_r", "dA0ref_GP",
     ]
     if nested:
         names += [f"ladder{k}" for k in range(1, basis.shape[0])]
@@ -405,6 +410,12 @@ def analyse(dump, i=0):
             a0_G - a0_V,  # the published comparison, for the gate
             m_G - m_P,
         ]
+        # A₀ of each piece at the COMMON mass m_ref (the same exponential that
+        # defines Z_r/Z_G), so the three amplitudes are additive and comparable.
+        C_G_, C_P_, C_r_ = connected_correlator(dG), connected_correlator(P), connected_correlator(r)
+        norm_ref = 1.0 + math.exp(-m_ref * Nt)
+        a_ref = [amplitude(C) * norm_ref / C[0] for C in (C_G_, C_P_, C_r_)]
+        out += a_ref + [a_ref[0] - a_ref[1]]
         # The ladder's own increments: new content of rung k over the rungs below.
         if nested:
             for k in range(1, basis.shape[0]):
@@ -513,20 +524,17 @@ def plot(runs):
 
     # Left: the ladder's increments against GELT's, on a log scale — the point
     # is that the classical increments fall geometrically while GELT's does not
-    # sit on that curve.
-    for run, mk, col in zip(runs, ("o-", "s--"), ("C0", "C3")):
-        mu, err, lv, n = run["mu"], run["err"], run["levels"], run["n_ladder"]
-        tag = os.path.basename(run["dump"]).replace("_test_obars.pt", "")
-        tag = tag.rsplit("_", 1)[-1] if tag.endswith(("_ens1", "_ens2")) else "Run 5"
-        if run["nested"]:
-            xs = list(range(1, n + 1))
-            ys = [mu[run["ix"][f"ladder{k}"]].item() for k in xs]
-            es = [err[run["ix"][f"ladder{k}"]].item() for k in xs]
-            ax[0].errorbar(xs, ys, yerr=es, fmt=mk, color=col, capsize=3,
-                           label=f"classical ladder — {tag}")
-        ax[0].errorbar([n + 1], [mu[0].item()], yerr=[err[0].item()], fmt="*",
-                       ms=16, color=col, capsize=3)
+    # sit on that curve. The ensembles are combined (inverse-variance), so the
+    # panel carries a single series.
     n = runs[0]["n_ladder"]
+    if runs[0]["nested"]:
+        xs = list(range(1, n + 1))
+        stats_ = [combine(runs, f"ladder{k}")[:2] for k in xs]
+        ax[0].errorbar(xs, [v for v, _ in stats_], yerr=[e for _, e in stats_],
+                       fmt="o-", color="C0", capsize=3, label="classical ladder")
+    v_g, e_g, _ = combine(runs, "frac_out")
+    ax[0].errorbar([n + 1], [v_g], yerr=[e_g], fmt="*", ms=16, color="C3",
+                   capsize=3)
     lv = runs[0]["levels"]
     ax[0].set_xticks(list(range(1, n + 2)))
     ax[0].set_xticklabels([_lab(lv[k]) for k in range(1, n + 1)] + ["GELT"])
@@ -545,7 +553,7 @@ def plot(runs):
          / (1 + math.exp(-m * Nt)) for d in range(Nt)], dtype=torch.float64
     )
     dmax = FIT_WINDOW[1] + 1
-    for C, lab, col in ((run["C_G"], "O_GELT", "C0"),
+    for C, lab, col in ((run["C_G"], "GELT", "C0"),
                         (run["C_P"], "P  (in the classical span)", "C1"),
                         (run["C_r"], "r  (orthogonal remainder)", "C3")):
         rho = (C / C[0]) / ref

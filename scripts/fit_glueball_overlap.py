@@ -187,7 +187,7 @@ def main():
     gelt_obar = blob["gelt_obar"].double()
     Obar_basis = blob["Obar_basis"].double()
     meta = blob.get("meta", {})
-    t0 = int(meta.get("gevp_t0", 1))
+    t0 = int(os.environ.get("GFO_T0", meta.get("gevp_t0", 1)))  # GFO_T0=0: thesis choice (t0, td) = (0, 1)
     td = t0 + 1 if GEVP_TD is None else GEVP_TD
     jb = int(meta.get("jack_block", 10))
     levels = meta.get("gevp_levels", list(range(Obar_basis.shape[0])))
@@ -371,6 +371,21 @@ def main():
     cosh_ref = (np.exp(-m_ref * dd) + np.exp(-m_ref * (Nt - dd))) / (
         1.0 + math.exp(-m_ref * Nt)
     )
+    # GFO_RHO_OWN=1 (prof feedback F, Oct 2026): normalise each operator's ρ by
+    # ITS OWN fitted mass, so that ρ tends to that operator's A₀ — the dashed
+    # line drawn next to it. The default keeps the common GELT reference.
+    RHO_OWN = os.environ.get("GFO_RHO_OWN", "0") == "1"
+    _, sig_thin = blocked_jackknife(lambda m: connected_correlator(thin_obar[m]), B, jb)
+    own_mass = {
+        "gelt": stats[0].item(), "proj": stats[2].item(), "sm": stats[4].item(),
+        "thin": fit_one(connected_correlator(thin_obar), sig_thin)[0],
+    }
+
+    def _cosh_of(key):
+        if not RHO_OWN:
+            return cosh_ref
+        m_ = float(own_mass[key])
+        return (np.exp(-m_ * dd) + np.exp(-m_ * (Nt - dd))) / (1.0 + math.exp(-m_ * Nt))
 
     # ── Plots ──────────────────────────────────────────────────────────────────
     fig, ax = plt.subplots(1, 2, figsize=(14, 6))
@@ -385,7 +400,7 @@ def main():
             alpha=0.85,
         )
 
-    _meff_pts(meff_proj, meff_proj_err, t0, "GEVP-projected (fixed v₀)", "C3", "D-")
+    _meff_pts(meff_proj, meff_proj_err, max(t0, 1), "GEVP-projected (fixed v₀)", "C3", "D-")
     _meff_pts(meff_gelt, meff_gelt_err, 1, "GELT (learned)", "C2", "^-")
     for i, col, nm in [(0, "C2", "GELT"), (2, "C3", "GEVP")]:
         m_, e_ = stats[i].item(), stats_err[i].item()
@@ -393,7 +408,6 @@ def main():
             [dmin - 0.3, dmax + 0.3], m_ - e_, m_ + e_, color=col, alpha=0.18,
             label=f"{nm} fit  m·a_t = {m_:.3f} ± {e_:.3f}",
         )
-    ax[0].axhline(ANCHOR, color="k", ls="--", alpha=0.6, label=f"anchor m·a_t ≈ {ANCHOR}")
     ax[0].set_xlabel("Δ (temporal slices)")
     ax[0].set_ylabel("m_eff(Δ) = m·a_t")
     ax[0].set_xlim(0, MEFF_DMAX + 0.5)
@@ -414,7 +428,8 @@ def main():
     ]
     for key, lab, col, mk, a0 in specs:
         mean, err = rho[key]
-        r_, e_ = mean.numpy() / cosh_ref, err.numpy() / cosh_ref
+        cref = _cosh_of(key)
+        r_, e_ = mean.numpy() / cref, err.numpy() / cref
         d_ = np.arange(Nt)
         ok = np.isfinite(r_) & np.isfinite(e_) & (d_ <= RHO_DMAX)
         if a0 is not None:
@@ -425,13 +440,13 @@ def main():
             label=lab, alpha=0.85,
         )
     ax[1].set_xlabel("Δ (temporal slices)")
-    ax[1].set_ylabel(f"ρ(Δ) = [C(Δ)/C(0)] / cosh_ref(Δ; m = {m_ref:.3f})")
+    ax[1].set_ylabel("ρ(Δ) = [C(Δ)/C(0)] / [f(Δ)/f(0)], own fit" if RHO_OWN
+                     else f"ρ(Δ) = [C(Δ)/C(0)] / cosh_ref(Δ; m = {m_ref:.3f})")
     ax[1].set_xlim(-0.3, RHO_DMAX + 0.5)
     ax[1].set_ylim(0.0, 1.25)
     ax[1].set_title(
         "Ground-state fraction of each operator\n"
-        "(flat at A₀ ⇔ pure ground state; small-Δ excess = excited-state "
-        "contamination)"
+        "(small-Δ excess = excited-state contamination)"
     )
     ax[1].legend(loc="lower right")
     ax[1].grid(True, alpha=0.3)

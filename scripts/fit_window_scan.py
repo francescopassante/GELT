@@ -446,7 +446,7 @@ def figure(per, combined, admitted, stem):
 
     series = []
     markers = {"run5": "s", "ens1": "^"}
-    names = {"run5": "ens0"}  # the figure drops the "(Run 5)" the table keeps
+    names = {"run5": "seed 0", "ens1": "seed 1", "ens2": "seed 2"}
     for k, tag in enumerate(per):
         series.append((names.get(tag, tag),
                        [per[tag]["windows"][w]["diag"]["dA0"] for w in order],

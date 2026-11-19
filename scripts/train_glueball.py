@@ -40,9 +40,22 @@ untouched — the matched shootout of reports/curve §7. Everything downstream i
 unchanged: the dump keeps the ``gelt_obar`` key (it is still *one learned
 operator* against the classical span) and records ``meta["arch"]``.
 
+``GLUEBALL_N_STATES=K`` (K > 1) turns the single operator into a learned
+**K-state variational basis** (notes/learned_spectrum.md): the readout gets K
+outputs per site and the Rayleigh quotient is replaced by its K-state
+generalisation, the Ky Fan trace Tr[C(0)⁻¹ C(Δ)] = Σ_{n<K} λ_n, whose n-th Ritz
+value bounds the n-th level (excited ones included) and which only the span of
+the K lightest reachable states maximises. The dump then also carries the K
+test-split series (``gelt_obars``) and the validation-fitted GEVP vectors, and
+``gelt_obar`` is the subspace's ground-state member — so every single-operator
+script reads it unchanged. K = 1 is the Rayleigh loss, bit for bit.
+``GLUEBALL_WARM_FROM=<ckpt>`` starts from another run's weights (every tensor
+whose shape matches; the head's first rows), tagged ``_warm``.
+
 Run:
     python scripts/train_glueball.py
     GLUEBALL_ARCH=lcnn python scripts/train_glueball.py
+    GLUEBALL_N_STATES=4 python scripts/train_glueball.py
 """
 
 import functools
@@ -63,6 +76,8 @@ from gelt.glueball import (
     connected_correlator_matrix,
     gevp_eigenvalues,
     gevp_effective_mass,
+    gevp_vectors,
+    kyfan_trace,
 )
 from gelt.lattice import SU, build_transport_average, plaquette_tensor
 from gelt.lcnn import LCNN, build_axis_transports
@@ -355,6 +370,32 @@ SCALE_REG = 1e-2  # coefficient of the (log C(0))² scale pin. The ratios
 #                   improves best_val_loss, NO checkpoint was ever saved. The
 #                   (log C(0))² term is variationally neutral (ratios
 #                   untouched) and restores C(0) → 1.
+# The K-state variational basis (notes/learned_spectrum.md). N_STATES = K > 1
+# gives the readout K outputs per site and replaces the Rayleigh quotient by its
+# K-state generalisation, the Ky Fan trace Tr[C(0)⁻¹ C(Δ)] = Σ_{n<K} λ_n
+# (gelt.glueball.kyfan_trace, see kyfan_loss): every Ritz value bounds its own
+# level, the sum is maximal only on the span of the K lightest states the
+# network can reach, and it depends on the span alone — so the K outputs need
+# no orthogonality constraint to become K distinct states. K = 1 takes
+# rayleigh_loss's code path, so every existing run is reproduced bit for bit.
+N_STATES = _env_int("GLUEBALL_N_STATES", 1)
+if N_STATES < 1:
+    raise SystemExit(f"GLUEBALL_N_STATES must be ≥ 1 (got {N_STATES})")
+DECORR_REG = 1e-2  # K > 1 only: coefficient of mean_{k<l} ρ_kl(0)², the Δ = 0
+#                    correlation between outputs. The trace cannot see an
+#                    invertible mixing of the K outputs (the same span from a
+#                    different last layer), so nothing else stops two outputs
+#                    drifting towards collinearity — where C(0)⁻¹ amplifies the
+#                    batch noise. Like SCALE_REG it fixes a gauge: the span, and
+#                    hence the optimum, is untouched.
+KYFAN_RIDGE = 1e-6  # added to the unit-diagonal C(0) before the solve: it only
+#                     matters if two outputs become exactly collinear.
+# Start from another run's weights: every tensor whose shape matches, plus the
+# first rows of a head with a different K (the rest keep their initialisation).
+# Typical use: a K-state net whose trunk starts from the trained single-operator
+# net of the same ensemble. Tagged `_warm`, so it never collides with a
+# from-scratch run; ignored when a checkpoint is resumed or for RANDOM_INIT.
+WARM_FROM = _env_str("GLUEBALL_WARM_FROM", "")
 
 # Contiguous three-way split of the *chain-ordered* ensemble (NOT shuffled).
 # The ensemble is MCMC-ordered, so neighbouring configs are autocorrelated;
@@ -381,8 +422,10 @@ INPUT_SMEAR_LEVELS = _env_levels("GLUEBALL_INPUT_SMEAR_LEVELS", (0, 2, 4, 6))
 # Artifact tag: a non-default width, a non-default seed, the random-init
 # baseline and GLUEBALL_RUN_TAG each get their own checkpoint / dump / plot
 # names, so no run clobbers another's artifacts (default names are unchanged).
-# Order: <geometry> _ens<k> (_rnd<k> | _init<k>) <user tag>. `_ens<k>` must stay
-# in the name — su2_fair_fight.py pairs a dump with its ensemble through it.
+# Order: <geometry> _k<K> _ens<k> (_rnd<k> | _init<k>) _warm <user tag>. `_ens<k>`
+# must stay in the name — su2_fair_fight.py pairs a dump with its ensemble
+# through it. `_k<K>` marks a K-state basis (N_STATES > 1) and `_warm` a
+# GLUEBALL_WARM_FROM start; both are absent from every single-operator name.
 # The two 7-level nets of 2026-09-08/09 are d_model 24 but predate the _d tag,
 # so their names carry no width. The geometry slot is the width for GELT and the
 # (K, c_hidden, layers) triple for the L-CNN; the architecture itself is in the
@@ -406,8 +449,10 @@ ARCH_TAG = (
 )
 RUN_TAG = (
     ARCH_TAG
+    + ("" if N_STATES == 1 else f"_k{N_STATES}")
     + ("" if ENSEMBLE_SEED == 0 else f"_ens{ENSEMBLE_SEED}")
     + (f"_rnd{INIT_SEED}" if RANDOM_INIT else "" if INIT_SEED == 0 else f"_init{INIT_SEED}")
+    + ("_warm" if WARM_FROM and not RANDOM_INIT else "")
     + USER_TAG
 )
 CHECKPOINT = f"results/glueball/best_glueball_{ARCH}" + (
@@ -489,13 +534,14 @@ def network_obar(model, U4_batch, device):
     """Zero-momentum operator Ō(t) of a config minibatch via the 3D GELT.
 
     ``U4_batch`` : ``(b, 4, Lt, L, L, L, nc, nc)`` full 4D SU(2) configs (time =
-    lattice axis 0, i.e. tensor dim 2). Returns ``(b, Lt)`` real Ō[config, t].
+    lattice axis 0, i.e. tensor dim 2). Returns ``(b, Lt)`` real Ō[config, t],
+    or ``(b, Lt, K)`` for a K-output readout (N_STATES = K > 1).
     """
     b, Lt = U4_batch.shape[0], U4_batch.shape[2]
     W, T = config_inputs(U4_batch, device)
-    O = model(W, T)  # (b·Lt, L, L, L) per-site invariant scalar
-    Obar = O.sum(dim=(1, 2, 3))  # zero-momentum projection → (b·Lt,)
-    return Obar.view(b, Lt)
+    O = model(W, T)  # (b·Lt, L, L, L) per-site invariant scalar; (…, K) if K > 1
+    Obar = O.sum(dim=(1, 2, 3))  # zero-momentum projection → (b·Lt,) or (b·Lt, K)
+    return Obar.view(b, Lt, *Obar.shape[1:])
 
 
 def _geometry_label():
@@ -529,7 +575,7 @@ def _build_model():
             n_layers=len(LCNN_REF_CHANNELS),
             dtype=MODEL_DTYPE,
             mlp_hidden=MLP_HIDDEN,
-            mlp_out=1,
+            mlp_out=N_STATES,  # K outputs per site for a K-state basis
             reduction="none",
             in_channels=3 * len(INPUT_SMEAR_LEVELS),
             init_scale=LCNN_INIT_SCALE,
@@ -548,7 +594,7 @@ def _build_model():
             n_layers=LCNN_LAYERS,
             dtype=MODEL_DTYPE,
             mlp_hidden=MLP_HIDDEN,
-            mlp_out=1,
+            mlp_out=N_STATES,  # K outputs per site for a K-state basis
             reduction="none",
             gate=GATE,
             in_channels=3 * len(INPUT_SMEAR_LEVELS),
@@ -566,7 +612,7 @@ def _build_model():
         gate=GATE,
         dtype=MODEL_DTYPE,
         mlp_hidden=MLP_HIDDEN,
-        mlp_out=1,
+        mlp_out=N_STATES,  # K outputs per site for a K-state basis
         reduction="none",
         init_scale=INIT_SCALE,
         qk_init_scale=QK_INIT_SCALE,
@@ -616,6 +662,67 @@ def rayleigh_loss(Obar, deltas=LOSS_DELTAS):
     return loss, C[0], Rq
 
 
+def _top_ritz(C0, C1):
+    """Largest λ of C1 v = λ C0 v (the ground state's Ritz value); nan if C0 ⋡ 0."""
+    Lc, info = torch.linalg.cholesky_ex(C0)
+    if int(info) != 0:
+        return torch.tensor(float("nan"), dtype=C0.dtype, device=C0.device)
+    Li = torch.linalg.solve_triangular(
+        Lc, torch.eye(C0.shape[-1], dtype=C0.dtype, device=C0.device), upper=False
+    )
+    M = Li @ C1 @ Li.T
+    return torch.linalg.eigvalsh(0.5 * (M + M.T))[-1]
+
+
+def kyfan_loss(Obar, deltas=LOSS_DELTAS):
+    """The K-state Rayleigh loss (N_STATES = K > 1): −(1/K)·mean_Δ Tr[C(0)⁻¹ C(Δ)].
+
+    ``Obar`` : ``(b, Lt, K)``. C(Δ) is the K×K connected correlator matrix, each
+    output's VEV subtracted by its batch mean and every time origin averaged,
+    exactly as in :func:`rayleigh_loss`. The trace is the sum of the K Ritz
+    values of the transfer matrix in the outputs' span
+    (``gelt.glueball.kyfan_trace``): each is bounded by its own level,
+    λ_n(Δ) ≤ e^{−E_n Δ}, so the loss is bounded below by
+    −(1/K)·mean_Δ Σ_{n<K} e^{−E_n Δ} and reaches it only on the span of the K
+    lightest states the network can represent — whatever their J^PC: the net is
+    not O_h-invariant by construction, so the levels are labelled afterwards
+    (scripts/spectrum_readout.py). At K = 1 the trace is the Rayleigh quotient.
+
+    Two penalties fix the readout's GL(K) freedom, which the trace cannot see,
+    and leave the optimal span untouched: the scale pin of rayleigh_loss per
+    output, SCALE_REG·mean_k (log C_kk(0))², and DECORR_REG·mean_{k<l} ρ_kl(0)².
+    Returns ``(loss, mean_k C_kk(0), λ₀(1))``: −log λ₀(1) is the monitored mass,
+    as −log C(1)/C(0) is for K = 1.
+    """
+    # float64 for the same reason as rayleigh_loss: the VEV subtraction.
+    Obar = Obar.double()
+    K = Obar.shape[-1]
+    d = Obar - Obar.mean(dim=(0, 1))
+    n = d.shape[0] * d.shape[1]
+    need = sorted({0, 1} | set(deltas))
+    C = {}
+    for dt in need:
+        M = torch.einsum("btk,btl->kl", d.roll(-dt, dims=1), d) / n
+        C[dt] = 0.5 * (M + M.T)
+    # The EPS floor of rayleigh_loss, on the diagonal only: it guards the
+    # constant-output collapse of any one of the K outputs.
+    c0 = C[0].diagonal().clamp_min(EPS)
+    C0 = C[0] + torch.diag(c0 - C[0].diagonal())
+    trace = sum(kyfan_trace(C0, C[dt], ridge=KYFAN_RIDGE) for dt in deltas) / len(deltas)
+    rho = C0 / (c0.sqrt()[:, None] * c0.sqrt()[None, :])
+    iu = torch.triu_indices(K, K, 1, device=rho.device)
+    decorr = rho[iu[0], iu[1]].pow(2).mean() if K > 1 else rho.new_zeros(())
+    loss = -trace / K + SCALE_REG * c0.log().pow(2).mean() + DECORR_REG * decorr
+    with torch.no_grad():
+        Rq = _top_ritz(C0, C[1])
+    return loss, c0.mean(), Rq
+
+
+def variational_loss(Obar):
+    """:func:`rayleigh_loss` for one output ``(b, Lt)``, :func:`kyfan_loss` for K."""
+    return rayleigh_loss(Obar) if Obar.dim() == 2 else kyfan_loss(Obar)
+
+
 # ── Blocked jackknife on held-out configs ─────────────────────────────────────
 def _blocks(B, block_size):
     idx = torch.arange(B)
@@ -663,6 +770,28 @@ def blocked_jackknife_gevp_meff(Obar_basis, block_size, t0):
     mean = samples.mean(dim=0)
     err = ((n - 1) / n * ((samples - mean) ** 2).sum(dim=0)).sqrt()
     return mean[:, 0], err[:, 0]  # ground state
+
+
+def blocked_jackknife_gevp_spectrum(Obar_basis, block_size, t0):
+    """Delete-block jackknife of every GEVP level's m_eff(Δ) — the K-state readout.
+
+    :func:`blocked_jackknife_gevp_meff` with all columns kept. ``Obar_basis`` :
+    ``(n_ops, B, Nt)``. Returns mean/err ``(Nt − 1, n_ops)``, column n = level n
+    (meaningful for Δ ≥ t0, see ``gelt.glueball.gevp_eigenvalues``).
+    """
+    B = Obar_basis.shape[1]
+    blocks = _blocks(B, block_size)
+    samples = []
+    for bl in blocks:
+        mask = torch.ones(B, dtype=torch.bool)
+        mask[bl] = False
+        C = connected_correlator_matrix(Obar_basis[:, mask])
+        samples.append(gevp_effective_mass(gevp_eigenvalues(C, t0=t0)))
+    samples = torch.stack(samples)
+    n = len(blocks)
+    mean = samples.mean(dim=0)
+    err = ((n - 1) / n * ((samples - mean) ** 2).sum(dim=0)).sqrt()
+    return mean, err
 
 
 def blocked_jackknife_meff_diff(Obar_single, Obar_basis, block_size, t0):
@@ -805,7 +934,34 @@ def main():
             f"input smear levels {list(INPUT_SMEAR_LEVELS)} | params {n_params:,} "
             f"({n_real:,} real)"
         )
+    if N_STATES > 1:
+        print(f"K-state variational basis: {N_STATES} outputs, Ky Fan loss "
+              f"(DECORR_REG={DECORR_REG:g})")
 
+    # ── Optional warm start from another run (GLUEBALL_WARM_FROM). A resumed
+    # checkpoint of this run takes precedence, and the untrained baseline must
+    # stay untrained.
+    if WARM_FROM and not RANDOM_INIT and not (RESUME and os.path.exists(CHECKPOINT)):
+        src = torch.load(WARM_FROM, map_location=device, weights_only=True)
+        own = model.state_dict()
+        took, head_rows = 0, None
+        for k, v in src.items():
+            if k not in own:
+                continue
+            if own[k].shape == v.shape:
+                own[k] = v
+                took += 1
+            elif k.endswith(("fc2.weight", "fc2.bias")) and own[k].shape[1:] == v.shape[1:]:
+                rows = min(v.shape[0], own[k].shape[0])
+                own[k][:rows] = v[:rows]
+                head_rows = rows
+        model.load_state_dict(own)
+        print(f"warm start from {WARM_FROM}: {took} of {len(own)} tensors copied"
+              + ("" if head_rows is None else f", head rows 0..{head_rows - 1}"))
+
+    if CALIBRATE_C0 and N_STATES > 1:
+        raise SystemExit("GLUEBALL_CALIBRATE_C0 calibrates one output; it is not "
+                         "defined for a K-state readout (GLUEBALL_N_STATES > 1)")
     if CALIBRATE_C0 and not RANDOM_INIT:
         # One forward on a few training configs, then scale the readout so
         # C(0) lands on CALIBRATE_TARGET. C(0) is quadratic in the output, so
@@ -868,7 +1024,7 @@ def main():
             torch.load(CHECKPOINT, map_location=device, weights_only=True)
         )
         val0 = held_out_obar(model, val_configs, device)
-        best_val_loss = rayleigh_loss(val0)[0].item()
+        best_val_loss = variational_loss(val0)[0].item()
         print(
             f"Resumed weights from {CHECKPOINT} — starting val Rayleigh loss "
             f"{best_val_loss:.4f} (optimizer/schedule start fresh)."
@@ -904,7 +1060,7 @@ def main():
                 batch = train_configs[order[i : i + BATCH_CONFIGS]]
                 optimizer.zero_grad()
                 Obar = network_obar(model, batch, device)
-                loss, C0, Rq = rayleigh_loss(Obar)
+                loss, C0, Rq = variational_loss(Obar)
                 # Non-finite guard: one pathological batch must cost one skipped
                 # step, not the run. A NaN/inf anywhere here makes
                 # clip_grad_norm_'s total norm NaN, which rescales EVERY grad to
@@ -954,7 +1110,7 @@ def main():
             # Validation Rayleigh (whole val set at once, minibatched forward) —
             # this is the model-selection signal, kept off the reported test set.
             val = held_out_obar(model, val_configs, device)
-            val_loss, val_C0, val_R = rayleigh_loss(val)
+            val_loss, val_C0, val_R = variational_loss(val)
             val_loss = val_loss.item()
             val_hist.append(val_loss)
             # m = −log R; guard the log against a spurious R ≥ 1 (variational bound
@@ -1010,6 +1166,31 @@ def main():
     # ── Test effective-mass curves (blocked jackknife) on the UNTOUCHED test
     # split — the only numbers reported. GELT operator on test configs.
     gelt_obar = held_out_obar(model, test_configs, device).double()
+    learned = None
+    if N_STATES > 1:
+        # The K outputs span a learned subspace; the operator every downstream
+        # script compares is its ground-state member. Its vector is the GEVP's
+        # at (t0, td) = (0, 1) — the pair the Ky Fan loss optimises — fitted on
+        # the VALIDATION split, so on test it is a fixed operator exactly like a
+        # K = 1 net's. The K test series and the validation fit go in the dump;
+        # scripts/spectrum_readout.py reads the levels above the ground state.
+        test_obars = gelt_obar.permute(2, 0, 1).contiguous()  # (K, N_test, Lt)
+        val_obars = held_out_obar(model, val_configs, device).double().permute(2, 0, 1)
+        lam_val, V_val = gevp_vectors(connected_correlator_matrix(val_obars), t0=0, td=1)
+        gelt_obar = torch.einsum("kbt,k->bt", test_obars, V_val[:, 0])
+        learned = {"obars": test_obars, "val_obars": val_obars.contiguous(),
+                   "V_val": V_val, "lam_val": lam_val}
+        print(f"{NET} K = {N_STATES} basis, validation Ritz values at Δ = 1 (t0 = 0): "
+              + "  ".join(f"λ{n} = {lam_val[n].item():.4f} (−log {-np.log(lam_val[n].item()):.3f})"
+                          if lam_val[n].item() > 0 else f"λ{n} = {lam_val[n].item():.4f}"
+                          for n in range(len(lam_val))))
+        spec_m, spec_e = blocked_jackknife_gevp_spectrum(test_obars, JACK_BLOCK, 0)
+        print(f"{NET} learned spectrum, GEVP t0 = 0 on test (blocked jackknife), m_eff(Δ):")
+        for lvl in range(spec_m.shape[1]):
+            print(f"     level {lvl}: " + "   ".join(
+                f"Δ={dlt}: {spec_m[dlt, lvl].item():.3f} ± {spec_e[dlt, lvl].item():.3f}"
+                for dlt in range(1, min(5, spec_m.shape[0]))
+                if bool(torch.isfinite(spec_m[dlt, lvl]))))
     _, _, R_final = rayleigh_loss(gelt_obar)
     m_rayleigh = -np.log(R_final.item()) if 0 < R_final.item() < 1 else float("nan")
     print(f"{NET} test Rayleigh mass  m·a_t = −log C(1)/C(0) = {m_rayleigh:.3f}")
@@ -1028,56 +1209,66 @@ def main():
     # variants never overwrite each other's dumps.
     obar_dump = CHECKPOINT.replace(".pth", "_test_obars.pt")
     os.makedirs("datasets", exist_ok=True)
-    torch.save(
-        {
-            "gelt_obar": gelt_obar,
-            "Obar_basis": Obar_basis,
-            "meta": {
-                "L": L,
-                "Lt": LT,
-                "beta": BETA,
-                "xi": XI,
-                "gevp_levels": list(GEVP_LEVELS),
-                "gevp_t0": GEVP_T0,
-                "jack_block": JACK_BLOCK,
-                "input_smear_levels": list(INPUT_SMEAR_LEVELS),
-                "checkpoint": CHECKPOINT,
-                "best_val_loss": best_val_loss,
-                # The whole val curve, not just its minimum. Reading a sweep
-                # needs to know whether the horizon was the binding constraint
-                # (notes/m1_probe.md §8), and a single best value cannot say —
-                # nor can it see a run that learns, blows up and settles back.
-                # scripts/glueball_sweep_read.py prefers this over the log.
-                "val_hist": list(val_hist),
-                "ensemble_seed": ENSEMBLE_SEED,
-                "init_seed": INIT_SEED,
-                "d_model": D_MODEL,
-                "d_qkv": D_QKV,
-                "alpha_mode": ALPHA_MODE,
-                "random_init": RANDOM_INIT,
-                # The architecture that produced gelt_obar. The key name stays
-                # `gelt_obar` whatever ARCH is: every offline consumer
-                # (fit_glueball_overlap, su2_fair_fight, operator_decomposition,
-                # input_architecture_curve) reads it, and they compare *a single
-                # learned operator* against the classical span — which is what
-                # an L-CNN dump is too. `arch` is how a reader tells them apart.
-                "arch": ARCH,
-                "lcnn_geometry": (
-                    None
-                    if not IS_LCNN
-                    else {"K": LCNN_K, "channels": LCNN_REF_CHANNELS,
-                          "init_scale": LCNN_INIT_SCALE,
-                          "init_w": LCNN_REF_INIT_W,
-                          "use_act": LCNN_REF_ACT, "head": LCNN_REF_HEAD}
-                    if ARCH == "lcnn_ref"
-                    else {"K": LCNN_K, "c_hidden": LCNN_C_HIDDEN,
-                          "n_layers": LCNN_LAYERS, "init_scale": LCNN_INIT_SCALE}
-                ),
-                "lr": LR,
-            },
+    blob = {
+        "gelt_obar": gelt_obar,
+        "Obar_basis": Obar_basis,
+        "meta": {
+            "L": L,
+            "Lt": LT,
+            "beta": BETA,
+            "xi": XI,
+            "gevp_levels": list(GEVP_LEVELS),
+            "gevp_t0": GEVP_T0,
+            "jack_block": JACK_BLOCK,
+            "input_smear_levels": list(INPUT_SMEAR_LEVELS),
+            "checkpoint": CHECKPOINT,
+            "best_val_loss": best_val_loss,
+            # The whole val curve, not just its minimum. Reading a sweep
+            # needs to know whether the horizon was the binding constraint
+            # (notes/m1_probe.md §8), and a single best value cannot say —
+            # nor can it see a run that learns, blows up and settles back.
+            # scripts/glueball_sweep_read.py prefers this over the log.
+            "val_hist": list(val_hist),
+            "ensemble_seed": ENSEMBLE_SEED,
+            "init_seed": INIT_SEED,
+            "d_model": D_MODEL,
+            "d_qkv": D_QKV,
+            "alpha_mode": ALPHA_MODE,
+            "random_init": RANDOM_INIT,
+            # The architecture that produced gelt_obar. The key name stays
+            # `gelt_obar` whatever ARCH is: every offline consumer
+            # (fit_glueball_overlap, su2_fair_fight, operator_decomposition,
+            # input_architecture_curve) reads it, and they compare *a single
+            # learned operator* against the classical span — which is what
+            # an L-CNN dump is too. `arch` is how a reader tells them apart.
+            "arch": ARCH,
+            "lcnn_geometry": (
+                None
+                if not IS_LCNN
+                else {"K": LCNN_K, "channels": LCNN_REF_CHANNELS,
+                      "init_scale": LCNN_INIT_SCALE,
+                      "init_w": LCNN_REF_INIT_W,
+                      "use_act": LCNN_REF_ACT, "head": LCNN_REF_HEAD}
+                if ARCH == "lcnn_ref"
+                else {"K": LCNN_K, "c_hidden": LCNN_C_HIDDEN,
+                      "n_layers": LCNN_LAYERS, "init_scale": LCNN_INIT_SCALE}
+            ),
+            "lr": LR,
+            # K of the variational basis (1 = the single-operator net) and
+            # the run a GLUEBALL_WARM_FROM start took its weights from.
+            "n_states": N_STATES,
+            "warm_from": WARM_FROM or None,
         },
-        obar_dump,
-    )
+    }
+    if learned is not None:
+        # The K-state basis: its K test series in the Obar_basis layout, the
+        # validation series the projection was fitted on, and that fit —
+        # gelt_obar above is Σ_k V_val[k, 0]·gelt_obars[k].
+        blob["gelt_obars"] = learned["obars"]
+        blob["val_obars"] = learned["val_obars"]
+        blob["learned_gevp"] = {"t0": 0, "td": 1, "split": "val",
+                                "V": learned["V_val"], "lams": learned["lam_val"]}
+    torch.save(blob, obar_dump)
     print(f"Saved test Ō arrays → {obar_dump}")
 
     obar_thin, obar_sm = Obar_basis[0], Obar_basis[-1]
@@ -1151,6 +1342,8 @@ def main():
 
     # (0) training curves
     loss_lab = "−mean[" + ", ".join(f"C({d})/C(0)" for d in LOSS_DELTAS) + "]"
+    if N_STATES > 1:
+        loss_lab = "−(1/K)·mean[" + ", ".join(f"Tr C(0)⁻¹C({d})" for d in LOSS_DELTAS) + "]"
     ax[0].plot(train_hist, label=f"train  {loss_lab}")
     ax[0].plot(val_hist, label=f"val  {loss_lab}")
     ax[0].set_xlabel("epoch")
@@ -1180,6 +1373,11 @@ def main():
         label=f"classical GEVP ground (levels {GEVP_LEVELS})",
     )
     _plot(meff_gelt, err_gelt, f"{NET} (learned)", "C2", "^-")
+    # The K-state basis's levels above the ground state (GEVP t0 = 0 on test).
+    if learned is not None:
+        for lvl in range(1, spec_m.shape[1]):
+            _plot(spec_m[:, lvl], spec_e[:, lvl], f"{NET} learned level {lvl}",
+                  f"C{4 + lvl}", "x--")
     # Enlarged (classical + GELT) GEVP ground state — same Δ ≥ t0 rule.
     mgp, egp = meff_gevp_plus.numpy(), err_gevp_plus.numpy()
     okp = np.isfinite(mgp) & np.isfinite(egp) & (dd >= GEVP_T0)

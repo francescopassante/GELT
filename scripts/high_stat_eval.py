@@ -24,7 +24,11 @@ Env: HS_N (default 40000), HS_SEED (default 1000 + ensemble seed — must differ
 from every seed whose chain trained or validated the net), HS_NSKIP (default
 train_glueball.N_SKIP; the jackknife block must then cover 2·τ_int/n_skip
 configs — check with block_size_scan.py on the dump), HS_CHUNK (default 60),
-HS_TAG (default "_hs").
+HS_TAG (default "_hs"), HS_ALSO (comma list of further checkpoints of the SAME
+architecture, evaluated in the same pass on the same configurations and stored
+as ``extra_obars[<path>]`` — what a paired comparison of two nets at high
+statistics needs; a second run with the same seed is not guaranteed to be the
+same chain if either was resumed).
 """
 
 import functools
@@ -50,6 +54,7 @@ SEED = tg._env_int("HS_SEED", 1000 + tg.ENSEMBLE_SEED)
 NSKIP = tg._env_int("HS_NSKIP", tg.N_SKIP)
 CHUNK = tg._env_int("HS_CHUNK", 60)
 TAG = tg._env_str("HS_TAG", "_hs")
+ALSO = [p for p in tg._env_str("HS_ALSO", "").split(",") if p]
 # HS_SMOKE: plumbing check on any device — untrained net, no checkpoint needed,
 # HS_NTHERM thermalisation sweeps, dump tagged "_smoke" (never a real result).
 BATCH = tg._env_int("HS_BATCH", tg.BATCH_CONFIGS)
@@ -81,6 +86,15 @@ def main():
     if not SMOKE:
         model.load_state_dict(torch.load(tg.CHECKPOINT, map_location=device, weights_only=True))
     model.eval()
+    # Further nets of the same architecture on the same chain (HS_ALSO).
+    also = {}
+    for path in ALSO:
+        if not os.path.exists(path):
+            raise SystemExit(f"HS_ALSO: no checkpoint at {path}")
+        m = tg._build_model().to(device)
+        m.load_state_dict(torch.load(path, map_location=device, weights_only=True))
+        also[path] = m.eval()
+    x_rows = {path: [] for path in also}
 
     sweep = functools.partial(heatbath_overrelaxation_sweep, n_or=tg.N_OR, xi=tg.XI)
     gaugegroup = tg.gaugegroup
@@ -90,6 +104,11 @@ def main():
     if os.path.exists(PARTIAL):
         st = torch.load(PARTIAL)
         g_rows, b_rows, done = [st["gelt"]], [st["basis"]], st["done"]
+        if sorted(st.get("extra", {})) != sorted(also):
+            raise SystemExit(f"{PARTIAL} was written with HS_ALSO = "
+                             f"{sorted(st.get('extra', {}))}; resume with the same list "
+                             f"or delete it")
+        x_rows = {path: [st["extra"][path]] for path in also}
         U = st["U"].to(device)
         print(f"resuming at {done}/{N}")
     else:
@@ -117,12 +136,18 @@ def main():
             b = smearing_operator_basis(
                 chunk, gaugegroup, tg.GEVP_LEVELS, alpha=tg.SMEAR_ALPHA
             ).cpu().double()
+            for path, m in also.items():
+                x_rows[path].append(torch.cat(
+                    [tg.network_obar(m, chunk[i : i + BATCH], device).cpu()
+                     for i in range(0, n, BATCH)]
+                ).double())
         g_rows.append(g)
         b_rows.append(b)
         done += n
         bar.update(n)
         torch.save(
             {"gelt": torch.cat(g_rows), "basis": torch.cat(b_rows, dim=1),
+             "extra": {path: torch.cat(r) for path, r in x_rows.items()},
              "U": U.cpu(), "done": done},
             PARTIAL,
         )
@@ -134,6 +159,9 @@ def main():
         {
             "gelt_obar": gelt_obar,
             "Obar_basis": Obar_basis,
+            # HS_ALSO nets, same configurations, keyed by checkpoint path
+            **({"extra_obars": {path: torch.cat(r) for path, r in x_rows.items()}}
+               if also else {}),
             "meta": {
                 "L": tg.L, "Lt": tg.LT, "beta": tg.BETA, "xi": tg.XI,
                 "gevp_levels": list(tg.GEVP_LEVELS), "gevp_t0": tg.GEVP_T0,

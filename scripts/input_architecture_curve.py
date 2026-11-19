@@ -68,16 +68,21 @@ SATURATED = 0.90  # combined classical A₀ at or above which a point is exclude
 # `reports/curve/learned_operator_curve.tex` names every one of those elements)
 # is never overwritten by it.
 SLIM = os.environ.get("CURVE_SLIM", "0") == "1"
+# The thesis figure: the untrained trace stays, but the saturation band and
+# labels, the width control, the off-chain shape points and the "one rung
+# further" trace go, and the classical method is just called "GEVP". Written to
+# its own filename like SLIM.
+THESIS = os.environ.get("CURVE_THESIS", "0") == "1"
 
 # x → (label, the classical arm with the same input content, the next rung's arm)
 CHAIN = {
     "thin": ("thin", "thin", "published"),
     "4lv": ("4lv", "published", "deep"),
-    # The rung beyond 7lv is the 21-operator arm the readings were registered
-    # against, under the name it has carried since `full` grew to 35 operators.
-    "7lv": ("7lv", "deep", "full21"),
+    # The rung beyond 7lv is the 35-operator `full` (the thesis dropped the
+    # 21-operator arm, `full21`, and keeps only this one under the name `full`).
+    "7lv": ("7lv", "deep", "full"),
 }
-OFFCHAIN = {"4lv+5sh": "shapes_sm", "7lv+3sh": "full21", "7lv+5sh": "full"}
+OFFCHAIN = {"4lv+5sh": "shapes_sm", "7lv+5sh": "full"}
 ENSEMBLES = ("run5", "ens1")
 COLOR = {"classical": "#D55E00", "trained": "#0072B2", "random": "#888888"}
 
@@ -289,16 +294,15 @@ def figure(pts, comb, delta, resolvable):
         return combine(v) if v else None
 
     a = ax[0]
-    if not SLIM:
+    if not SLIM and not THESIS:
         a.axhspan(SATURATED, 1.15, color="#bbb", alpha=0.25, zorder=0)
         a.text(0.02, SATURATED + 0.006, "saturated — excluded from the tests",
                fontsize=8, color="#555", transform=a.get_yaxis_transform())
     rw = sorted({pts[k]["random_width"] for k in pts if "random_width" in pts[k]})
-    traces = [("classical", "classical GEVP"),
-              ("trained", f"GELT, trained (d_model {WIDTH})")]
+    traces = [("classical", "GEVP" if THESIS else "classical GEVP"),
+              ("trained", "GELT, trained")]
     if not SLIM:
-        traces.append(("random", "GELT, untrained (3 seeds, d_model "
-                                 + "/".join(str(w) for w in rw) + ")"))
+        traces.append(("random", "GELT, untrained (3 seeds)"))
     for trace, label in traces:
         xs = [i for i, x in enumerate(chain) if comb_of(x, trace)]
         v = [comb_of(chain[i], trace) for i in xs]
@@ -306,16 +310,15 @@ def figure(pts, comb, delta, resolvable):
                    ms=8, capsize=4, lw=1.6, color=COLOR[trace], label=label)
     wc = [(i, comb_of(x, "width_control_A0")) for i, x in enumerate(chain)]
     wc = [(i, v) for i, v in wc if v]
-    if wc and not SLIM:
+    if wc and not SLIM and not THESIS:
         a.errorbar([i + 0.13 for i, _ in wc], [v[0] for _, v in wc],
                    yerr=[v[1] for _, v in wc], fmt="*", ms=14, mfc="none",
                    color=COLOR["trained"], label="GELT, trained (width control)")
-    for name in () if SLIM else OFFCHAIN:
+    for name in () if SLIM or THESIS else OFFCHAIN:
         v = comb_of(name, "classical")
         if v:
             i = chain.index("4lv" if name.startswith("4lv") else "7lv")
-            # the two 7lv shape points would otherwise sit on top of each other
-            dx = 0.39 if name == "7lv+5sh" else 0.26
+            dx = 0.26
             a.errorbar([i + dx], [v[0]], yerr=[v[1]], fmt="^", ms=9, mfc="none",
                        color=COLOR["classical"], label=f"classical, {name}")
     a.legend(fontsize=8, loc="lower right")
@@ -326,17 +329,18 @@ def figure(pts, comb, delta, resolvable):
     xs = [i for i, x in enumerate(chain) if chain[i] in delta]
     v = [delta[chain[i]] for i in xs]
     a.errorbar(xs, [q[0] for q in v], yerr=[q[1] for q in v], fmt="D-", ms=9,
-               capsize=5, lw=1.6, color="k", label="trained GELT − classical GEVP")
+               capsize=5, lw=1.6, color="k", label="trained GELT − GEVP" if THESIS
+               else "trained GELT − classical GEVP")
     rungs_x = [(i, pts[(chain[i], ENSEMBLES[0])].get("rung")) for i in xs]
     rv = [(i, combine([pts[(chain[i], e)]["rung"] for e in ENSEMBLES
                        if (chain[i], e) in pts and pts[(chain[i], e)].get("rung")]))
           for i, r in rungs_x if r]
-    if rv and not SLIM:
+    if rv and not SLIM and not THESIS:
         a.errorbar([i + 0.13 for i, _ in rv], [q[0] for _, q in rv],
                    yerr=[q[1] for _, q in rv], fmt="s--", ms=7, capsize=4,
                    color="#009E73", alpha=0.9,
                    label="…− the classical GEVP one rung further")
-    for i in () if SLIM else xs:
+    for i in () if SLIM or THESIS else xs:
         if chain[i] not in resolvable:
             last = i == len(chain) - 1  # the label would run off the right edge
             a.annotate("saturated", (i, delta[chain[i]][0]), fontsize=8,
@@ -347,10 +351,11 @@ def figure(pts, comb, delta, resolvable):
     a.set_title("Correlated difference, same configurations")
     a.legend(fontsize=8)
 
-    fig.suptitle("One learned operator against the optimal classical combination "
-                 "of the same inputs", fontsize=13)
+    fig.suptitle("One learned operator against the GEVP of the same inputs"
+                 if THESIS else "One learned operator against the optimal classical "
+                 "combination of the same inputs", fontsize=13)
     fig.tight_layout()
-    out = OUT + ("_slim" if SLIM else "") + ".png"
+    out = OUT + ("_slim" if SLIM else "") + ("_thesis" if THESIS else "") + ".png"
     fig.savefig(out, dpi=150)
     print(f"saved {out}")
 

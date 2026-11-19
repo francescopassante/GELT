@@ -325,6 +325,21 @@ implementation (MIT, Favoni et al. 2012.12901), layer sources only, tracked so
   right is only the sentence "this is the paper's network".
 - **`cnn_baseline.py`** — `LatticeCNN`: non-equivariant baseline; `Conv2d`/
   `Conv3d` for D=2/3 and a roll-based `_RollConvND` for D≥4.
+- **`vacuum.py`** — the Yang–Mills vacuum wavefunctional by force matching
+  (`notes/thesis_record.md` §11 P12). The identity: one slice's spatial links
+  are distributed as ψ₀², and ∇ log ψ₀² = −∇S_s + E[F_temp | slice].
+  `lie_generators` (Tr T^aT^b = δ/2, σ/2 at nc = 2) and `lie_grad` (left
+  perturbation (1 + iε·T)U, first order — exact for first derivatives only, so
+  never take a Laplacian through it); `temporal_force` / `spatial_force` from
+  staples, F^a = −(β/nc) Im Tr(T^a U A), pinned against autograd of `action`;
+  `loop_basis` / `bilinear_basis` (transport-dressed B·B shells) /
+  `basis_gradients` — the classical comparators, linear in their coefficients;
+  `frozen_slice_mask`, `slice_temporal_staples`, `delta_temporal_action` (the
+  change of the slice's temporal action from the *difference* of the slices, in
+  float64 — never the difference of two O(10⁴) totals); `su2_exp` / `su2_log`.
+  The sampler side is `frozen=` on the SU(2) sweeps (`None` is the unchanged
+  path): frozen links are never written, so the chain samples the rest
+  conditionally — the multilevel construction.
 - **`cubic.py`** — the spatial cubic group O_h on links, for S4
   (`notes/prof_notes.md`). `cubic_elements()` → the 48 signed permutations of
   axes 1..3 (time untouched), identity first; `apply_cubic(U, group, g,
@@ -381,10 +396,13 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   `deep` / `shapes` / `full`), gated on reproducing the published numbers first.
   **`full` is 7 levels × all five shapes of `shapes_sm` (35 operators) since
   2026-10-02; the 21-operator arm every earlier `full` number refers to is
-  `full21`.** Six of the 35 are in no cache yet (one GPU pass per ensemble,
-  which extends the cache without replacing a series), so until then `full`
-  is skipped offline and by-name readers of an old cache
-  (`operator_decomposition.py`, `p1_meff_strong_basis.py`) still get 21.
+  `full21`.** A cache written before that date lacks six of the 35 (one GPU
+  pass per ensemble extends it without replacing a series): against it `full`
+  is skipped offline and the by-name readers (`operator_decomposition.py`,
+  `p1_meff_strong_basis.py`) get 21 operators, against an extended one 35.
+  At (0,1): 4-level GELT − `full` = −0.060 ± 0.015, 7-level +0.015 ± 0.010
+  (half-split −0.054 ± 0.016 and +0.012 ± 0.015; at (1,2) the arm is not
+  readable — `notes/thesis_record.md` §3.3).
   `SFF_NOCACHE=1` runs the dump-only path offline. `SFF_BASES=1` runs **every**
   arm offline from the kept per-ensemble obars cache (now write-once);
   `SFF_TRUNCATE=1` / `SFF_PRUNE=<ρ>` are the estimator knobs of
@@ -573,6 +591,42 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   `--name=value` was refused; it now runs after them.
   The figure takes `--fig-targets=` and `--fig-archs=` (e.g. `gelt,cnn` to drop
   the L-CNN), offline from the dumps.
+- **`variational_headroom.py` / `train_distill.py` / `tmd_readout.py` /
+  `tmd_batch.sh`** — the headroom study and the experiment it motivates
+  (`notes/thesis_record.md` §3.8, §11 P11; 2026-11-12). `variational_headroom.py`
+  is offline and fit-free: the 4-level net's true overlap is ≈ 0.88 (not the
+  one-state fit's 0.93), it is **behind `shapes_sm` on its own training loss**
+  (+0.021 ± 0.003) and adds nothing to it; `eta()` is the Euclidean
+  completeness of a span, whose large-lag limit is the largest true overlap the
+  span can reach. `train_distill.py` is the regression of the teacher's field
+  at t ± a onto slice t — exactly the Euclidean-evolved operator T^a·teacher as
+  a single-timeslice operator (`tests/test_headroom.py` pins the identity on a
+  known spectrum). It **imports `train_glueball`** for ensemble, splits, inputs,
+  model and dump format, and names the student as a run tagged
+  `_tmd<lags>`, so `high_stat_eval.py` finds it by env; `HS_ALSO` there puts
+  teacher and student on one chain. The student starts from the teacher's
+  weights and **the start is a candidate checkpoint**: a student that never
+  beats its starting validation loss is saved as its teacher, and the readout
+  says R-T0. Adam needs the warm-up (`TMD_WARMUP`): without it one step at 1e-3
+  took the plumbing check's loss from 0.5 to 138. **Not run yet.**
+  `hybrid_transport_probe.py` is the control that ruled out thin transport.
+- **`vacuum_common.py` / `vacuum_replicas.py` / `vacuum_classical.py` /
+  `train_vacuum.py` / `vacuum_relative_weights.py` / `vacuum_readout.py` /
+  `vacuum_batch.sh`** — the vacuum wavefunctional by force matching
+  (`notes/thesis_record.md` §11 P12, `gelt/vacuum.py`; 2026-11-18). Everything
+  is `VAC_*` env or `--vac-*` argv, unknown flags refused; `vacuum_common`
+  imports `train_glueball` with an emptied argv (its cache key, splits and
+  architecture constants), so the ensemble is the glueball one by
+  construction and **nothing is sampled but conditional chains**. Order:
+  replicas (ε needs them) → classical (the nets' residual and every paired
+  comparison need its per-config errors) → nets → relative weights. The nets
+  are **residual over a classical arm with a zero-initialised readout**, take
+  the Lie gradient through plaquettes, APE levels and transport (double
+  backprop, **no gradient checkpointing** — the non-reentrant checkpoint's
+  double-backward support was not relied on), and are selected on the
+  validation force-matching loss. Every ε is paired on one replica set, checked
+  by index before any difference is formed. **Smoke-tested only** (8 × 4³, CPU);
+  never run on the V100.
 - **`cubic_projection.py` / `cubic_batch.sh`** — S4: each trained net's Ō on
   its test split transformed by all 48 elements of O_h, the whole input
   pipeline rebuilt from the transformed links. Gated on the identity
@@ -665,6 +719,19 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   prints them; and `W^(1×1)` **constructively** exact in the 12-parameter
   network, so its MSE is a float32 floor and not an approximation error.
 - **`test_data_model.py`** — split validation and CNN-baseline shape guards.
+- **`test_vacuum.py`** — the force-matching identity's pieces: the generators;
+  the staple forces against autograd of the anisotropic action (1e-12); gauge
+  invariance of per-link force norms and of both classical bases; `lie_grad`
+  against a finite difference along an exact geodesic, through APE smearing,
+  the transport and a GELT (which must see the transport); a nonzero
+  parameter gradient through the double backprop; **Stein's identity on the
+  slice marginal** (E[∇h·(F_s + F_temp)] = 4C_F E[h], z = −0.2, and z = −174
+  with F_temp's sign flipped, so it has power); the frozen slice never written.
+- **`test_headroom.py`** — the identity behind the distillation, on independent
+  AR(1) modes (an exact transfer-matrix model): regressing O(t ± a) on a span
+  that resolves every mode gives the operator whose correlator is the target's
+  shifted by 2a; η is 1 on a complete span, below 1 on an incomplete one, and
+  its large-lag limit is the best overlap in the span; the wrap correction.
 - **`test_cubic.py`** — O_h on links: the composition law bit for bit
   against the matrices, the anisotropic action and the classical Ō(t) (APE
   ladder included) invariant under all 48, the character table orthonormal,
@@ -808,6 +875,12 @@ python scripts/block_size_scan.py            # S3: τ_int of Ō and σ(jackknife
 python scripts/gap_scan.py                   # S3: ΔA₀ after dropping the first g test configs (offline, seconds)
 bash   scripts/overnight_replication.sh      # fresh ensemble + retraining (~24 h)
 bash   scripts/ens2_batch.sh                 # the third ensemble (seed 2); never retrains ens1
+python scripts/variational_headroom.py      # where the headroom is: fit-free, offline, 20 s
+python scripts/hybrid_transport_probe.py     # thin transport is not the bottleneck (CPU, 10 s)
+TMD_DRY_RUN=1 bash scripts/tmd_batch.sh      # transfer-matrix distillation: what would run (V100)
+python scripts/tmd_readout.py                # student vs teacher, paired, readings fixed (offline)
+VAC_DRY_RUN=1 bash scripts/vacuum_batch.sh   # vacuum wavefunctional by force matching: what would run (V100)
+python scripts/vacuum_readout.py             # its readings V0–V5 (offline, seconds)
 python scripts/cubic_projection.py --smoke=1 # S4 plumbing (CPU, seconds)
 CUBIC_DRY_RUN=1 bash scripts/cubic_batch.sh  # S4: Ō under all 48 of O_h → _a1 dumps (V100)
 bash   scripts/curve_batch.sh                # the curve's random trace + 3 trainings

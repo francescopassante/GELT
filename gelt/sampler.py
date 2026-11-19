@@ -616,6 +616,7 @@ def _su2_local_sweep(
     update,
     xi: float = 1.0,
     time_axis: int = 0,
+    frozen: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """One checkerboard sweep applying a per-site SU(2) update to every link.
 
@@ -627,6 +628,13 @@ def _su2_local_sweep(
 
     ``xi``/``time_axis`` select an anisotropic staple (see :func:`staple_sum`); the
     update closure receives the already-weighted staple, so it needs no change.
+
+    ``frozen`` (``(D, *Λ)`` bool, optional) marks links that are never written:
+    the chain then samples the *conditional* distribution of every other link
+    given the frozen ones (the multilevel / relative-weight construction of
+    ``gelt/vacuum.py``). Each update is still an exact local heat-bath or an
+    action-preserving reflection of a free link in its own staple, so detailed
+    balance holds for the conditional measure. ``None`` is the unchanged path.
 
     SU(2) only — for SU(N≥3) use Cabibbo–Marinari (heat-bath on SU(2) subgroups).
     """
@@ -641,7 +649,10 @@ def _su2_local_sweep(
     for mu in range(D):
         for par in (0, 1):
             A = staple_sum(U, mu, gaugegroup, xi=xi, time_axis=time_axis)
-            mask = (parity == par)[..., None, None]
+            active = parity == par
+            if frozen is not None:
+                active = active & ~frozen[mu]
+            mask = active[..., None, None]
             U[mu] = torch.where(mask, update(A, U[mu]), U[mu])
     return U
 
@@ -652,13 +663,15 @@ def heatbath_sweep(
     beta: float,
     xi: float = 1.0,
     time_axis: int = 0,
+    frozen: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, float]:
     """One SU(2) heat-bath sweep — each link drawn from its exact local weight.
 
     There is no accept/reject (Creutz sampling), so decorrelation is far better
     than Metropolis with no critical-slowing tuning. Returns acceptance 1.0
     (heat-bath always "accepts"). ``xi``/``time_axis`` opt into an anisotropic
-    staple (β as the single scale, ξ folded into the staple). SU(2) only.
+    staple (β as the single scale, ξ folded into the staple). ``frozen`` keeps
+    the marked links fixed (see :func:`_su2_local_sweep`). SU(2) only.
     """
     U = _su2_local_sweep(
         U,
@@ -666,6 +679,7 @@ def heatbath_sweep(
         lambda A, U_mu: _su2_heatbath_links(A, beta, gaugegroup),
         xi=xi,
         time_axis=time_axis,
+        frozen=frozen,
     )
     return U, 1.0
 
@@ -676,6 +690,7 @@ def overrelaxation_sweep(
     beta: Optional[float] = None,
     xi: float = 1.0,
     time_axis: int = 0,
+    frozen: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, float]:
     """One SU(2) overrelaxation sweep — a microcanonical, action-preserving move.
 
@@ -701,7 +716,8 @@ def overrelaxation_sweep(
         _, V_dag = _su2_decompose_staple(A, gaugegroup)
         return _project_su2(V_dag @ gaugegroup.dagger(U_mu) @ V_dag)
 
-    return _su2_local_sweep(U, gaugegroup, reflect, xi=xi, time_axis=time_axis), 1.0
+    return _su2_local_sweep(U, gaugegroup, reflect, xi=xi, time_axis=time_axis,
+                            frozen=frozen), 1.0
 
 
 def heatbath_overrelaxation_sweep(
@@ -711,6 +727,7 @@ def heatbath_overrelaxation_sweep(
     n_or: int = 4,
     xi: float = 1.0,
     time_axis: int = 0,
+    frozen: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, float]:
     """One heat-bath sweep followed by ``n_or`` overrelaxation sweeps (SU(2)).
 
@@ -722,9 +739,10 @@ def heatbath_overrelaxation_sweep(
     :func:`mcmc_ensemble` to opt SU(2) ensembles into heat-bath instead of
     Metropolis.
     """
-    U, _ = heatbath_sweep(U, gaugegroup, beta, xi=xi, time_axis=time_axis)
+    U, _ = heatbath_sweep(U, gaugegroup, beta, xi=xi, time_axis=time_axis, frozen=frozen)
     for _ in range(n_or):
-        U, _ = overrelaxation_sweep(U, gaugegroup, xi=xi, time_axis=time_axis)
+        U, _ = overrelaxation_sweep(U, gaugegroup, xi=xi, time_axis=time_axis,
+                                    frozen=frozen)
     return U, 1.0
 
 
