@@ -1206,6 +1206,28 @@ quantitative map of the 3+1D SU(2) vacuum (V2 + V5) is a result even under
 R-V0. Honest prior: R-V0 is likelier than R-V1 — on the smoke lattice `dr`
 alone already leaves ε ≈ 0.14 and `full` ε ≈ 0.05.
 
+**P13 — the learned K-state spectrum (Ky Fan loss). V100, one training
+(~10 h) + its untrained twin (minutes), then offline.** Written 2026-11-19 by
+transcribing the readings already coded in `scripts/spectrum_readout.py`; the
+`notes/learned_spectrum.md` that the code cites (§5) was never written, and
+`spectrum_hs_eval.py` (the high-statistics evaluator its `--hs=` path reads)
+does not exist, so RH1/RH3 cannot be read yet. `GLUEBALL_N_STATES=K` gives the
+readout K outputs and replaces the Rayleigh quotient by the Ky Fan trace
+Tr[C(0)⁻¹C(Δ)] = Σ_{n<K} λ_n (K = 1 is the Rayleigh loss bit for bit;
+`tests/test_kyfan.py` recovers ground and first excited state of a known
+spectrum end to end). `bash scripts/kyfan_batch.sh` (K = 4, ens0, from
+scratch): K = 4 because the net is not O_h-invariant and the 2⁺⁺ E doublet can
+enter the span below the 0⁺⁺*. Observable: Ê_n(Δ) = −log λ_n(Δ)/Δ, fit-free,
+unsaturated, Ê_n(1) the reading; levels labelled by f_A1 (≥ 0.5 A1, ≤ 0.1
+non-A1) against the `full` span; classical arms cross-fitted (even/odd blocks).
+*Readings*: **RS1** Ê₁(1) untrained − trained ≥ 5σ → the excited level is
+learned, not architectural. **RS3** Ê(1) of the second A1-labelled learned
+level − `full` level 1, cross-fitted: ≤ −3σ → the learned basis is better on
+the excited 0⁺⁺; ≥ 3σ → classical better; < 2σ → matches; fewer than two A1
+levels → not read. **RS4** Ê₀(1) of the K-span against the K = 1 net and
+against `full` (k = 1, cross-fitted): ≤ −3σ better, ≥ 3σ behind, < 2σ level —
+does asking for K states cost or buy the ground state.
+
 **Worth running only for completeness** (cheap, offline): the excited-state
 gate on the `deep` basis (`gevp_eigenvalues(..., truncate=True)`, second
 column, blocked jackknife): if m₁(Δ=1) and m₁(Δ=2) agree within 1σ with < 25%
