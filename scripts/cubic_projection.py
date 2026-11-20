@@ -52,7 +52,9 @@ anchor. Per level n, the irrep shares f_Γ(n) = cᵀG_Γc / cᵀGc of its C(0)
 (``gelt.cubic.irrep_grams``; ≥ 0.5 names the level); per subspace (the whole
 span, the excited levels 1…K−1), n_Γ = the number of states of irrep Γ it
 carries, basis-independent and summing to its dimension
-(``gelt.cubic.subspace_irrep_counts``). The ``_a1`` dump then holds the K
+(``gelt.cubic.subspace_irrep_counts``). Orbits on which the net explodes
+(max |z| over the orbit ≥ ``ORBIT_CUT``) are listed and left out of the
+labelling — an O_h-invariant cut. The ``_a1`` dump then holds the K
 A₁⁺⁺-projected outputs in ``gelt_obars`` and, as ``gelt_obar``, the projection
 of the dump's validation-fitted ground operator (projection is linear); it has
 no validation series, so it is written under ``OUT_DIR`` only.
@@ -298,6 +300,14 @@ def _rel_dev(x, ref):
 
 
 def _noninvariance(og, oe):
+    """ν = ‖δŌ_g − δŌ_e‖ / ‖δŌ_e‖; for K outputs ``(B, Lt, K)``, the worst output.
+
+    Each output is VEV-subtracted on its own: the K outputs carry VEVs hundreds
+    of sd apart, and one common mean made ‖δŌ_e‖ their spread, not the
+    fluctuations (ν ~ 3e-3 then meant a change of ~1 sd).
+    """
+    if og.dim() == 3:
+        return max(_noninvariance(og[..., i], oe[..., i]) for i in range(og.shape[-1]))
     dg, de = og - og.mean(), oe - oe.mean()
     return ((dg - de).norm() / de.norm()).item()
 
@@ -332,6 +342,13 @@ def summarise(stem, elements, obar_g, labels):
 
 
 LABEL_MIN = 0.5  # a level is named by the irrep holding at least this share of its C(0)
+# Orbits whose largest |Ō_g − μ|/σ over (g, t, output) exceeds this are left out
+# of the K-state labelling. The K = 4 net's first run (§11 P13) put 7 of 400
+# orbits at 30 … 4e12 σ while every orbit's identity element stayed below 3.5 σ
+# and the next orbit was at 5.1 σ; the K = 1 nets never exceed 4.6 σ. The
+# statistic is a max over the whole orbit, so the cut is O_h-invariant: it
+# favours no irrep, and the decomposition stays exact on what is kept.
+ORBIT_CUT = 10.0
 
 
 def kstate_levels(obars):
@@ -364,7 +381,17 @@ def summarise_kstate(stem, elements, obar_g, labels, d):
     if len(elements) != 48:
         return out
     lam, Vc = kstate_levels(d["gelt_obars"])
-    grams = irrep_grams(obar_g, elements)
+    e = obar_g[0]
+    mu, sd = e.mean(dim=(0, 1)), e.std(dim=(0, 1))
+    orbit_max = ((obar_g - mu) / sd).abs().amax(dim=(0, 2, 3))  # (B,)
+    keep = orbit_max < ORBIT_CUT
+    if not keep.all():
+        bad = (~keep).nonzero().flatten().tolist()
+        print(f"    ** {len(bad)} of {keep.numel()} orbits above {ORBIT_CUT:g} σ, left out of "
+              f"the labelling: " + ", ".join(f"{i} ({orbit_max[i]:.2g})" for i in bad))
+        print(f"       their identity elements: max {((e[~keep] - mu) / sd).abs().max():.2f} σ; "
+              f"largest kept orbit {orbit_max[keep].max():.2f} σ")
+    grams = irrep_grams(obar_g[:, keep], elements)
     G = sum(grams.values())
 
     def shares(c):
@@ -394,7 +421,8 @@ def summarise_kstate(stem, elements, obar_g, labels, d):
         print(f"      levels 1…{K - 1}       " + "".join(f"{excited[r]:7.3f}" for r in shown))
     print("    (Ê(1) must equal spectrum_readout.py's learned rows: the levels are its levels)")
     proj = irrep_projections(obar_g, elements)
-    out.update({"level_E1": (-torch.log(lam.clamp_min(1e-300))).tolist(),
+    out.update({"orbit_max": orbit_max, "orbit_keep": keep,
+                "level_E1": (-torch.log(lam.clamp_min(1e-300))).tolist(),
                 "level_vectors": Vc, "irrep_grams": grams,
                 "irrep_share_levels": per_lvl, "irrep_share_outputs": per_out,
                 "level_labels": names, "irrep_count_span": span,
@@ -529,8 +557,13 @@ def run_group(dumps, device):
                     "gelt_obars": a1_obars}
         else:
             blob = {"gelt_obar": a1}
+        extra = {}
+        if "orbit_keep" in summ and not summ["orbit_keep"].all():
+            # the projection of an exploded orbit is that explosion averaged:
+            # the configurations are listed so a reader can drop them
+            extra["orbit_outliers"] = (~summ["orbit_keep"]).nonzero().flatten().tolist()
         torch.save({**blob, "Obar_basis": d["Obar_basis"],
-                    "meta": {**meta, "cubic_projection": "A1g", "source_dump": p}},
+                    "meta": {**meta, "cubic_projection": "A1g", "source_dump": p, **extra}},
                    a1_dump)
         print(f"   → {finals[k]}\n   → {a1_dump}")
     if ELEMENTS_MODE == "all":

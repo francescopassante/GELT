@@ -48,7 +48,7 @@ and are kept as they were.
 | L8′ | On its **own training loss** the 4-level net is behind the shape bases on the same four levels (ΔL = +0.021 ± 0.003 vs `shapes_sm`, +0.028 ± 0.003 vs `full`, three ensembles, classical arm cross-fitted) and adds nothing to them (−0.0003 ± 0.0004); the 7-level net ties `full` (−0.002 ± 0.004) and adds −0.004 ± 0.001 | ESTABLISHED (2026-11-12, offline) | §3.8 |
 | L8″ | The true ground-state overlap of the 4-level net is ≈ 0.88 (fit-free, 40k configurations), not the 0.93 a one-state fit on [2,7] reads: "A₀ saturates above ≈ 0.9" is the estimator, not the operators | ESTABLISHED for one net | §3.8 |
 | L8‴ | Distilling the 4-level net onto its own Euclidean future (§11 P11, ens2, lag 2, connected loss) moves it the right way and barely: ΔL = −0.0019 ± 0.0010 (−1.9σ), Δ cosh m_eff(0..3) all negative at ≤ 1.7σ, ≈ 4% of the ideal shift (+0.04 ± 0.05), ≈ 2% of the ≳ 0.50 shape-loss margin; the gap to `shapes_sm` goes +0.0236 → +0.0217 and the union with `full` stays null. Reading R-T0 (at its boundary). The Rayleigh loss is not what holds the net behind the shape bases: from the teacher's start, the exact Euclidean-evolution objective finds no materially purer operator in the same class. Run 1 (raw loss) was R-T0 at no power and is superseded | ESTABLISHED for one ensemble (2026-11-20; P11 closed) | §11 P11 |
-| L8⁗ | Training for K = 4 states (Ky Fan loss, §11 P13) gives a purer ground state than the K = 1 net, Ê₀(1) −0.0123 ± 0.0038 (−3.2σ, ≈ 8× the K = 1 seed spread; m_eff(1) unchanged), still behind `full` (+0.0194 ± 0.0058); levels 1–3 are all non-A1 (f_A1 ≤ 0.011), at Ê(1) 0.61–0.65 around `full`'s A1 level 1 (0.623), so the excited 0⁺⁺ (RS3) is not read | ESTABLISHED for one training on ens0 (2026-11-20); the non-A1 levels' irreps OPEN | §11 P13 |
+| L8⁗ | Training for K = 4 states (Ky Fan loss, §11 P13) gives a purer ground state than the K = 1 net, Ê₀(1) −0.0123 ± 0.0038 (−3.2σ, ≈ 8× the K = 1 seed spread; m_eff(1) unchanged), still behind `full` (+0.0194 ± 0.0058); levels 1–3 are all non-A1 (f_A1 ≤ 0.011), at Ê(1) 0.61–0.65 around `full`'s A1 level 1 (0.623), so the excited 0⁺⁺ (RS3) is not read. Under O_h they are the **2⁺⁺** (Eg, T2g, T2g; n_Eg + n_T2g = 2.854 ± 0.001 of 3, P-odd 0.09), level 0 A1g at 0.980 — after dropping 7 of 400 orbits on which the K = 4 net explodes (≈ 0.17% of configurations; the K = 1 nets never do) | ESTABLISHED for one training on ens0 (2026-11-20); next run `KF_K=8` | §11 P13 |
 | L9 | The advantage is learned, not architectural | ESTABLISHED (untrained nets below the GEVP at every input depth; decomposition sign flips) | §3.4 |
 | L10 | What was learned: ~80% of the out-of-span content is rectangular loops, ~2.5% of the norm² is outside every classical operator | ESTABLISHED (estimator-dependent between 55% and 80%) | §3.5 |
 | L10′ | …and that ~2.5% carries ΔA₀ = +0.021 ± 0.009 | **RETRACTED** (2026-10-21): a fitted-mass artifact (m_G − m_P = +0.010 ± 0.004); at a common reference mass removing it gives −0.011 ± 0.005 (35-op `full`), −0.008 ± 0.005 (`full21`) | §3.5 |
@@ -1352,6 +1352,48 @@ lever, and the next step is the A₁⁺⁺-projected span (the `_a1` dump's K
 projected outputs) or a parity-symmetrised readout, not `KF_K=8`. Neither →
 reported as found, no run follows from it. **RL3** (context, no decision):
 n_Eg against n_T2g says which 2⁺⁺ component is the lighter at this spacing.
+
+*Labelling run (2026-11-20, V100, commit `bc7b3b6`; verbatim and the
+diagnosis in `notes/raw/cubic_k4_ens0_readout_2026-11-20.txt`).* Every gate
+passed (anchor 0.0, action ≤ 1e-15, classical invariance ≤ 8.6e-5 σ), and the
+summary as printed was **unreadable**: level 0 at 1% A1g against the readout's
+f_A1 = 0.965, every level spread flat over the irreps. Cause: **the K = 4 net
+explodes on a few transformed configurations.** Per orbit, the largest
+|Ō_g − μ|/σ over (g, t, output) is 4e12, 5e6, 1.4e3, 743, 174, 67, 30 σ for
+seven test configurations and ≤ 5.1 σ for the other 393 (median 3.5); the
+seven are ordinary at the identity (≤ 3.4 σ), and 32 of the 18 800 transformed
+(g ≠ e, configuration) pairs exceed 10 σ, 17 of them on configuration 259. The
+four K = 1 nets on the same split never exceed 4.6 σ. Every gU is an equally
+probable configuration, so this is a property of the net on the ensemble, not
+of the transformation: **≈ 0.17% of fresh configurations should give a
+catastrophic output**, and the 400 test and 200 validation configurations
+happened to contain none (≈ 0.7 and 0.3 expected). RS1/RS4 stand as measured
+on their split; any evaluation of this net on a fresh chain must check for it.
+*Deviation from the plan, declared:* the labelling drops those 7 orbits,
+with a cut (orbit max ≥ 10 σ) chosen after seeing the data. It is a function of
+the whole orbit, hence O_h-invariant — it favours no irrep and leaves the
+decomposition exact on what is kept — and any threshold from 6 to 25 σ selects
+the same seven. `cubic_projection.py` now applies it (`ORBIT_CUT`), lists the
+orbits it drops, and flags them in the `_a1` dump's meta; replayed on the V100
+output it prints the table below. On the 393 orbits (blocked jackknife,
+40 × 10, level vectors held fixed):
+- **Consistency gate passes:** level 0 is A1g at **0.980 ± 0.001** (≥ the
+  readout's 0.965 inside `full`, as it must be); Ê(1) of the four levels equal
+  the readout's.
+- **RL1:** levels named `['A1g', 'Eg', 'T2g', 'T2g']` — f_Eg(1) = 0.688,
+  f_T2g(2) = 0.570, f_T2g(3) = 0.821 (± ≤ 0.004); the E/T2 split inside levels
+  1–3 is incomplete (level 2 is 39% Eg).
+- **RL2: n_Eg + n_T2g = 2.854 ± 0.001 on levels 1–3 → the excited span is the
+  2⁺⁺.** Σ_u n_Γ = 0.092 ± 0.001, so P-odd states play no part; A1g 0.036. By
+  the reading the next run is **`KF_K=8`** (the 0⁺⁺* needs K ≥ 1 + 5 + 1).
+- **RL3:** n_Eg = 1.180, n_T2g = 1.674 — the span holds more of T2 (three
+  components) than of E (two), in proportion ≈ 0.59 vs 0.56 of each; the
+  lightest excited level is the Eg one, by 0.014 in Ê(1), which these errors do
+  not resolve. No reading about which component is lighter.
+For the K = 8 run: the instability may grow with K, so its labelling run reads
+the dropped-orbit count first; and the net found the 2⁺⁺ unsupervised, at
+Ê(1) = 0.61–0.65 — a result in itself only once a classical E/T2 basis exists
+to compare with (`spectrum_hs_eval.py`'s E bases, not written).
 
 **Worth running only for completeness** (cheap, offline): the excited-state
 gate on the `deep` basis (`gevp_eigenvalues(..., truncate=True)`, second

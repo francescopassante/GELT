@@ -1,0 +1,50 @@
+§11 P13 — irrep labelling of the K = 4 net (ens0), 2026-11-20.
+V100: python -u scripts/cubic_projection.py dumps/best_glueball_gelt_sm0-2-4-6_k4_test_obars.pt
+(commit bc7b3b6; 131 s per element). Gates passed: anchor 0.0e+00 on the K outputs,
+classical APE0/2/4/6 1.7e-05 … 1.6e-04 sd, action ≤ 1e-15 on every element,
+classical invariance ≤ 8.6e-05 sd on every element.
+
+Per-element ν as printed by bc7b3b6 (one common VEV over the K outputs — a bug,
+fixed after this run; the explosions are real): 40 elements ~3e-3, p213 5.7e+07,
+p213_r3 5.1e+07, p231_r12 2.2e+02, p231 1.0e+02, p312_r23 8.9e+01, p231_r2 5.2e+01,
+p213_r23 3.1e+01, p321_r23 3.4e+00, p213_r1 / p321_r2 / p231_r1 / p231_r23 0.15–0.23.
+
+Summary printed on the V100 (all 400 orbits — dominated by the exploding ones,
+NOT readable; kept for the record):
+                          A1g    A2g     Eg    T1g    T2g    A1u    A2u     Eu    T1u    T2u
+      level 0 Ê(1) 0.3801  0.010  0.010  0.040  0.220  0.220  0.032  0.032  0.127  0.155  0.155
+      level 1 Ê(1) 0.6065  0.041  0.041  0.166  0.126  0.126  0.000  0.000  0.001  0.249  0.249
+      level 2 Ê(1) 0.6207  0.037  0.037  0.147  0.140  0.140  0.005  0.005  0.020  0.235  0.235
+      level 3 Ê(1) 0.6485  0.041  0.041  0.165  0.126  0.126  0.000  0.000  0.001  0.249  0.249
+
+Diagnosis (local, from dumps/cubic/cubic_best_glueball_gelt_sm0-2-4-6_k4.pt):
+orbit statistic max over (g, t, output) of |Ō_g − μ|/σ, μ σ from the identity element.
+  top orbits: 259 4.08e+12, 330 5.19e+06, 360 1.4e+03, 286 743, 285 174, 124 66.9,
+  279 29.9 | next 111 5.11, 317 4.65, 322 4.64 …; median 3.46, 95% 4.40.
+  identity elements of the seven: ≤ 3.43 σ (ordinary configurations).
+  (g ≠ e, config) pairs above 10 σ: 32 of 18 800 = 0.17%; config 259 on 17 elements.
+  K = 1 nets on the same test split (cubic_*_sm0-2-4-6{,_rnd0,_ens1,_ens2}.pt):
+  largest orbit 4.0–4.6 σ — no explosion.
+Cut at 10 σ (any threshold from 6 to 25 gives the same 7 orbits), 393 orbits kept:
+── orbit max |z| < 10.0: 393 orbits
+                          A1g    A2g     Eg    T1g    T2g    A1u    A2u     Eu    T1u    T2u
+  level 0 Ê(1) 0.3801  0.980  0.000  0.009  0.001  0.004  0.000  0.000  0.001  0.002  0.002   A1g
+  level 1 Ê(1) 0.6065  0.015  0.001  0.688  0.004  0.268  0.001  0.000  0.002  0.006  0.015   Eg
+  level 2 Ê(1) 0.6207  0.009  0.001  0.387  0.005  0.570  0.001  0.001  0.003  0.007  0.018   T2g
+  level 3 Ê(1) 0.6485  0.012  0.001  0.120  0.007  0.821  0.004  0.001  0.003  0.010  0.021   T2g
+  output 0             0.947  0.000  0.036  0.001  0.010  0.000  0.000  0.001  0.003  0.002
+  output 1             0.009  0.001  0.487  0.005  0.467  0.002  0.001  0.003  0.007  0.019
+  output 2             0.034  0.001  0.017  0.006  0.906  0.003  0.002  0.003  0.009  0.019
+  output 3             0.011  0.001  0.574  0.005  0.383  0.001  0.000  0.003  0.006  0.017
+  n_Γ span             1.013  0.002  1.193  0.017  1.677  0.005  0.003  0.009  0.025  0.056
+  n_Γ levels 1…3       0.036  0.002  1.180  0.016  1.674  0.005  0.003  0.009  0.022  0.054
+  RL2: n_Eg+n_T2g = 2.854   Σ_u n = 0.092
+blocked jackknife (40 × 10 configs, cut orbits excluded):
+  n_Eg+n_T2g (1…3)     2.854 ± 0.001
+  Σ_u n (1…3)          0.092 ± 0.001
+  n_Eg (1…3)           1.180 ± 0.004
+  n_T2g (1…3)          1.674 ± 0.004
+  f_A1g lvl0           0.980 ± 0.001
+  f_Eg lvl1            0.688 ± 0.004
+  f_T2g lvl2           0.570 ± 0.004
+  f_T2g lvl3           0.821 ± 0.002

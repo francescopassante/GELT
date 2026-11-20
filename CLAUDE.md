@@ -653,6 +653,10 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   prints as a second anchor — by irrep share, gives n_Γ for the span and the
   excited levels, and the `_a1` dump carries the K projected outputs in
   `gelt_obars`. Readings RL1–RL3 in `notes/thesis_record.md` §11 P13.
+  **`ORBIT_CUT = 10` σ**: the K = 4 net explodes on ~0.17% of transformed
+  configurations (up to 4e12 σ; the K = 1 nets never), so orbits whose max
+  |z| over (g, t, output) exceeds it are listed and left out of the labelling
+  — an O_h-invariant cut — and flagged in the `_a1` dump's meta.
 - **`profile_glueball_step.py`** — where one optimizer step goes, per stage,
   forward **and backward** separately. It goes through
   `train_glueball.config_inputs`, i.e. the pipeline the training loop actually
