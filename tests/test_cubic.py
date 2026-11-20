@@ -14,7 +14,12 @@ What the A₁⁺⁺ projection of the learned operator rests on:
     polar vector — entirely in T1u;
   - the regular-representation projectors behind ``irrep_fractions`` are a
     resolution of the identity into orthogonal projectors, so the C(0) shares
-    add up to 1 exactly on any sample, and land where the operator is.
+    add up to 1 exactly on any sample, and land where the operator is;
+  - ``irrep_grams`` / ``subspace_irrep_counts`` (the K-state labelling of §11
+    P13): the Gram matrices add up to the C(0) Gram, a combination's shares are
+    ``irrep_fractions`` of that combination, and a subspace's state count is
+    basis-independent, sums to its dimension and counts pure-irrep operators
+    exactly.
 """
 
 import pytest
@@ -28,8 +33,10 @@ from gelt.cubic import (
     cubic_matrix,
     irrep_characters,
     irrep_fractions,
+    irrep_grams,
     irrep_projections,
     regular_projectors,
+    subspace_irrep_counts,
 )
 from gelt.glueball import smearing_operator_basis, zero_momentum
 from gelt.lattice import SU, action, random_links, rectangular_wilson_loop
@@ -156,3 +163,57 @@ def test_regular_projectors_resolve_the_identity():
 def test_projection_refuses_a_subset():
     with pytest.raises(ValueError):
         irrep_projections(torch.zeros(3, 2), ELEMENTS[:3])
+
+
+def _random_orbits(K, seed=0):
+    """K generic operators on an orbit sample: (48, B, Lt, K), every irrep present."""
+    g = torch.Generator().manual_seed(seed)
+    return torch.randn(48, 5, 3, K, generator=g, dtype=torch.float64) + 0.3
+
+
+def test_irrep_grams_add_up_and_match_irrep_fractions():
+    ob = _random_orbits(3)
+    grams = irrep_grams(ob, ELEMENTS)
+    v = ob.reshape(48, -1, 3)
+    v = v - v.mean(dim=(0, 1), keepdim=True)
+    G = torch.einsum("gsi,gsj->ij", v, v)
+    torch.testing.assert_close(sum(grams.values()), G, rtol=1e-12, atol=1e-10)
+    c = torch.tensor([0.7, -1.3, 0.4], dtype=torch.float64)
+    ref = irrep_fractions(ob @ c, ELEMENTS)
+    for r in IRREPS:
+        assert abs((c @ grams[r] @ c / (c @ G @ c)).item() - ref[r]) < 1e-12
+        # one output alone is irrep_fractions of that output
+        assert abs((grams[r][1, 1] / G[1, 1]).item()
+                   - irrep_fractions(ob[..., 1], ELEMENTS)[r]) < 1e-12
+
+
+def test_subspace_counts_are_basis_independent_and_sum_to_the_dimension():
+    grams = irrep_grams(_random_orbits(4, seed=1), ELEMENTS)
+    B = torch.tensor([[1.0, 0.2], [0.0, 1.0], [-0.5, 0.3], [0.1, 0.0]],
+                     dtype=torch.float64)
+    n = subspace_irrep_counts(grams, B)
+    assert abs(sum(n.values()) - 2) < 1e-12
+    R = torch.tensor([[2.0, -1.0], [0.5, 3.0]], dtype=torch.float64)  # invertible
+    n2 = subspace_irrep_counts(grams, B @ R)
+    for r in IRREPS:
+        assert abs(n[r] - n2[r]) < 1e-12
+    assert abs(sum(subspace_irrep_counts(grams, torch.eye(4, dtype=torch.float64))
+                   .values()) - 4) < 1e-12
+
+
+def test_subspace_counts_count_pure_irrep_operators():
+    P = regular_projectors(ELEMENTS)
+    raw = _random_orbits(3, seed=2)
+    pure = ("Eg", "T2g", "A1u")
+    ob = torch.stack([torch.einsum("gh,hbt->gbt", P[r], raw[..., i])
+                      for i, r in enumerate(pure)], dim=-1)
+    grams = irrep_grams(ob, ELEMENTS)
+    n = subspace_irrep_counts(grams, torch.eye(3, dtype=torch.float64))
+    for r in IRREPS:
+        assert abs(n[r] - (1.0 if r in pure else 0.0)) < 1e-10
+    # mixing the three inside their span changes nothing
+    M = torch.tensor([[1.0, 2.0, 0.0], [0.0, 1.0, -1.0], [1.0, 0.0, 1.0]],
+                     dtype=torch.float64)
+    n2 = subspace_irrep_counts(grams, M)
+    for r in IRREPS:
+        assert abs(n2[r] - n[r]) < 1e-10

@@ -182,6 +182,45 @@ def irrep_fractions(obar_g: torch.Tensor, elements: Sequence[CubicElement]
             for r, P in regular_projectors(elements).items()}
 
 
+def irrep_grams(obar_g: torch.Tensor, elements: Sequence[CubicElement]
+                ) -> Dict[str, torch.Tensor]:
+    """:func:`irrep_fractions` for K operators at once: per-irrep C(0) Gram matrices.
+
+    ``obar_g`` : ``(48, ..., K)``, ``obar_g[k, ..., i] = Ō_i(g_k U)``. With δv_i
+    operator i's orbit vector minus its own augmented mean, returns per irrep
+    ``G_Γ[i, j] = ⟨Π_Γ δv_i, Π_Γ δv_j⟩``. The Π_Γ are orthogonal and resolve the
+    identity, so ``Σ_Γ G_Γ = G`` (the augmented C(0) Gram) exactly, and:
+
+    - the share of Γ in any combination Σ_i c_i Ō_i is ``cᵀG_Γc / cᵀGc`` —
+      :func:`irrep_fractions` of that combination, to round-off;
+    - the Γ-content of a subspace, see :func:`subspace_irrep_counts`.
+    """
+    if obar_g.shape[0] != len(elements):
+        raise ValueError("obar_g's leading axis must enumerate `elements`")
+    K = obar_g.shape[-1]
+    v = obar_g.reshape(obar_g.shape[0], -1, K).double()
+    v = v - v.mean(dim=(0, 1), keepdim=True)
+    out = {}
+    for r, P in regular_projectors(elements).items():
+        pv = torch.einsum("gh,hsk->gsk", P.to(v), v)
+        out[r] = torch.einsum("gsi,gsj->ij", pv, pv)
+    return out
+
+
+def subspace_irrep_counts(grams: Dict[str, torch.Tensor], B: torch.Tensor
+                          ) -> Dict[str, float]:
+    """How many states of each irrep the span of B's columns carries.
+
+    ``n_Γ = Tr[(BᵀGB)⁻¹ BᵀG_ΓB]`` with ``G = Σ_Γ G_Γ``: the sum of Γ-shares over
+    any G-orthonormal basis of the span, hence independent of the basis chosen
+    inside it, and ``Σ_Γ n_Γ = dim span`` exactly. ``B`` : ``(K, m)``.
+    """
+    B = B.to(next(iter(grams.values())))
+    G = sum(grams.values())
+    Minv = torch.linalg.inv(B.T @ G @ B)
+    return {r: torch.trace(Minv @ (B.T @ Gr @ B)).item() for r, Gr in grams.items()}
+
+
 # ── the action on links ──────────────────────────────────────────────────────
 def _reflect_field(T: torch.Tensor, dim: int) -> torch.Tensor:
     """``x → (−x) mod L`` along tensor dimension ``dim`` (about the origin).

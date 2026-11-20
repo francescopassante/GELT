@@ -42,6 +42,21 @@ Outputs, under ``OUT_DIR`` (per net, once all 48 elements are done):
                                  ``su2_fair_fight.py`` and
                                  ``operator_decomposition.py`` read it unchanged.
 
+K-state dumps (``train_glueball.py`` with ``GLUEBALL_N_STATES=K``, §11 P13 of
+``notes/thesis_record.md``) are read too: all K outputs are evaluated under every
+g, the anchor checks each against the dump's ``gelt_obars``, and the summary
+labels the learned *levels* — the GEVP vectors at (t0, td) = (0, 1) of the
+unit-variance K outputs on the test split, exactly the levels
+``spectrum_readout.py`` reads, whose Ê(1) are printed beside them as a second
+anchor. Per level n, the irrep shares f_Γ(n) = cᵀG_Γc / cᵀGc of its C(0)
+(``gelt.cubic.irrep_grams``; ≥ 0.5 names the level); per subspace (the whole
+span, the excited levels 1…K−1), n_Γ = the number of states of irrep Γ it
+carries, basis-independent and summing to its dimension
+(``gelt.cubic.subspace_irrep_counts``). The ``_a1`` dump then holds the K
+A₁⁺⁺-projected outputs in ``gelt_obars`` and, as ``gelt_obar``, the projection
+of the dump's validation-fitted ground operator (projection is linear); it has
+no validation series, so it is written under ``OUT_DIR`` only.
+
 ``--elements=generators`` (identity, one axis swap, one reflection) runs the
 gates and prints ν(g) on the real ensemble in minutes, and writes only
 ``cubic_<stem>_gen.pt``.
@@ -111,9 +126,15 @@ from gelt.cubic import (  # noqa: E402
     apply_cubic,
     cubic_elements,
     irrep_fractions,
+    irrep_grams,
     irrep_projections,
+    subspace_irrep_counts,
 )
-from gelt.glueball import connected_correlator  # noqa: E402
+from gelt.glueball import (  # noqa: E402
+    connected_correlator,
+    connected_correlator_matrix,
+    gevp_vectors,
+)
 from gelt.lattice import action, random_links  # noqa: E402
 
 # ── Tunables ──────────────────────────────────────────────────────────────────
@@ -168,6 +189,10 @@ def _load_dump(path):
         raise SystemExit(f"{path}: meta ensemble_seed {meta['ensemble_seed']} "
                          f"disagrees with the filename's tag ({seed})")
     meta["ensemble_seed"] = seed
+    # K-state nets (GLUEBALL_N_STATES = K) carry n_states; older dumps predate it.
+    meta["n_states"] = int(meta.get("n_states") or 1)
+    if meta["n_states"] > 1 and "gelt_obars" not in d:
+        raise SystemExit(f"{path}: n_states = {meta['n_states']} but no gelt_obars")
     ckpt = meta["checkpoint"]
     if not os.path.exists(ckpt) and os.path.dirname(ckpt) == "":
         ckpt = os.path.join("results/glueball", ckpt)
@@ -196,6 +221,7 @@ def _build(meta, arch, device):
     tg.ARCH = arch
     tg.INPUT_SMEAR_LEVELS = tuple(meta["input_smear_levels"])
     tg.GRAD_CHECKPOINT = False
+    tg.N_STATES = meta["n_states"]  # the readout width _build_model allocates
     if arch == "gelt":
         tg.D_MODEL = sd["lift.weight"].shape[0]
     else:
@@ -260,7 +286,8 @@ def evaluate_element(g, configs, models, device, n_levels):
         worst_action = max(worst_action, ((Sg - S0).abs() / S0.abs()).max().item())
         W, T = tg.config_inputs(gU, device)
         for k, model in enumerate(models):
-            obars[k].append(model(W, T).sum(dim=(1, 2, 3)).view(b, Lt).double().cpu())
+            o = model(W, T).sum(dim=(1, 2, 3))  # (b·Lt,) or (b·Lt, K)
+            obars[k].append(o.view(b, Lt, *o.shape[1:]).double().cpu())
         classical.append(_classical_from_W(W, b, Lt, n_levels))
         del W, T
     return ([torch.cat(o) for o in obars], torch.cat(classical, dim=1), worst_action)
@@ -301,6 +328,77 @@ def summarise(stem, elements, obar_g, labels):
             print(f"    m_eff(1) {name}: {m[1].item():.4f} ± {s[1].item():.4f}"
                   f"   m_eff(2): {m[2].item():.4f} ± {s[2].item():.4f}")
         out["A1g"] = proj["A1g"]
+    return out
+
+
+LABEL_MIN = 0.5  # a level is named by the irrep holding at least this share of its C(0)
+
+
+def kstate_levels(obars):
+    """The learned levels of a K-state span, as ``spectrum_readout.py`` defines them.
+
+    ``obars`` : ``(K, B, Lt)`` test series. Each output is scaled to unit variance
+    (a fixed rescaling), then GEVP at (t0, td) = (0, 1), truncated whitening at
+    1e-10. Returns ``(lam, C)``: λ_n(1), descending, and the level vectors as
+    ``(K, K)`` columns acting on the *raw* outputs.
+    """
+    sd = obars.double().std(dim=(1, 2))
+    C = connected_correlator_matrix(obars.double() / sd[:, None, None])
+    C = 0.5 * (C + C.transpose(-1, -2))
+    lam, V = gevp_vectors(C, t0=0, td=1, eps=1e-10, truncate=True)
+    return lam, V / sd[:, None]
+
+
+def summarise_kstate(stem, elements, obar_g, labels, d):
+    """ν(g), and per learned level its irrep shares of C(0); n_Γ per subspace.
+
+    ``obar_g`` : ``(n_elements, B, Lt, K)``. The levels come from the dump's own
+    test series (``kstate_levels``), so they are the readout's levels exactly.
+    """
+    nu = {labels[i]: _noninvariance(obar_g[i], obar_g[0]) for i in range(len(labels))}
+    worst = max(nu, key=nu.get)
+    K = obar_g.shape[-1]
+    print(f"  {stem} (K = {K}): non-invariance ν(g) over all outputs max "
+          f"{nu[worst]:.3e} ({worst}), median {sorted(nu.values())[len(nu) // 2]:.3e}")
+    out = {"noninvariance": nu}
+    if len(elements) != 48:
+        return out
+    lam, Vc = kstate_levels(d["gelt_obars"])
+    grams = irrep_grams(obar_g, elements)
+    G = sum(grams.values())
+
+    def shares(c):
+        c = c.to(G)
+        return {r: (c @ Gr @ c / (c @ G @ c)).item() for r, Gr in grams.items()}
+
+    per_out = [shares(torch.eye(K, dtype=G.dtype)[i]) for i in range(K)]
+    per_lvl = [shares(Vc[:, n]) for n in range(Vc.shape[1])]
+    span = subspace_irrep_counts(grams, torch.eye(K, dtype=G.dtype))
+    excited = subspace_irrep_counts(grams, Vc[:, 1:]) if Vc.shape[1] > 1 else None
+    names = [max(f, key=f.get) if max(f.values()) >= LABEL_MIN else "mixed" for f in per_lvl]
+
+    shown = [r for r in IRREPS
+             if max([f[r] for f in per_lvl + per_out] + [span[r] / K]) >= 0.005]
+    head = "".join(f"{r:>7s}" for r in shown)
+    print(f"    share of C(0) by irrep (columns with any share ≥ 0.005):\n"
+          f"      {'':16s}{head}   label")
+    for n, f in enumerate(per_lvl):
+        e1 = -torch.log(lam[n]).item() if lam[n] > 0 else float("nan")
+        print(f"      level {n} Ê(1) {e1:.4f}" + "".join(f"{f[r]:7.3f}" for r in shown)
+              + f"   {names[n]}")
+    for i, f in enumerate(per_out):
+        print(f"      output {i}       " + "".join(f"{f[r]:7.3f}" for r in shown))
+    print("    states per irrep, n_Γ (basis-independent, sums to the dimension):")
+    print(f"      span (K = {K})     " + "".join(f"{span[r]:7.3f}" for r in shown))
+    if excited is not None:
+        print(f"      levels 1…{K - 1}       " + "".join(f"{excited[r]:7.3f}" for r in shown))
+    print("    (Ê(1) must equal spectrum_readout.py's learned rows: the levels are its levels)")
+    proj = irrep_projections(obar_g, elements)
+    out.update({"level_E1": (-torch.log(lam.clamp_min(1e-300))).tolist(),
+                "level_vectors": Vc, "irrep_grams": grams,
+                "irrep_share_levels": per_lvl, "irrep_share_outputs": per_out,
+                "level_labels": names, "irrep_count_span": span,
+                "irrep_count_excited": excited, "A1g": proj["A1g"]})
     return out
 
 
@@ -374,7 +472,12 @@ def run_group(dumps, device):
             # Anchor: the identity must reproduce the dump it is paired with.
             anchor = {}
             for (p, d, _, _), ob in zip(loaded, obs):
-                anchor[_stem(p)] = _rel_dev(ob, d["gelt_obar"])
+                if ob.dim() == 2:
+                    anchor[_stem(p)] = _rel_dev(ob, d["gelt_obar"])
+                else:  # K outputs, each against its own test series
+                    ref = d["gelt_obars"]
+                    anchor[_stem(p)] = max(_rel_dev(ob[..., i], ref[i])
+                                           for i in range(ref.shape[0]))
             basis = loaded[0][1]["Obar_basis"]
             for j, lv in enumerate(basis_levels):
                 if lv in levels:
@@ -405,7 +508,10 @@ def run_group(dumps, device):
 
     for k, (p, d, meta, arch) in enumerate(loaded):
         obar_g = torch.stack(state["obar"][k])
-        summ = summarise(stems[k], elements, obar_g, labels)
+        if meta["n_states"] > 1:
+            summ = summarise_kstate(stems[k], elements, obar_g, labels, d)
+        else:
+            summ = summarise(stems[k], elements, obar_g, labels)
         if ELEMENTS_MODE != "all":
             continue
         a1 = summ.pop("A1g")
@@ -414,7 +520,16 @@ def run_group(dumps, device):
                     "action_dev": state["action_dev"], "source_dump": p,
                     "meta": meta, **summ}, finals[k])
         a1_dump = os.path.join(OUT_DIR, f"{stems[k]}_a1_test_obars.pt")
-        torch.save({"gelt_obar": a1, "Obar_basis": d["Obar_basis"],
+        if meta["n_states"] > 1:
+            # a1: (B, Lt, K). gelt_obar is the dump's validation-fitted ground
+            # combination, projected; no val_obars, so no learned_gevp either.
+            a1_obars = a1.permute(2, 0, 1).contiguous()
+            v_val = d["learned_gevp"]["V"][:, 0].to(a1_obars)
+            blob = {"gelt_obar": torch.einsum("kbt,k->bt", a1_obars, v_val),
+                    "gelt_obars": a1_obars}
+        else:
+            blob = {"gelt_obar": a1}
+        torch.save({**blob, "Obar_basis": d["Obar_basis"],
                     "meta": {**meta, "cubic_projection": "A1g", "source_dump": p}},
                    a1_dump)
         print(f"   → {finals[k]}\n   → {a1_dump}")

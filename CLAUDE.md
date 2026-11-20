@@ -349,6 +349,10 @@ implementation (MIT, Favoni et al. 2012.12901), layer sources only, tracked so
   ten irreps; `irrep_fractions` splits C(0) over the irreps on the
   O_h-augmented sample via the regular representation's projectors, so the
   shares add up to 1 exactly (the naive per-projection C_Γ(0) do not).
+  `irrep_grams` is the same for K operators at once (per-irrep C(0) Gram
+  matrices, summing to the Gram exactly) and `subspace_irrep_counts` turns a
+  span into n_Γ, its number of states of irrep Γ — basis-independent, summing
+  to the dimension: the labelling of a K-state net's levels (§11 P13).
 
 ### `scripts/`
 
@@ -613,9 +617,11 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   selection ran on a constant offset (μ/σ ≈ −55 couples the two). Hence
   **`TMD_LOSS=connected`**, the default since 2026-11-20 — the error centred
   over the batch, selection on the closed-form shape loss min_c Q(c·s − t), the
-  student tagged `_tmd<lags>_c`; `raw` reproduces run 1. Run 2 (connected,
-  lag 2) closes P11; the lag-1 follow-up is dropped (smaller margin). Record
-  §11 P11, `tests/test_distill.py`.
+  student tagged `_tmd<lags>_c`; `raw` reproduces run 1. **Run 2 (connected,
+  lag 2, 2026-11-20) closed P11 as R-T0 at its boundary**: ΔL = −0.0019 ±
+  0.0010, every Δm negative and ≤ 1.7σ, ≈ 4% of the ideal shift — the Rayleigh
+  loss is not what holds the net behind the shape bases. The lag-1 follow-up
+  was dropped (smaller margin). Record §11 P11 / L8‴, `tests/test_distill.py`.
   `hybrid_transport_probe.py` is the control that ruled out thin transport.
 - **`vacuum_common.py` / `vacuum_replicas.py` / `vacuum_classical.py` /
   `train_vacuum.py` / `vacuum_relative_weights.py` / `vacuum_readout.py` /
@@ -641,7 +647,12 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   writes the 48 Ō_g and an `…_a1_test_obars.pt` in the standard dump format
   (the `_ens<k>` tag kept), so the fit / fair-fight / decomposition scripts read
   the projected operator unchanged. Resumes per element. Refuses to run without
-  CUDA except `--smoke=1`.
+  CUDA except `--smoke=1`. **Reads K-state dumps** (`n_states` in the meta):
+  all K outputs under every g, anchored against `gelt_obars`; the summary
+  labels the learned *levels* — `spectrum_readout.py`'s own, whose Ê(1) it
+  prints as a second anchor — by irrep share, gives n_Γ for the span and the
+  excited levels, and the `_a1` dump carries the K projected outputs in
+  `gelt_obars`. Readings RL1–RL3 in `notes/thesis_record.md` §11 P13.
 - **`profile_glueball_step.py`** — where one optimizer step goes, per stage,
   forward **and backward** separately. It goes through
   `train_glueball.config_inputs`, i.e. the pipeline the training loop actually
@@ -748,7 +759,9 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   against the matrices, the anisotropic action and the classical Ō(t) (APE
   ladder included) invariant under all 48, the character table orthonormal,
   one plane's plaquette sum = A1g ⊕ Eg, Σ Im Tr U₁ (SU(3)) = pure T1u, the
-  regular projectors a resolution of the identity.
+  regular projectors a resolution of the identity; `irrep_grams` summing to
+  the Gram and agreeing with `irrep_fractions` on any combination,
+  `subspace_irrep_counts` basis-independent and exact on pure-irrep operators.
 
 ## Conventions
 

@@ -1328,6 +1328,31 @@ Open, in order: label levels 1–3 by O_h irrep (extend `cubic_projection.py`
 to K outputs — it sizes the K at which the 0⁺⁺* enters, ≥ 7 if it is the
 full 2⁺⁺); then RS3 at that K, or with an A1-projected readout.
 
+*Labelling the levels (written 2026-11-20, before any number).*
+`cubic_projection.py` now reads K-state dumps: all K outputs under the 48
+elements of O_h, the levels defined exactly as `spectrum_readout.py` defines
+them (GEVP (0, 1) on the unit-variance test series — locally it reproduces
+the readout's Ê(1) = 0.3801, 0.6065, 0.6207, 0.6485 to the printed digit),
+per level the irrep shares f_Γ(n) of its C(0) on the O_h-augmented sample,
+and per subspace n_Γ, the number of states of irrep Γ it carries
+(basis-independent, Σ_Γ n_Γ = dimension; `gelt.cubic.irrep_grams`,
+`subspace_irrep_counts`, `tests/test_cubic.py`). SU(2) has no charge
+conjugation, so the g irreps are the PC = ++ channels (A1g 0⁺⁺, Eg ⊕ T2g the
+2⁺⁺, T1g / A2g spin ≥ 3 or 1⁺⁺) and the u irreps the P-odd ones (A1u 0⁻⁺,
+Eu ⊕ T2u 2⁻⁺, T1u). Run: `python -u scripts/cubic_projection.py
+dumps/best_glueball_gelt_sm0-2-4-6_k4_test_obars.pt` (V100, one net, ≈ 48 ×
+131 s ≈ 1.8 h; needs `results/glueball/best_glueball_gelt_sm0-2-4-6_k4.pth`).
+*Gates*: the anchor (every output against `gelt_obars`), the action, the
+classical invariance, and Ê(1) of the four levels equal to the readout's.
+*Readings*: **RL1** level n is named Γ when f_Γ(n) ≥ 0.5, else "mixed".
+**RL2** on the excited span (levels 1–3): n_Eg + n_T2g ≥ 2.5 → it is the 2⁺⁺;
+the 0⁺⁺* then needs K ≥ 1 + 5 + 1 = 7, and the next run is `KF_K=8`.
+Σ over the u irreps ≥ 1 → P-odd states compete; a larger K is the wrong
+lever, and the next step is the A₁⁺⁺-projected span (the `_a1` dump's K
+projected outputs) or a parity-symmetrised readout, not `KF_K=8`. Neither →
+reported as found, no run follows from it. **RL3** (context, no decision):
+n_Eg against n_T2g says which 2⁺⁺ component is the lighter at this spacing.
+
 **Worth running only for completeness** (cheap, offline): the excited-state
 gate on the `deep` basis (`gevp_eigenvalues(..., truncate=True)`, second
 column, blocked jackknife): if m₁(Δ=1) and m₁(Δ=2) agree within 1σ with < 25%
