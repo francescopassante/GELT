@@ -15,6 +15,10 @@
 #   TMD_ENS=0|1|2     ensemble seed (default 2: the one with a high-statistics
 #                     teacher dump to compare against)
 #   TMD_LAGS=2        the lag(s) a (default 2; ideal student: C_S(Δ) = C_T(Δ+4))
+#   TMD_LOSS=connected  the offset-free loss with selection on the shape loss
+#                     (default since 2026-11-20; the student is tagged _tmd<lags>_c).
+#                     TMD_LOSS=raw is the first run's loss (_tmd<lags>, the R-T0
+#                     of 2026-11-19, notes/raw/tmd_ens2_readout_2026-11-19.txt).
 #   TMD_TAG=          extra suffix, e.g. _r2 for a second round
 #   TMD_TEACHER=      teacher checkpoint (default: the production net of TMD_ENS;
 #                     for a second round, the first round's student)
@@ -38,6 +42,14 @@
 # If step 1 reads R-T0, the one follow-up worth its GPU time is the same run
 # with TMD_LAGS=1 (a stronger signal, a weaker filter); after that, stop.
 #
+# What actually happened (2026-11-19/20): step 1 with the raw loss read R-T0 at
+# low power — the student learned the rescale c ≈ C(2)/C(0) and nothing else,
+# and selection ran on a constant offset (train_distill.py's docstring). The
+# lag-1 follow-up was dropped: its purification margin, r(2) − r(1)² = 0.020 of
+# C(0), is smaller than lag 2's r(4) − r(2)² = 0.030, not larger. Instead: one
+# rerun of step 1 with TMD_LOSS=connected (the default now), then P11 closes
+# whatever it reads.
+#
 # Check first, without running anything (no GPU needed):
 #   TMD_DRY_RUN=1 bash scripts/tmd_batch.sh
 # Run (from the repo root, inside the venv):
@@ -52,6 +64,7 @@ mkdir -p logs
 ENS="${TMD_ENS:-2}"
 LAGS="${TMD_LAGS:-2}"
 TAG="${TMD_TAG:-}"
+LOSS="${TMD_LOSS:-connected}"
 LR="${TMD_LR:-3e-4}"
 EPOCHS="${TMD_EPOCHS:-20}"
 POOL="${TMD_POOL:-3}"
@@ -61,7 +74,8 @@ DRY="${TMD_DRY_RUN:-0}"
 stamp() { date "+%F %T"; }
 
 ENS_TAG=""; [ "${ENS}" != "0" ] && ENS_TAG="_ens${ENS}"
-LAG_TAG="_tmd$(echo "${LAGS}" | tr ',' '-')${TAG}"
+LOSS_TAG=""; [ "${LOSS}" = "connected" ] && LOSS_TAG="_c"
+LAG_TAG="_tmd$(echo "${LAGS}" | tr ',' '-')${LOSS_TAG}${TAG}"
 STEM="results/glueball/best_glueball_gelt_sm0-2-4-6${ENS_TAG}"
 TEACHER="${TMD_TEACHER:-${STEM}.pth}"
 STUDENT="${STEM}${LAG_TAG}.pth"
@@ -69,7 +83,7 @@ DUMP="${STEM}${LAG_TAG}_test_obars.pt"
 HS_DUMP="${STEM}${LAG_TAG}_hs_test_obars.pt"
 NAME="tmd_ens${ENS}${LAG_TAG}"
 
-echo "[$(stamp)] transfer-matrix distillation: ensemble ${ENS}, lags ${LAGS}"
+echo "[$(stamp)] transfer-matrix distillation: ensemble ${ENS}, lags ${LAGS}, loss ${LOSS}"
 echo "   teacher: ${TEACHER}"
 echo "   student: ${STUDENT}"
 echo "   dump   : ${DUMP}"
@@ -78,7 +92,7 @@ if [ "${DRY}" = "1" ]; then
   echo "DRY RUN — would run, in order:"
   echo "  0. python scripts/train_distill.py --tmd-smoke=1          (plumbing, seconds)"
   [ -e "${DUMP}" ] && echo "  1. (skipped: ${DUMP} exists)" || \
-    echo "  1. python scripts/train_distill.py --ensemble-seed=${ENS} --tmd-lags=${LAGS} --tmd-lr=${LR} --tmd-epochs=${EPOCHS} --tmd-pool=${POOL} --tmd-p0-weight=${P0} --tmd-teacher=${TEACHER}${TAG:+ --tmd-tag=${TAG}}"
+    echo "  1. python scripts/train_distill.py --ensemble-seed=${ENS} --tmd-lags=${LAGS} --tmd-loss=${LOSS} --tmd-lr=${LR} --tmd-epochs=${EPOCHS} --tmd-pool=${POOL} --tmd-p0-weight=${P0} --tmd-teacher=${TEACHER}${TAG:+ --tmd-tag=${TAG}}"
   echo "  2. python scripts/tmd_readout.py ${DUMP}"
   if [ "${HS}" = "1" ]; then
     [ -e "${HS_DUMP}" ] && echo "  3. (skipped: ${HS_DUMP} exists)" || \
@@ -114,7 +128,7 @@ else
   echo "[$(stamp)] 1. training the student → logs/${NAME}.log"
   # Every setting as argv AND env (env vars do not survive every container wrapper).
   GLUEBALL_ENSEMBLE_SEED="${ENS}" python scripts/train_distill.py \
-    --ensemble-seed="${ENS}" --tmd-lags="${LAGS}" --tmd-lr="${LR}" \
+    --ensemble-seed="${ENS}" --tmd-lags="${LAGS}" --tmd-loss="${LOSS}" --tmd-lr="${LR}" \
     --tmd-epochs="${EPOCHS}" --tmd-pool="${POOL}" --tmd-p0-weight="${P0}" \
     --tmd-teacher="${TEACHER}" ${TAG:+--tmd-tag="${TAG}"} > "logs/${NAME}.log" 2>&1
   if [ ! -e "${DUMP}" ]; then

@@ -37,6 +37,10 @@ high-statistics dump is read on its own:
         start was a candidate on validation: a validation/test mismatch, to be
         understood before anything is quoted.
 
+Dumps are combined only within one loss version (meta["tmd"]["loss"]: "raw" for
+the first run, "connected" since 2026-11-20 — scripts/train_distill.py says why),
+and never two dumps of one ensemble: those are two students, not a replication.
+
 Usage:  python scripts/tmd_readout.py [student dumps …] [--hs=<dump>] [--m-ref=0.313]
 """
 
@@ -131,7 +135,7 @@ def verdict(dL, sL, dm1, sm1, dm2, sm2, un=None):
 
 
 def main():
-    rows, unions = [], []
+    groups = {}  # loss version → {"rows", "unions", "ens"}
     for path in DUMPS:
         d = torch.load(path, weights_only=False)
         if "teacher_obar" not in d:
@@ -142,6 +146,9 @@ def main():
             print(f"{path}: a plumbing-check dump, skipped")
             continue
         S, T = d["gelt_obar"].double(), d["teacher_obar"].double()
+        kind = meta["tmd"].get("loss", "raw")
+        g = groups.setdefault(kind, {"rows": [], "unions": [], "ens": []})
+        rows, unions = g["rows"], g["unions"]
         lag = sum(meta["tmd"]["lags"]) / len(meta["tmd"]["lags"])
         if torch.equal(S, T):
             # train_distill keeps the start as a candidate: no epoch improved
@@ -149,8 +156,14 @@ def main():
             print(f"\n== {path}\n   the student IS its teacher (the starting checkpoint was "
                   f"selected on validation). reading: R-T0")
             continue
-        v, e = report(path, S, T, lag, meta["jack_block"], meta["Lt"])
+        v, e = report(f"{path}  [{kind} loss]", S, T, lag, meta["jack_block"], meta["Lt"])
+        if "test_shape" in meta["tmd"]:
+            tm = meta["tmd"]
+            print(f"   shape loss on test (after the best rescale): student {tm['test_shape']:.4f} "
+                  f"at c* {tm['test_c']:.3f}, teacher {tm['test_shape_teacher']:.4f} at c* "
+                  f"{tm['test_c_teacher']:.3f}")
         rows.append((v, e))
+        g["ens"].append(meta["ensemble_seed"])
         ens = {0: "run5"}.get(meta["ensemble_seed"], f"ens{meta['ensemble_seed']}")
         cache = f"dumps/su2_fair_fight_obars_{ens}.pt"
         if os.path.exists(cache):
@@ -167,17 +180,24 @@ def main():
                     unions.append((c[1:2], ce[1:2]))
         else:
             print(f"   (no {cache}: the classical rows are skipped)")
-    if rows:
+    for kind, g in groups.items():
+        rows, unions = g["rows"], g["unions"]
+        if not rows:
+            continue
+        if len(set(g["ens"])) < len(g["ens"]):
+            print(f"\n[{kind} loss] two dumps share an ensemble ({g['ens']}): not combined — "
+                  f"pass one student per ensemble")
+            continue
         m, s = vh.combine(rows)
         un = None
         if unions:
             um, us = vh.combine(unions)
             un = (um[0].item(), us[0].item())
-        print(f"\ncombined over {len(rows)} dump(s): ΔL {sig(m[1], s[1])}   Δm(1) "
+        print(f"\n[{kind} loss] combined over {len(rows)} dump(s): ΔL {sig(m[1], s[1])}   Δm(1) "
               f"{sig(m[3], s[3])}   Δm(2) {sig(m[4], s[4])}"
               + ("" if un is None else f"   union with full {sig(*un)}"))
         print("reading: " + verdict(m[1], s[1], m[3], s[3], m[4], s[4], un))
-    elif not HS and not DUMPS:
+    if not groups and not HS and not DUMPS:
         print("no train_distill dumps found (pass them, or --hs=)")
 
     if HS:

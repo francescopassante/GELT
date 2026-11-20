@@ -42,8 +42,27 @@ part of the future lives at low momentum, the per-site remainder is irreducible
 noise), plus TMD_P0_WEIGHT × the zero-momentum error. TMD_POOL = L is the
 zero-momentum regression alone.
 
-Selection: lowest validation loss of *this* objective (never a correlator of the
-student, never the test split). Splits, ensemble cache, inputs, classical basis
+Connected loss (TMD_LOSS=connected, the default since 2026-11-20). The error is
+centred over the minibatch (6 configurations × Lt slices × V sites) before both
+terms, so the loss does not see a constant offset — which no connected
+correlator sees either. The first run (ens2, lag 2, `_tmd2`, the raw loss) showed
+why it must not: the teacher's per-site field has μ/σ ≈ −55, so a rescale of the
+raw output by c moves the mean by 55·(1 − c)σ unless the last bias compensates
+exactly, and the zero-momentum term weighs an offset b as V·b² = 1728·b². Its
+validation loss swung 6 → 37 → 6 between epochs on offsets of ~0.12σ (the block
+and zero-momentum excesses were in the ratio V/POOL³ = 64, the signature of a
+constant), against a purification signal of 0.50 out of 6.4.
+TMD_LOSS=raw is the loss of that run, kept to reproduce it.
+
+Selection: under the connected loss, the lowest validation *shape* loss — the
+loss after the best rescale c* of the student's field, fitted in closed form on
+the validation split (min_c Q(c·s − t) = Q(t) − B(s,t)²/Q(s), Q the loss's
+quadratic form and B its bilinear form). The rescale is a legitimate part of the
+regression (c* ≈ C(2a)/C(0) for a student that is still its teacher) but no
+readout sees it, and in the first run it was the whole of the loss decrease:
+student 6.51 on test, the teacher rescaled 6.43, the exact regression function
+≈ 5.94. Under TMD_LOSS=raw, the raw validation loss, as in that run. Never a
+correlator of the student, never the test split. Splits, ensemble cache, inputs, classical basis
 and dump format are train_glueball's by import, so every offline script reads
 the student's dump unchanged; the dump also carries the teacher's test series
 (`teacher_obar`), on the same configurations, for the paired readout
@@ -65,6 +84,9 @@ train_glueball.py, by the same GLUEBALL_* variables or flags):
   TMD_TAG          extra suffix, e.g. "_r2" for a second round whose teacher is
                    the first round's student (must start with "_")
   TMD_INIT         "teacher" (default) or "scratch" (train_glueball's init)
+  TMD_LOSS         "connected" (default: offset-free loss, selection on the
+                   shape loss) or "raw" (the first run's loss and selection).
+                   Connected students carry "_c" in their tag: _tmd2_c.
   TMD_POOL         spatial block side of the loss, default 3 (must divide L)
   TMD_P0_WEIGHT    weight of the zero-momentum error, default 1.0
   TMD_LR / TMD_EPOCHS / TMD_PATIENCE   default 3e-4 / 20 / 6
@@ -87,7 +109,7 @@ import sys
 # Every variable is also accepted as --name=value (TMD_LAGS ↔ --tmd-lags=2), as
 # in train_glueball.py: env vars do not survive every container wrapper. An
 # unrecognised --tmd-* flag is refused rather than ignored.
-_TMD = ("lags", "teacher", "tag", "init", "pool", "p0-weight", "lr", "epochs", "patience",
+_TMD = ("lags", "teacher", "tag", "init", "loss", "pool", "p0-weight", "lr", "epochs", "patience",
         "warmup", "norm-configs", "eval-only", "smoke", "smoke-dir", "device")
 _bad = [a for a in sys.argv[1:] if a.startswith("--tmd-")
         and a[len("--tmd-"):].split("=", 1)[0] not in _TMD]
@@ -106,6 +128,9 @@ def _arg(name, default):
 
 LAGS = tuple(int(x) for x in _arg("TMD_LAGS", "2").split(","))
 TMD_TAG = _arg("TMD_TAG", "")
+LOSS = _arg("TMD_LOSS", "connected").lower()
+if LOSS not in ("connected", "raw"):
+    raise SystemExit(f"TMD_LOSS must be 'connected' or 'raw' (got {LOSS!r})")
 SMOKE = _arg("TMD_SMOKE", "0") not in ("0", "false", "False", "")
 if TMD_TAG and not TMD_TAG.startswith("_"):
     raise SystemExit(f"TMD_TAG must start with '_' (got {TMD_TAG!r})")
@@ -119,7 +144,10 @@ _BASE_TAG = _arg("GLUEBALL_RUN_TAG", "") if not any(
     a.startswith("--run-tag=") for a in sys.argv[1:]) else next(
     a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--run-tag="))
 sys.argv = [a for a in sys.argv if not a.startswith("--run-tag=")]
-_STUDENT_TAG = _BASE_TAG + "_tmd" + "-".join(str(a) for a in LAGS) + TMD_TAG
+# A connected-loss student is "_c"-suffixed, so it can never overwrite the raw
+# run's checkpoint (results/glueball/…_ens2_tmd2.pth is the recorded R-T0).
+_STUDENT_TAG = (_BASE_TAG + "_tmd" + "-".join(str(a) for a in LAGS)
+                + ("_c" if LOSS == "connected" else "") + TMD_TAG)
 os.environ["GLUEBALL_RUN_TAG"] = _STUDENT_TAG
 
 import numpy as np  # noqa: E402
@@ -182,9 +210,13 @@ def tmd_loss(ys, target):
     ``ys``, ``target`` : (b, Lt, L, L, L) in the teacher's units. Both terms are
     normalised so that a spatially white error of variance s² scores s²: the
     block mean of POOL³ sites has variance s²/POOL³, the slice mean s²/V.
+    Under TMD_LOSS=connected the error is first centred over the whole batch,
+    so a constant offset costs nothing (the module docstring says why).
     Returns ``(loss, block term, zero-momentum term)``.
     """
     e = ys - target
+    if LOSS == "connected":
+        e = e - e.mean()
     b, Lt = e.shape[:2]
     sp = e.shape[2:]
     if POOL > 1:
@@ -196,6 +228,36 @@ def tmd_loss(ys, target):
     return block + P0_WEIGHT * zero, block, zero
 
 
+def _loss_features(x):
+    """``x`` → (block field, zero-momentum field) such that the loss's quadratic
+    form is Q(x) = mean(block²) + P0_WEIGHT·mean(zero²) — the same normalisation
+    as ``tmd_loss`` (centred first under the connected loss)."""
+    if LOSS == "connected":
+        x = x - x.mean()
+    b, Lt = x.shape[:2]
+    sp = x.shape[2:]
+    xb = (F_.avg_pool3d(x.reshape(b * Lt, 1, *sp), POOL) * POOL ** 1.5 if POOL > 1 else x)
+    xz = x.mean(dim=(2, 3, 4)) * float(np.prod(sp)) ** 0.5
+    return xb, xz
+
+
+def quad_stats(s, t):
+    """[Q(s), B(s, t), Q(t)] of one batch, float64: everything ``shape_loss`` needs."""
+    (sb, sz), (tb, tz) = _loss_features(s.double()), _loss_features(t.double())
+    return torch.stack([
+        (sb * sb).mean() + P0_WEIGHT * (sz * sz).mean(),
+        (sb * tb).mean() + P0_WEIGHT * (sz * tz).mean(),
+        (tb * tb).mean() + P0_WEIGHT * (tz * tz).mean(),
+    ]).cpu()
+
+
+def shape_loss(q):
+    """(min_c Q(c·s − t), c*) from summed ``quad_stats`` — the loss after the best
+    rescale of the student, which is what a scale-invariant readout can see."""
+    c = (q[1] / q[0]).item()
+    return (q[2] - q[1] ** 2 / q[0]).item(), c
+
+
 def site_fields(model, W, T, b):
     """The per-site output of ``model`` → (b, Lt, L, L, L), real."""
     o = model(W, T)
@@ -204,25 +266,45 @@ def site_fields(model, W, T, b):
 
 @torch.no_grad()
 def evaluate(student, teacher, configs, mu, sigma, device):
-    """One pass: the distillation loss and both zero-momentum series.
+    """One pass: the distillation loss, the shape loss and both zero-momentum series.
 
-    Returns ``(loss, block, zero, student Ō (N, Lt), teacher Ō (N, Lt))``; the
-    loss terms are means over batches weighted by their size.
+    Returns a dict: ``loss``, ``block``, ``zero`` (means over batches weighted by
+    their size), ``shape`` and ``c`` (the student after its best rescale),
+    ``shape_teacher`` and ``c_teacher`` (the same for the teacher's own field —
+    the start's value, on the same configurations), ``s_obar`` and ``t_obar``
+    (N, Lt).
     """
     student.eval()
     tot, n, so, to = torch.zeros(3, dtype=torch.float64), 0, [], []
+    qs, qt = torch.zeros(3, dtype=torch.float64), torch.zeros(3, dtype=torch.float64)
     for i in range(0, configs.shape[0], tg.BATCH_CONFIGS):
         batch = configs[i: i + tg.BATCH_CONFIGS]
         b = batch.shape[0]
         W, T = tg.config_inputs(batch, device)
         oT = site_fields(teacher, W, T, b)
         oS = site_fields(student, W, T, b)
-        terms = tmd_loss((oS - mu) / sigma, lagged_target((oT - mu) / sigma))
+        yT = (oT - mu) / sigma
+        yS = (oS - mu) / sigma
+        target = lagged_target(yT)
+        terms = tmd_loss(yS, target)
         tot += torch.stack([t.double().cpu() for t in terms]) * b
+        qs += quad_stats(yS, target) * b
+        qt += quad_stats(yT, target) * b
         n += b
         so.append(oS.sum(dim=(2, 3, 4)).cpu())
         to.append(oT.sum(dim=(2, 3, 4)).cpu())
-    return (*(tot / n).tolist(), torch.cat(so), torch.cat(to))
+    loss, block, zero = (tot / n).tolist()
+    shape, c = shape_loss(qs / n)
+    shape_t, c_t = shape_loss(qt / n)
+    return {"loss": loss, "block": block, "zero": zero, "shape": shape, "c": c,
+            "shape_teacher": shape_t, "c_teacher": c_t,
+            "s_obar": torch.cat(so), "t_obar": torch.cat(to)}
+
+
+def selection_score(v):
+    """What selection minimises: the shape loss under the connected loss, the raw
+    validation loss under TMD_LOSS=raw (the first run's criterion)."""
+    return v["shape"] if LOSS == "connected" else v["loss"]
 
 
 def rayleigh_summary(obar):
@@ -240,7 +322,7 @@ def main():
     if device.type != "cuda" and not SMOKE:
         raise SystemExit("train_distill refuses to run without CUDA (TMD_SMOKE=1 is the "
                          "plumbing check)")
-    print(f"device {device} | lags {LAGS} | pool {POOL} | p0 weight {P0_WEIGHT:g} | "
+    print(f"device {device} | lags {LAGS} | loss {LOSS} | pool {POOL} | p0 weight {P0_WEIGHT:g} | "
           f"init {INIT} | lr {LR:g} (warm-up {WARMUP} steps) | epochs {EPOCHS}\nteacher {TEACHER}\nstudent {STUDENT}")
 
     # ── ensemble: train_glueball's cache, never sampled here ──────────────────
@@ -290,12 +372,13 @@ def main():
         raise SystemExit(f"teacher field has σ = {sigma}: nothing to regress on")
     print(f"teacher field: μ = {mu:.6g}, σ = {sigma:.6g} (first {NORM_CONFIGS} train configs)")
 
-    history = {"train": [], "val": [], "val_block": [], "val_zero": [], "val_R1": [],
-               "val_R2": []}
+    history = {"train": [], "val": [], "val_block": [], "val_zero": [], "val_shape": [],
+               "val_c": [], "val_R1": [], "val_R2": []}
     v0 = evaluate(student, teacher, val_configs, mu, sigma, device)
-    tR = rayleigh_summary(v0[4])
-    sR = rayleigh_summary(v0[3])
-    print(f"start: val loss {v0[0]:.5f} (block {v0[1]:.5f}, zero {v0[2]:.5f}) | "
+    tR = rayleigh_summary(v0["t_obar"])
+    sR = rayleigh_summary(v0["s_obar"])
+    print(f"start: val loss {v0['loss']:.5f} (block {v0['block']:.5f}, zero {v0['zero']:.5f}) | "
+          f"shape {v0['shape']:.5f} at c* {v0['c']:.3f} | "
           f"C(1)/C(0), C(2)/C(0): teacher {tR[0]:.4f}, {tR[1]:.4f}  student {sR[0]:.4f}, "
           f"{sR[1]:.4f}")
     best_val = float("inf")
@@ -305,7 +388,7 @@ def main():
             # The start is a candidate: a student that never improves on its own
             # starting validation loss must be reported as its teacher (the null
             # of tmd_readout.py), not as whatever the first epoch left behind.
-            best_val = v0[0]
+            best_val = selection_score(v0)
             torch.save(student.state_dict(), STUDENT)
         opt = torch.optim.AdamW(student.parameters(), lr=LR, weight_decay=tg.WEIGHT_DECAY)
         steps_per_epoch = 2 if SMOKE else -(-n_train // tg.BATCH_CONFIGS)
@@ -350,17 +433,19 @@ def main():
                 if nb == 0:
                     raise SystemExit(f"epoch {epoch + 1}: every batch was non-finite")
                 v = evaluate(student, teacher, val_configs, mu, sigma, device)
-                R1, R2 = rayleigh_summary(v[3])
-                for k, x in zip(history, (run / nb, v[0], v[1], v[2], R1, R2)):
+                R1, R2 = rayleigh_summary(v["s_obar"])
+                for k, x in zip(history, (run / nb, v["loss"], v["block"], v["zero"],
+                                          v["shape"], v["c"], R1, R2)):
                     history[k].append(x)
                 mark = ""
-                if v[0] < best_val:
-                    best_val, stale, mark = v[0], 0, "  *"
+                if selection_score(v) < best_val:
+                    best_val, stale, mark = selection_score(v), 0, "  *"
                     torch.save(student.state_dict(), STUDENT)
                 else:
                     stale += 1
-                print(f"epoch {epoch + 1:3d}: train {run / nb:.5f} | val {v[0]:.5f} "
-                      f"(block {v[1]:.5f}, zero {v[2]:.5f}) | student val C(1)/C(0) "
+                print(f"epoch {epoch + 1:3d}: train {run / nb:.5f} | val {v['loss']:.5f} "
+                      f"(block {v['block']:.5f}, zero {v['zero']:.5f}) | shape "
+                      f"{v['shape']:.5f} at c* {v['c']:.3f} | student val C(1)/C(0) "
                       f"{R1:.4f}, C(2)/C(0) {R2:.4f}"
                       + (f" | skipped {skipped}" if skipped else "") + mark)
                 if stale >= PATIENCE:
@@ -375,8 +460,12 @@ def main():
 
     # ── test split: untouched until here ──────────────────────────────────────
     t = evaluate(student, teacher, test_configs, mu, sigma, device)
-    s_obar, t_obar = t[3].double(), t[4].double()
-    print(f"\ntest distillation loss {t[0]:.5f} (block {t[1]:.5f}, zero {t[2]:.5f})")
+    s_obar, t_obar = t["s_obar"].double(), t["t_obar"].double()
+    print(f"\ntest distillation loss {t['loss']:.5f} (block {t['block']:.5f}, "
+          f"zero {t['zero']:.5f})")
+    print(f"test shape loss (after the best rescale): student {t['shape']:.5f} at c* "
+          f"{t['c']:.3f} | teacher {t['shape_teacher']:.5f} at c* {t['c_teacher']:.3f} | "
+          f"Δ {t['shape'] - t['shape_teacher']:+.5f}")
     for lbl, o in (("teacher", t_obar), ("student", s_obar)):
         m, e = tg.blocked_jackknife_meff(o, tg.JACK_BLOCK)
         R1, R2 = rayleigh_summary(o)
@@ -404,11 +493,14 @@ def main():
                 "d_model": tg.D_MODEL, "d_qkv": tg.D_QKV, "alpha_mode": tg.ALPHA_MODE,
                 "random_init": False, "arch": tg.ARCH, "lr": LR, "n_states": 1,
                 # what makes this a distilled operator and not a Rayleigh-trained one
-                "tmd": {"lags": list(LAGS), "teacher": TEACHER, "init": INIT, "pool": POOL,
+                "tmd": {"lags": list(LAGS), "teacher": TEACHER, "init": INIT, "loss": LOSS,
+                        "pool": POOL,
                         "p0_weight": P0_WEIGHT, "mu": mu, "sigma": sigma,
                         "epochs": EPOCHS, "warmup": WARMUP, "history": history,
-                        "val_loss_start": v0[0],
-                        "test_loss": t[0], "smoke": SMOKE},
+                        "val_loss_start": v0["loss"], "val_shape_start": v0["shape"],
+                        "test_loss": t["loss"], "test_shape": t["shape"], "test_c": t["c"],
+                        "test_shape_teacher": t["shape_teacher"],
+                        "test_c_teacher": t["c_teacher"], "smoke": SMOKE},
             },
         },
         DUMP,

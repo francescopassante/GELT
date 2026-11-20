@@ -47,6 +47,7 @@ and are kept as they were.
 | L8 | …and against stronger classical bases | **QUALIFIED**: +0.095 ± 0.021 vs the input-matched 7-level arm, only +0.038 ± 0.027 (1.4σ) once loop shapes are added; A₀ is saturated there. At (t₀, t_d) = (0, 1), where `shapes` / `shapes_sm` pass the gate: +0.085 ± 0.023 vs `deep`, +0.034 ± 0.014 vs `full`, and the **4-level** net is behind the shape bases (−0.034 ± 0.010 vs `full`) | §3.3 |
 | L8′ | On its **own training loss** the 4-level net is behind the shape bases on the same four levels (ΔL = +0.021 ± 0.003 vs `shapes_sm`, +0.028 ± 0.003 vs `full`, three ensembles, classical arm cross-fitted) and adds nothing to them (−0.0003 ± 0.0004); the 7-level net ties `full` (−0.002 ± 0.004) and adds −0.004 ± 0.001 | ESTABLISHED (2026-11-12, offline) | §3.8 |
 | L8″ | The true ground-state overlap of the 4-level net is ≈ 0.88 (fit-free, 40k configurations), not the 0.93 a one-state fit on [2,7] reads: "A₀ saturates above ≈ 0.9" is the estimator, not the operators | ESTABLISHED for one net | §3.8 |
+| L8‴ | Distilling the 4-level net onto its own Euclidean future (§11 P11, ens2, lag 2) leaves it unchanged: ΔL = +0.0020 ± 0.0013, Δm(1) −1.4σ, union with `full` −0.0004 ± 0.0016 — reading R-T0. **Low power**: the objective's only visible gain was the rescale c ≈ C(2)/C(0) and its selection ran on a constant offset, so this does not show the class lacks the evolved operator | OPEN (2026-11-19, one run; the connected-loss rerun settles it) | §11 P11 |
 | L9 | The advantage is learned, not architectural | ESTABLISHED (untrained nets below the GEVP at every input depth; decomposition sign flips) | §3.4 |
 | L10 | What was learned: ~80% of the out-of-span content is rectangular loops, ~2.5% of the norm² is outside every classical operator | ESTABLISHED (estimator-dependent between 55% and 80%) | §3.5 |
 | L10′ | …and that ~2.5% carries ΔA₀ = +0.021 ± 0.009 | **RETRACTED** (2026-10-21): a fitted-mass artifact (m_G − m_P = +0.010 ± 0.004); at a common reference mass removing it gives −0.011 ± 0.005 (35-op `full`), −0.008 ± 0.005 (`full21`) | §3.5 |
@@ -1159,6 +1160,41 @@ Honest prior: R-T0 is as likely as R-T1. Independent of the outcome, the
 forward-only run this record is missing is **`full` on a high-statistics
 chain** (§3.8 (4)): it gives the 35-operator basis's true ceiling η(a → ∞) and
 needs a streaming version of `su2_fair_fight.py`'s basis builder, not written.
+
+*Run 1 (2026-11-19, ens2, lag 2, the loss as written above — now `TMD_LOSS=raw`;
+verbatim in `notes/raw/tmd_ens2_readout_2026-11-19.txt`).* The readout says
+**R-T0**: ΔL = +0.0020 ± 0.0013 (+1.5σ), Δ cosh m_eff(0..3) = +2.5σ, −1.4σ,
+−0.3σ, −0.7σ, shift realised −0.10 ± 0.09, η equal within errors, both nets
++0.024…+0.035 behind `shapes_sm` / `full` and adding nothing to them. Stopped at
+epoch 14, best epoch 8. **The run had no power to separate class from loss**,
+for two reasons the training log shows and the teacher's own test dump
+(`dumps/…_ens2_test_obars.pt`, the same 400 configurations) quantifies:
+(i) *the whole loss decrease is a rescale.* In the teacher's units the
+zero-momentum term is 10.64 for the teacher as it is, 6.43 for the teacher
+rescaled by c = C(2)/C(0) = 0.49, ≈ 5.94 for the exact regression function
+(C_T(Δ + 4)); the student scored **6.51** — the rescale, and none of the 0.50
+purification margin, which is r(4) − r(2)² = 0.030 of C(0), ≈ 8% of the term.
+(ii) *selection ran on a constant offset.* The validation loss swung 6 → 37 → 6
+between epochs; the excesses of the block and zero-momentum terms are in the
+ratio V/POOL³ = 64 (epoch 3: +0.52 → +31.5, predicted +33; epoch 7: +0.25 →
++16.5, predicted +16), the signature of a constant of ≈ 0.12σ per site. The
+cause is μ/σ ≈ −55 for the teacher's per-site field: rescaling the raw output
+by c moves its mean by 55·(1 − c)σ unless the last bias compensates exactly.
+So the sentence R-T0 was written to license ("the class does not contain the
+evolved operator") is **not** licensed by this run.
+*What changed (2026-11-20).* `TMD_LOSS=connected`, now the default: the error is
+centred over the minibatch before both terms, and selection is on the *shape
+loss* min_c Q(c·s − t), in closed form on the validation split — blind to offset
+and scale, as the readout is (`tests/test_distill.py`). The student is tagged
+`_tmd2_c`, so the raw run's checkpoint is never overwritten, and the readout
+combines dumps only within one loss version. **The pre-registered lag-1
+follow-up is dropped**: its margin r(2) − r(1)² = 0.020 of C(0) is *smaller*
+than lag 2's 0.030 (7.3% vs 7.8% of the zero-momentum term), so "a stronger
+signal" was wrong. This is a deviation from the plan, motivated by the
+instrument, not by the sign of the result. *Run 2*: `bash scripts/tmd_batch.sh`
+(ens2, lag 2, connected), same readings; **P11 closes on what it reads.** An R-T0
+there is the sentence above, with the caveat that the margin is ~8% of the loss
+and gradient descent starts at the Rayleigh optimum.
 
 **P12 — the Yang–Mills vacuum wavefunctional, learned by force matching. V100,
 one night (`bash scripts/vacuum_batch.sh`, ~10–12 h).** Written 2026-11-18;

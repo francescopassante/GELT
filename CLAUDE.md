@@ -608,7 +608,14 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   weights and **the start is a candidate checkpoint**: a student that never
   beats its starting validation loss is saved as its teacher, and the readout
   says R-T0. Adam needs the warm-up (`TMD_WARMUP`): without it one step at 1e-3
-  took the plumbing check's loss from 0.5 to 138. **Not run yet.**
+  took the plumbing check's loss from 0.5 to 138. **Run 1 (2026-11-19, ens2,
+  lag 2) read R-T0 at low power**: the student only learned a rescale, and
+  selection ran on a constant offset (μ/σ ≈ −55 couples the two). Hence
+  **`TMD_LOSS=connected`**, the default since 2026-11-20 — the error centred
+  over the batch, selection on the closed-form shape loss min_c Q(c·s − t), the
+  student tagged `_tmd<lags>_c`; `raw` reproduces run 1. Run 2 (connected,
+  lag 2) closes P11; the lag-1 follow-up is dropped (smaller margin). Record
+  §11 P11, `tests/test_distill.py`.
   `hybrid_transport_probe.py` is the control that ruled out thin transport.
 - **`vacuum_common.py` / `vacuum_replicas.py` / `vacuum_classical.py` /
   `train_vacuum.py` / `vacuum_relative_weights.py` / `vacuum_readout.py` /
@@ -732,6 +739,11 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   that resolves every mode gives the operator whose correlator is the target's
   shifted by 2a; η is 1 on a complete span, below 1 on an incomplete one, and
   its large-lag limit is the best overlap in the span; the wrap correction.
+- **`test_distill.py`** — `train_distill.py`'s objective: the connected loss is
+  blind to a constant (the raw one charges V·b² + POOL³·b², the first run's
+  swings), the quadratic statistics reproduce the loss, and the closed-form
+  shape loss is the minimum over rescales and blind to the student's scale and
+  offset.
 - **`test_cubic.py`** — O_h on links: the composition law bit for bit
   against the matrices, the anisotropic action and the classical Ō(t) (APE
   ladder included) invariant under all 48, the character table orthonormal,
