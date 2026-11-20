@@ -1,0 +1,54 @@
+P11 transfer-matrix distillation, run 2: ens2, lag 2, TMD_LOSS=connected (commit
+bcf2255; the student is results/glueball/best_glueball_gelt_sm0-2-4-6_ens2_tmd2_c.pth
+on the V100). Verbatim: logs/tmd_batch_c.log, then logs/tmd_ens2_tmd2_c.log.
+Reading R-T0 at the boundary — notes/thesis_record.md §11 P11. P11 closes here.
+
+==== logs/tmd_batch_c.log ====
+nohup: ignoring input
+[2026-11-20 00:22:08] transfer-matrix distillation: ensemble 2, lags 2, loss connected
+   teacher: results/glueball/best_glueball_gelt_sm0-2-4-6_ens2.pth
+   student: results/glueball/best_glueball_gelt_sm0-2-4-6_ens2_tmd2_c.pth
+   dump   : results/glueball/best_glueball_gelt_sm0-2-4-6_ens2_tmd2_c_test_obars.pt
+[2026-11-20 00:22:10] 0. plumbing check
+[2026-11-20 00:22:14] 1. training the student → logs/tmd_ens2_tmd2_c.log
+[2026-11-20 03:49:25] 2. readout → logs/tmd_ens2_tmd2_c_readout.log
+
+== results/glueball/best_glueball_gelt_sm0-2-4-6_ens2_tmd2_c_test_obars.pt  [connected loss]   (400 configurations, block 10, mean lag 2)
+   L(student) -0.5919    ΔL = L(student) − L(teacher) = -0.0019 ± 0.0010 (-2.0σ)
+   Δ cosh m_eff(Δ), Δ = 0..3 : -0.0020 ± 0.0011 (-1.7σ)   -0.0030 ± 0.0018 (-1.6σ)   -0.0021 ± 0.0026 (-0.8σ)   -0.0047 ± 0.0032 (-1.5σ)
+   shift realised, Δ = 0, 1  : +0.04 ± 0.05   +0.25 ± 27.01
+   η(a) wrap-corrected, a = 1..5   student: 0.958(10)  0.889(27)  0.973(87)  0.960(173)  0.931(318)
+                                   teacher: 0.959(10)  0.891(27)  0.963(88)  0.936(167)  0.896(295)
+   shape loss on test (after the best rescale): student 8.6788 at c* 0.896, teacher 8.6897 at c* 0.437
+   vs shapes_sm: ΔL student − arm +0.0217 ± 0.0035 (+6.3σ) (teacher +0.0236 ± 0.0036 (+6.6σ));  L(arm ∪ student) − L(arm) -0.0002 ± 0.0007 (-0.2σ) (teacher +0.0000 ± 0.0010 (+0.0σ))
+   vs full     : ΔL student − arm +0.0309 ± 0.0046 (+6.8σ) (teacher +0.0328 ± 0.0045 (+7.2σ));  L(arm ∪ student) − L(arm) -0.0003 ± 0.0011 (-0.3σ) (teacher -0.0002 ± 0.0015 (-0.2σ))
+
+[connected loss] combined over 1 dump(s): ΔL -0.0019 ± 0.0010 (-2.0σ)   Δm(1) -0.0030 ± 0.0018 (-1.6σ)   Δm(2) -0.0021 ± 0.0026 (-0.8σ)   union with full -0.0003 ± 0.0011 (-0.3σ)
+reading: R-T0: the student is its teacher
+[2026-11-20 03:49:28] done.
+
+==== logs/tmd_ens2_tmd2_c.log ====
+/usr/local/lib/python3.10/dist-packages/torch/_utils.py:836: UserWarning: TypedStorage is deprecated. It will be removed in the future and UntypedStorage will be the only storage class. This should only matter to you if you are using storages directly.  To access UntypedStorage directly, use tensor.untyped_storage() instead of tensor.storage()
+  return self.fget.__get__(instance, owner)()
+device cuda | lags (2,) | loss connected | pool 3 | p0 weight 1 | init teacher | lr 0.0003 (warm-up 100 steps) | epochs 20
+teacher results/glueball/best_glueball_gelt_sm0-2-4-6_ens2.pth
+student results/glueball/best_glueball_gelt_sm0-2-4-6_ens2_tmd2_c.pth
+split (contiguous): 1400 train / 200 val / 400 test
+teacher field: μ = -0.320899, σ = 0.0057881 (first 12 train configs)
+start: val loss 15.38281 (block 4.73676, zero 10.64605) | shape 8.70130 at c* 0.451 | C(1)/C(0), C(2)/C(0): teacher 0.6902, 0.4929  student 0.6902, 0.4929
+epoch   1: train 9.35206 | val 8.72236 (block 2.58236, zero 6.14000) | shape 8.71846 at c* 1.030 | student val C(1)/C(0) 0.6893, C(2)/C(0) 0.4933
+epoch   2: train 8.62221 | val 8.73066 (block 2.61290, zero 6.11776) | shape 8.70087 at c* 0.925 | student val C(1)/C(0) 0.6908, C(2)/C(0) 0.4945  *
+epoch   3: train 8.59857 | val 8.71182 (block 2.58474, zero 6.12708) | shape 8.71119 at c* 0.988 | student val C(1)/C(0) 0.6905, C(2)/C(0) 0.4926
+epoch   4: train 8.60997 | val 8.71667 (block 2.58927, zero 6.12740) | shape 8.71195 at c* 0.969 | student val C(1)/C(0) 0.6899, C(2)/C(0) 0.4922
+epoch   5: train 8.60665 | val 8.72692 (block 2.59758, zero 6.12934) | shape 8.71893 at c* 0.960 | student val C(1)/C(0) 0.6904, C(2)/C(0) 0.4924
+epoch   6: train 8.58997 | val 8.73427 (block 2.58360, zero 6.15066) | shape 8.72826 at c* 1.038 | student val C(1)/C(0) 0.6891, C(2)/C(0) 0.4923
+epoch   7: train 8.59601 | val 8.70751 (block 2.57890, zero 6.12860) | shape 8.70678 at c* 1.013 | student val C(1)/C(0) 0.6899, C(2)/C(0) 0.4933
+epoch   8: train 8.56244 | val 8.70796 (block 2.58917, zero 6.11879) | shape 8.70612 at c* 0.980 | student val C(1)/C(0) 0.6897, C(2)/C(0) 0.4941
+no val improvement in 6 epochs — stopping
+
+test distillation loss 8.73269 (block 2.61248, zero 6.12021)
+test shape loss (after the best rescale): student 8.67876 at c* 0.896 | teacher 8.68974 at c* 0.437 | Δ -0.01098
+  teacher: C(1)/C(0) 0.6874  C(2)/C(0) 0.4926  m_eff(Δ=0..4) 0.375(13)  0.333(18)  0.284(19)  0.306(25)  0.320(44)
+  student: C(1)/C(0) 0.6888  C(2)/C(0) 0.4951  m_eff(Δ=0..4) 0.373(14)  0.330(18)  0.281(19)  0.301(24)  0.322(43)
+  ideal student: m_eff^S(Δ) = m_eff^T(Δ + 2a). The paired readings are scripts/tmd_readout.py's.
+saved → results/glueball/best_glueball_gelt_sm0-2-4-6_ens2_tmd2_c_test_obars.pt

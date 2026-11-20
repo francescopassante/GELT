@@ -47,7 +47,8 @@ and are kept as they were.
 | L8 | …and against stronger classical bases | **QUALIFIED**: +0.095 ± 0.021 vs the input-matched 7-level arm, only +0.038 ± 0.027 (1.4σ) once loop shapes are added; A₀ is saturated there. At (t₀, t_d) = (0, 1), where `shapes` / `shapes_sm` pass the gate: +0.085 ± 0.023 vs `deep`, +0.034 ± 0.014 vs `full`, and the **4-level** net is behind the shape bases (−0.034 ± 0.010 vs `full`) | §3.3 |
 | L8′ | On its **own training loss** the 4-level net is behind the shape bases on the same four levels (ΔL = +0.021 ± 0.003 vs `shapes_sm`, +0.028 ± 0.003 vs `full`, three ensembles, classical arm cross-fitted) and adds nothing to them (−0.0003 ± 0.0004); the 7-level net ties `full` (−0.002 ± 0.004) and adds −0.004 ± 0.001 | ESTABLISHED (2026-11-12, offline) | §3.8 |
 | L8″ | The true ground-state overlap of the 4-level net is ≈ 0.88 (fit-free, 40k configurations), not the 0.93 a one-state fit on [2,7] reads: "A₀ saturates above ≈ 0.9" is the estimator, not the operators | ESTABLISHED for one net | §3.8 |
-| L8‴ | Distilling the 4-level net onto its own Euclidean future (§11 P11, ens2, lag 2) leaves it unchanged: ΔL = +0.0020 ± 0.0013, Δm(1) −1.4σ, union with `full` −0.0004 ± 0.0016 — reading R-T0. **Low power**: the objective's only visible gain was the rescale c ≈ C(2)/C(0) and its selection ran on a constant offset, so this does not show the class lacks the evolved operator | OPEN (2026-11-19, one run; the connected-loss rerun settles it) | §11 P11 |
+| L8‴ | Distilling the 4-level net onto its own Euclidean future (§11 P11, ens2, lag 2, connected loss) moves it the right way and barely: ΔL = −0.0019 ± 0.0010 (−1.9σ), Δ cosh m_eff(0..3) all negative at ≤ 1.7σ, ≈ 4% of the ideal shift (+0.04 ± 0.05), ≈ 2% of the ≳ 0.50 shape-loss margin; the gap to `shapes_sm` goes +0.0236 → +0.0217 and the union with `full` stays null. Reading R-T0 (at its boundary). The Rayleigh loss is not what holds the net behind the shape bases: from the teacher's start, the exact Euclidean-evolution objective finds no materially purer operator in the same class. Run 1 (raw loss) was R-T0 at no power and is superseded | ESTABLISHED for one ensemble (2026-11-20; P11 closed) | §11 P11 |
+| L8⁗ | Training for K = 4 states (Ky Fan loss, §11 P13) gives a purer ground state than the K = 1 net, Ê₀(1) −0.0123 ± 0.0038 (−3.2σ, ≈ 8× the K = 1 seed spread; m_eff(1) unchanged), still behind `full` (+0.0194 ± 0.0058); levels 1–3 are all non-A1 (f_A1 ≤ 0.011), at Ê(1) 0.61–0.65 around `full`'s A1 level 1 (0.623), so the excited 0⁺⁺ (RS3) is not read | ESTABLISHED for one training on ens0 (2026-11-20); the non-A1 levels' irreps OPEN | §11 P13 |
 | L9 | The advantage is learned, not architectural | ESTABLISHED (untrained nets below the GEVP at every input depth; decomposition sign flips) | §3.4 |
 | L10 | What was learned: ~80% of the out-of-span content is rectangular loops, ~2.5% of the norm² is outside every classical operator | ESTABLISHED (estimator-dependent between 55% and 80%) | §3.5 |
 | L10′ | …and that ~2.5% carries ΔA₀ = +0.021 ± 0.009 | **RETRACTED** (2026-10-21): a fitted-mass artifact (m_G − m_P = +0.010 ± 0.004); at a common reference mass removing it gives −0.011 ± 0.005 (35-op `full`), −0.008 ± 0.005 (`full21`) | §3.5 |
@@ -1196,6 +1197,34 @@ instrument, not by the sign of the result. *Run 2*: `bash scripts/tmd_batch.sh`
 there is the sentence above, with the caveat that the margin is ~8% of the loss
 and gradient descent starts at the Rayleigh optimum.
 
+*Run 2 (2026-11-20, ens2, lag 2, connected; commit `bcf2255`; verbatim in
+`notes/raw/tmd_ens2_c_readout_2026-11-20.txt`).* **The instrument works**: the
+validation loss sits at 8.71 ± 0.01 for eight epochs where run 1 swung 6 → 37;
+epoch 1 absorbs the rescale into the weights (train 9.35 → 8.62, the student's
+own c* then ≈ 0.9–1.0 against the teacher's 0.44), and after that nothing moves —
+validation shape loss 8.7013 at the start, 8.7009 at the selected epoch 2,
+stopped at epoch 8. The training loss drifts 8.62 → 8.56 over epochs 2–8 while
+validation stays flat, so what it finds does not generalise. Readout:
+ΔL = **−0.0019 ± 0.0010** (−1.9σ — the readout prints −2.0 and its own |z| < 2
+test reads R-T0), Δ cosh m_eff(0..3) = −1.7σ, −1.6σ, −0.8σ, −1.5σ, shift
+realised **+0.04 ± 0.05** at Δ = 0, η equal within errors. On test the shape
+loss drops by **0.011** (8.6897 → 8.6788) against a margin of ≳ 0.50 (the
+zero-momentum part alone, χ₀·[r(4) − r(2)²] from the teacher's dump), i.e.
+≈ 2% of what the exact regression function would gain. Against the classical
+bases the student closes ~8% of the teacher's deficit (`shapes_sm` +0.0236 →
++0.0217, `full` +0.0328 → +0.0309, both still ≥ 6σ) and the union with `full`
+stays null (−0.0003 ± 0.0011).
+**Reading: R-T0, at its boundary, every sign in the right direction and every
+size small.** The sentence it licenses: *with the function class held fixed and
+started from the Rayleigh optimum, an objective whose exact solution is the
+Euclidean-evolved operator finds an operator purer by ≈ 4% of the ideal shift
+and no more; the 4-level net's deficit against the classical shape bases is not
+a defect of the Rayleigh loss.* What it does not license: that no point of the
+class is purer — a different start (`TMD_INIT=scratch`), a different optimiser
+or a larger width were not tried, and by the plan they are not. **P11 is
+closed.** Not done, by the same plan: replication on ens0/ens1, `TMD_HS=1`, and
+a second round, each conditional on R-T1.
+
 **P12 — the Yang–Mills vacuum wavefunctional, learned by force matching. V100,
 one night (`bash scripts/vacuum_batch.sh`, ~10–12 h).** Written 2026-11-18;
 nothing below has run at production size. A new observable, not a 0⁺⁺ rerun:
@@ -1263,6 +1292,41 @@ the excited 0⁺⁺; ≥ 3σ → classical better; < 2σ → matches; fewer than
 levels → not read. **RS4** Ê₀(1) of the K-span against the K = 1 net and
 against `full` (k = 1, cross-fitted): ≤ −3σ better, ≥ 3σ behind, < 2σ level —
 does asking for K states cost or buy the ground state.
+
+*Run 1 (2026-11-20, K = 4, ens0, from scratch; verbatim in
+`notes/raw/kyfan_k4_ens0_readout_2026-11-20.txt`).* Early stop after 43
+epochs at the K = 1 cost per epoch (≈ 1220 s), so ≈ 14.5 h, not the ~10 h
+above; twin and readout ran. Labels `['A1', 'non-A1', 'non-A1', 'non-A1']`:
+f_A1 = 0.965 for level 0, **0.011, 0.007, 0.009** for levels 1–3.
+- **RS1: +0.542 ± 0.035 (+15.4σ) → learned, not architectural** — but of a
+  *non-A1* level (the twin's level 1 is non-A1 too, f_A1 0.033). The reading
+  was written for the excited 0⁺⁺; what it licenses is "training finds a
+  non-A1 state far lighter than the random net's", not a statement about the
+  0⁺⁺*.
+- **RS3: not read** (one A1 level). Why K = 4 could not reach it: the learned
+  non-A1 levels sit at Ê(1) = 0.607(17), 0.621(18), 0.649(18), and `full`'s
+  level 1 — A1 by construction, the 0⁺⁺* bound — at 0.623(17) cross-fitted
+  (0.615 in sample), inside that cluster. A net that is not O_h-invariant has
+  no reason to prefer the A1 state there. Levels 1 and 2 are near-degenerate
+  (validation −log λ 0.583, 0.603), as an E doublet would be; "non-A1" only
+  means orthogonal to the A1g span, so 2⁺⁺ (E ⊕ T2, five components) and a
+  parity-odd state are not told apart. Unlabelled: `cubic_projection.py`
+  handles one output, and the high-statistics f_E path (`spectrum_hs_eval.py`)
+  does not exist.
+- **RS4: the K-span buys the ground state against the K = 1 net,
+  −0.0123 ± 0.0038 (−3.2σ), and is behind `full`, +0.0194 ± 0.0058 (+3.3σ).**
+  Not the GEVP's freedom inside the span: the single validation-projected
+  operator (`@val`) reads 0.3813(115) against the K = 1 net's 0.3924(124)
+  (difference not jackknifed). Not an initialisation effect (post hoc, not
+  pre-registered): the three K = 1 seeds on ens0 read 0.3924, 0.3956, 0.3938
+  (sd 0.0016, paired differences ≤ 0.0032 ± 0.0019), and the K-span's 0.3801
+  is below all three — the shift is ≈ 8× the seed spread. m_eff(1) is
+  unchanged (0.3692 vs 0.3695): the gain is ground-state purity at short Δ,
+  not a different mass. Against `full` the K = 1 net is +0.032 behind, so
+  K = 4 closes ≈ 40% of that gap. One training, one ensemble.
+Open, in order: label levels 1–3 by O_h irrep (extend `cubic_projection.py`
+to K outputs — it sizes the K at which the 0⁺⁺* enters, ≥ 7 if it is the
+full 2⁺⁺); then RS3 at that K, or with an A1-projected readout.
 
 **Worth running only for completeness** (cheap, offline): the excited-state
 gate on the `deep` basis (`gevp_eigenvalues(..., truncate=True)`, second

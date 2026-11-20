@@ -1,0 +1,72 @@
+logs/kyfan_batch.log (V100), verbatim — §11 P13, K = 4, ens0, from scratch.
+Training log summary (logs/kyfan_k4_ens0.log): early stop after 43 epochs,
+~1210–1240 s/epoch (≈ 14.5 h), best val Ky Fan loss −0.4728; validation Ritz
+values at Δ = 1 (t0 = 0): −log λ = 0.343, 0.583, 0.603, 0.664.
+
+nohup: ignoring input
+[2026-11-19 14:48:19] Ky Fan K-state basis: K = 4, ensemble 0
+   trained dump: results/glueball/best_glueball_gelt_sm0-2-4-6_k4_test_obars.pt
+   twin dump   : results/glueball/best_glueball_gelt_sm0-2-4-6_k4_rnd0_test_obars.pt
+[2026-11-19 14:48:20] 1. training → logs/kyfan_k4_ens0.log
+[2026-11-20 05:19:13] 2. untrained twin → logs/kyfan_k4_ens0_rnd0.log
+[2026-11-20 05:23:43] 3. readout → logs/kyfan_k4_ens0_readout.log
+
+=== run5: results/glueball/best_glueball_gelt_sm0-2-4-6_k4_test_obars.pt
+    40 blocks of 10 configurations, eps 0.0001, classical cross-fit k = 4; columns Ê(1) Ê(2) m_eff(1) m_eff(2) m_eff(3), error ×1e4 in brackets
+  level 0
+    best_glueball_gelt_sm0-2-4-6_k4                      0.3801( 115)  0.3747( 130)  0.3692( 165)  0.3381( 209)  0.3408( 280)  f_A1 0.965
+    best_glueball_gelt_sm0-2-4-6_k4_rnd0                 0.6236( 178)  0.5479( 188)  0.4722( 244)  0.4062( 362)  0.3966( 532)  f_A1 0.888
+    best_glueball_gelt_sm0-2-4-6_k4@val                  0.3813( 115)  0.3757( 131)  0.3701( 168)  0.3391( 215)  0.3512( 302)
+    best_glueball_gelt_sm0-2-4-6                         0.3924( 124)  0.3810( 132)  0.3695( 163)  0.3328( 199)  0.3453( 290)
+    published in sample                                  0.4415( 129)  0.4206( 132)  0.3997( 163)  0.3614( 237)  0.3471( 335)
+    deep in sample                                       0.4183( 127)  0.3981( 127)  0.3780( 155)  0.3508( 249)  0.3657( 304)
+    full in sample                                       0.3566( 117)  0.3538( 127)  0.3511( 161)  0.3341( 234)  0.3420( 283)
+    published cross-fit k=4                              0.4420( 129)  0.4212( 131)  0.4004( 162)  0.3581( 244)  0.3271( 312)
+    deep cross-fit k=4                                   0.4197( 125)  0.3989( 124)  0.3780( 155)  0.3478( 258)  0.3384( 297)
+    full cross-fit k=4                                   0.3583( 117)  0.3547( 126)  0.3511( 161)  0.3323( 248)  0.3346( 303)
+    published cross-fit k=1                              0.4427( 127)  0.4220( 132)  0.4014( 166)  0.3670( 236)  0.3596( 335)
+    deep cross-fit k=1                                   0.4198( 125)  0.4002( 128)  0.3807( 161)  0.3558( 248)  0.3698( 315)
+    full cross-fit k=1                                   0.3607( 124)  0.3579( 132)  0.3550( 165)  0.3385( 239)  0.3538( 298)
+  level 1
+    best_glueball_gelt_sm0-2-4-6_k4                      0.6065( 167)  0.5564( 155)  0.5063( 259)  0.4896( 384)  0.4522( 643)  f_A1 0.011
+    best_glueball_gelt_sm0-2-4-6_k4_rnd0                 1.1489( 308)  1.0397( 415)  0.9305( 732)  0.5740(1198)  0.3995(1956)  f_A1 0.033
+    published in sample                                  0.9806( 254)  0.9176( 314)  0.8547( 513)  0.8851(1317)  0.5187(2448)
+    deep in sample                                       0.8128( 209)  0.7325( 258)  0.6523( 415)  0.5384( 577)  0.6053(1138)
+    full in sample                                       0.6150( 174)  0.5804( 158)  0.5458( 227)  0.4939( 384)  0.4877( 723)
+    published cross-fit k=4                              0.9815( 250)  0.9122( 310)  0.8429( 535)  0.8136( 983)  0.5497(2745)
+    deep cross-fit k=4                                   0.8112( 209)  0.7326( 255)  0.6541( 401)  0.5392( 570)  0.6991(1300)
+    full cross-fit k=4                                   0.6232( 170)  0.5896( 172)  0.5560( 249)  0.5218( 442)  0.5743( 763)
+  level 2
+    best_glueball_gelt_sm0-2-4-6_k4                      0.6207( 177)  0.5865( 195)  0.5523( 260)  0.4763( 513)  0.4862( 970)  f_A1 0.007
+    best_glueball_gelt_sm0-2-4-6_k4_rnd0                 1.3590( 377)  1.3210( 809)  1.2829(1528)  1.4044(6645)        —        f_A1 0.063
+    published in sample                                  1.4726( 459)  1.3481( 822)  1.2237(1448)  0.5846(2768)  0.6479(4507)
+    deep in sample                                       1.1956( 390)  1.0929( 490)  0.9903( 887)  0.7964(1544)  0.4871(3559)
+    full in sample                                       0.9157( 299)  0.8519( 370)  0.7881( 595)  0.6567( 961)  0.4205(2759)
+    published cross-fit k=4                              1.4664( 441)  1.3589( 958)  1.2514(1764)  0.7193(3144)  0.5892(6150)
+    deep cross-fit k=4                                   1.2017( 410)  1.1027( 469)  1.0036( 838)  0.8392(1585)  0.6978(5049)
+    full cross-fit k=4                                   0.9402( 351)  0.8760( 423)  0.8118( 628)  0.7858(1286)  0.3861(1688)
+  level 3
+    best_glueball_gelt_sm0-2-4-6_k4                      0.6485( 179)  0.6338( 248)  0.6190( 380)  0.5839( 687)  0.6941(1139)  f_A1 0.009
+    best_glueball_gelt_sm0-2-4-6_k4_rnd0                 1.7668( 539)  1.6118(1207)  1.4568(2464)  1.3993(13219)        —        f_A1 0.232
+    published in sample                                  1.8473( 662)  1.5749(1065)  1.3025(2288)  1.1761(7276)  0.0650(10055)
+    deep in sample                                       1.5495( 469)  1.3370( 846)  1.1246(1648)  1.1675(4643)  0.2822(6847)
+    full in sample                                       1.0277( 270)  0.9782( 486)  0.9286( 843)  0.7090(1096)  0.3427(2496)
+    published cross-fit k=4                              1.8667( 675)  1.5985(1117)  1.3304(2427)  1.3667(9206)  0.7327(36964)
+    deep cross-fit k=4                                   1.5702( 559)  1.4352( 998)  1.3002(1806)  1.2021(6805)  1.2981(34969)
+    full cross-fit k=4                                   1.0555( 331)  1.0353( 579)  1.0152( 984)  1.0167(2190)  0.7039(4815)
+
+  readings (notes/learned_spectrum.md §5):
+   best_glueball_gelt_sm0-2-4-6_k4: level labels ['A1', 'non-A1', 'non-A1', 'non-A1']
+     RS1 Ê₁(1) untrained − trained = +0.5424 ± 0.0353 (+15.4σ) → learned, not architectural
+     RS3 not read: fewer than two A1-labelled learned levels
+     RS4 Ê₀(1) K-span − best_glueball_gelt_sm0-2-4-6: -0.0123 ± 0.0038 (-3.2σ) → K-span better ground state
+     RS4 Ê₀(1) K-span − full (cross-fitted, k=1): +0.0194 ± 0.0058 (+3.3σ) → behind `full`
+
+wrote results/glueball/spectrum_readout_k4.pt and results/glueball/spectrum_readout_k4.txt
+[2026-11-20 05:23:46] done.
+
+Post-hoc seed control (local, 2026-11-20, not pre-registered): Ê(1) of the
+three K = 1 4-level nets on ens0, single operator, blocked jackknife (40 × 10),
+from dumps/best_glueball_gelt_sm0-2-4-6{,_init1,_init2}_test_obars.pt:
+  init0 0.3924 ± 0.0124 (reproduces the readout's row)   init1 0.3956 ± 0.0124   init2 0.3938 ± 0.0120
+  sd over seeds 0.0016, range 0.0032; paired differences ≤ 0.0032 ± 0.0019.
