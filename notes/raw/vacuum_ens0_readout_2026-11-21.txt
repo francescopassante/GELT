@@ -1,0 +1,38 @@
+P12 run 1 — vacuum wavefunctional, ensemble 0 (V100, 2026-11-20/21).
+Verbatim: logs/vacuum_batch.log, then the report block of
+logs/vacuum_replicas_ens0.log. Dumps on the V100 in results/vacuum/.
+
+[2026-11-20 12:07:40] vacuum wavefunctional, ensemble 0, parts smoke,replicas,classical,gelt,frozen,lcnn,rw,readout
+[2026-11-20 12:07:42] python scripts/vacuum_replicas.py --vac-smoke=1 > logs/vacuum_smoke_vacuum_replicas_ens0.log
+[2026-11-20 12:08:01] python scripts/vacuum_classical.py --vac-smoke=1 > logs/vacuum_smoke_vacuum_classical_ens0.log
+[2026-11-20 12:11:51] python scripts/train_vacuum.py --vac-smoke=1 > logs/vacuum_smoke_train_vacuum_ens0.log
+[2026-11-20 12:12:13] python scripts/vacuum_relative_weights.py --vac-smoke=1 --vac-family=plane --vac-rw-nets=results/vacuum/smoke/net_gelt_sm0_resfull_init0_ens0.pth > logs/vacuum_smoke_rw_ens0.log
+[2026-11-20 12:12:29] python scripts/vacuum_readout.py --vac-smoke=1 > logs/vacuum_smoke_readout_ens0.log
+[2026-11-20 12:12:31] python scripts/vacuum_replicas.py --vac-ensemble-seed=0 > logs/vacuum_replicas_ens0.log
+[2026-11-20 12:35:01] python scripts/vacuum_classical.py --vac-ensemble-seed=0 > logs/vacuum_classical_ens0.log
+[2026-11-20 19:41:39] python scripts/train_vacuum.py --vac-ensemble-seed=0 > logs/vacuum_train_gelt_ens0.log
+[2026-11-21 01:10:51] python scripts/train_vacuum.py --vac-ensemble-seed=0 --vac-alpha-mode=frozen > logs/vacuum_train_frozen_ens0.log
+[2026-11-21 05:41:21] python scripts/train_vacuum.py --vac-ensemble-seed=0 --vac-arch=lcnn > logs/vacuum_train_lcnn_ens0.log
+[2026-11-21 09:49:35] python scripts/vacuum_relative_weights.py --vac-ensemble-seed=0 --vac-family=noise --vac-rw-nets=results/vacuum/net_gelt_sm0_resfull_init0_ens0.pth,results/vacuum/net_gelt_frozen_sm0_resfull_init0_ens0.pth,results/vacuum/net_lcnn_sm0_resfull_init0_ens0.pth > logs/vacuum_rw_noise_ens0.log
+[2026-11-21 09:56:15] python scripts/vacuum_relative_weights.py --vac-ensemble-seed=0 --vac-family=plane --vac-rw-nets=results/vacuum/net_gelt_sm0_resfull_init0_ens0.pth,results/vacuum/net_gelt_frozen_sm0_resfull_init0_ens0.pth,results/vacuum/net_lcnn_sm0_resfull_init0_ens0.pth > logs/vacuum_rw_plane_ens0.log
+[2026-11-21 10:00:05] python scripts/vacuum_relative_weights.py --vac-ensemble-seed=0 --vac-family=smear --vac-rw-nets=results/vacuum/net_gelt_sm0_resfull_init0_ens0.pth,results/vacuum/net_gelt_frozen_sm0_resfull_init0_ens0.pth,results/vacuum/net_lcnn_sm0_resfull_init0_ens0.pth > logs/vacuum_rw_smear_ens0.log
+V0: plateau +0.0017 ± 0.0005 (FAIL), Stein z = -0.27 (ok)
+V0 failed — nothing below is read.
+[2026-11-21 10:11:43] done.
+
+--- logs/vacuum_replicas_ens0.log (report) ---
+200 test configurations, 15552 force components per slice
+V0 — the conditional autocorrelation c(n) = ⟨F⁰·F(n)⟩ / ⟨‖F⁰‖²⟩ (must plateau; the plateau is the predictable fraction):
+   n =   1: 0.1447 ± 0.0008
+   n =   2: 0.1344 ± 0.0006
+   n =   3: 0.1274 ± 0.0007
+   n =   4: 0.1271 ± 0.0005
+   n =   6: 0.1279 ± 0.0004
+   n =   8: 0.1261 ± 0.0006
+   n =  12: 0.1261 ± 0.0005
+   n =  16: 0.1262 ± 0.0004
+   n =  24: 0.1258 ± 0.0005
+   n =  32: 0.1244 ± 0.0005
+   first − last late point: +0.0017 ± 0.0005  → NOT A PLATEAU — raise the sweeps
+V1 — predictable fraction ‖E[F|U]‖²/⟨‖F‖²⟩ = 0.1256 ± 0.0004; signal per component 0.3451, noise per component 2.402
+Stein on the measured slices: mean -6.272 (z = -0.27; |z| > 4 means the force convention is broken on this ensemble)

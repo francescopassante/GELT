@@ -1271,6 +1271,44 @@ quantitative map of the 3+1D SU(2) vacuum (V2 + V5) is a result even under
 R-V0. Honest prior: R-V0 is likelier than R-V1 — on the smoke lattice `dr`
 alone already leaves ε ≈ 0.14 and `full` ε ≈ 0.05.
 
+*Run 1 (2026-11-20/21, ens0; verbatim in
+`notes/raw/vacuum_ens0_readout_2026-11-21.txt`).* Every phase ran (≈ 22 h, not
+10–12: `classical` alone took 7 h, its docstring said ~30 min). **V0 failed on
+the plateau**: c(12) − c(32) = +0.0017 ± 0.0005 (3.4σ); Stein z = −0.27 passes,
+so the force convention holds on the production ensemble. Nothing was read.
+The curve: 0.1447, 0.1344 at n = 1, 2, then flat — 0.1274, 0.1271, 0.1279,
+0.1261, 0.1261, 0.1262, 0.1258 at n = 3…24 — and 0.1244 at n = 32. The
+predictable fraction is 0.1256 ± 0.0004 (13% on the smoke lattice).
+- *What the failure can do to the estimator (exact).* Each replica is an exact
+  conditional draw, so E[F̄|U] = m; only F⁰·F̄ is biased, by the residual
+  correlation b, and the same b enters every e_i and S_i. Hence
+  ε̂ = (E + B)/(M + B): absolute ε pulled toward 1 by (1 − ε)·B/(M + B), and
+  paired gains (V3, V4) ΔE/(M + B) — numerator unbiased, scaled by M/(M + B).
+  V5 does not use the replicas. Taking 0.1244 as c(∞), B/M ≈ 1.0%: ε shifted by
+  ≈ +0.01·(1 − ε), gains shrunk by 1%.
+- *Why it may be a fluctuation (post hoc, not a reading).* The drop is
+  concave: −0.0003 over n = 12→24 against −0.0014 over 24→32. A slow mode
+  would give c(n) convex and decreasing — exactly so for a reversible chain,
+  only approximately for heat-bath + overrelaxation in fixed order. The n = 4→6
+  rise (+0.0008) shows ~10⁻³ wiggles on one chain. Not enough to override a
+  pre-registered gate.
+*Run 2 (prepared 2026-11-21, readings fixed before it runs).* Replicas only,
+then rescoring — no retraining (`VAC_PARTS=replicas,rescore,readout` after
+moving run 1's dump to `replicas_ens0_run1.pt`; ≈ 1.5 h + minutes). Grid
+1…32, 48, 64, 96, 128, late ≥ 32, n_or 2 as before, chains seeded per
+configuration (`VAC_REPLICA_SEED=1`; run 1 was unseeded, so the chains are
+independent of run 1's on the same configurations and F⁰). `vacuum_classical`
+and `train_vacuum` rescore with `VAC_EVAL_ONLY=1` (A, b and the checkpoints
+read back; classical coefficients bit-identical, checked on the smoke
+lattice), and every dump now carries the replicas' tag (grid, late, n_or,
+seed): the readout refuses an ε scored on other replicas, which `idx` alone
+could not catch.
+**V0 as written**, on the new grid: c(32) − c(128) within 2σ and Stein |z| < 4;
+if it passes, V1–V5 are read as fixed above. If it fails again, the tail is
+real: nothing is read and the next step is a longer grid. Reported, not read:
+run 2 − run 1 at each shared n (paired per configuration) — whether run 1's
+c(32) replicates.
+
 **P13 — the learned K-state spectrum (Ky Fan loss). V100, one training
 (~10 h) + its untrained twin (minutes), then offline.** Written 2026-11-19 by
 transcribing the readings already coded in `scripts/spectrum_readout.py`; the

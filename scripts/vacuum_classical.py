@@ -19,9 +19,17 @@ dump keeps the coefficients and the per-config (e, S) so train_vacuum.py and
 the readout can pair every network against every arm on the same replicas.
 
 Env / --vac-*: VAC_ENSEMBLE_SEED, VAC_FIT_CONFIGS (300), VAC_VAL_CONFIGS (60),
-VAC_BB_R (3), VAC_RIDGE (1e-10, relative to the mean diagonal), VAC_SMOKE.
+VAC_BB_R (3), VAC_RIDGE (1e-10, relative to the mean diagonal), VAC_EVAL_ONLY,
+VAC_SMOKE.
+
+VAC_EVAL_ONLY=1 rescores an existing dump on the current replicas: A, b and the
+loss sums are read back instead of accumulated (the accumulation is the 7 h of
+run 1, not the ~30 min once quoted), the coefficients are re-solved from them —
+the same numbers — and only ε and the per-config (e, S) are new. It refuses a
+dump written with other fit/val configurations or another BB_R.
 
     python scripts/vacuum_classical.py
+    VAC_EVAL_ONLY=1 python scripts/vacuum_classical.py
 """
 
 import os
@@ -31,7 +39,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import vacuum_common as vc  # noqa: E402
 
-vc.validate_argv()
+vc.validate_argv("eval-only")
 
 import torch  # noqa: E402
 
@@ -40,6 +48,7 @@ from gelt.vacuum import basis_gradients, spatial_slices, temporal_force  # noqa:
 N_FIT = int(vc.cfg("VAC_FIT_CONFIGS", 10 if vc.SMOKE else 300))
 N_VAL = int(vc.cfg("VAC_VAL_CONFIGS", 4 if vc.SMOKE else 60))
 RIDGE = float(vc.cfg("VAC_RIDGE", 1e-10))
+EVAL_ONLY = vc.flag("VAC_EVAL_ONLY")
 
 
 def accumulate(configs, idx, label):
@@ -82,8 +91,21 @@ def main():
     fit_idx, val_idx = vc.evenly(train, N_FIT), vc.evenly(val, N_VAL)
     print(f"union basis: {len(vc.UNION_LABELS)} operators | fit on {len(fit_idx)} train "
           f"configs × {vc.LT} slices | val {len(val_idx)} configs")
-    A, b, FF, n = accumulate(configs, fit_idx, "fit")
-    Av, bv, FFv, nv = accumulate(configs, val_idx, "val")
+    if EVAL_ONLY:
+        if not os.path.exists(vc.classical_path()):
+            raise SystemExit(f"VAC_EVAL_ONLY needs {vc.classical_path()}")
+        old = torch.load(vc.classical_path(), weights_only=False)
+        om = old["meta"]
+        if (list(om["fit"]) != list(fit_idx) or list(om["val"]) != list(val_idx)
+                or om["bb_r"] != vc.BB_R or old["labels"] != vc.UNION_LABELS):
+            raise SystemExit(f"{vc.classical_path()} was accumulated on other configurations "
+                             "or another basis — rerun without VAC_EVAL_ONLY")
+        A, b, FF, n = old["A"], old["b"], old["FF"], old["n"]
+        Av, bv, FFv, nv = old["Av"], old["bv"], old["FFv"], old["nv"]
+        print(f"eval-only: A, b read back from {vc.classical_path()}")
+    else:
+        A, b, FF, n = accumulate(configs, fit_idx, "fit")
+        Av, bv, FFv, nv = accumulate(configs, val_idx, "val")
 
     rep = None
     if os.path.exists(vc.replica_path()):
@@ -107,6 +129,7 @@ def main():
              for j, f in enumerate(rep["F0"])]
         out["S"] = S
         out["rep_idx"] = list(rep["idx"])
+        out["rep_tag"] = vc.replica_tag(rep)
     print(f"{'arm':10s} {'K':>3s}  {'train':>8s}  {'val':>8s}   ε (exact score, noise removed)")
     for arm in vc.ARM_ORDER:
         idx = vc.arm_index(arm)

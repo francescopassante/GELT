@@ -7,7 +7,8 @@ classical arms, the networks, the replica dump and the ε estimator.
     vacuum_replicas.py          conditional chains on the test split → signal,
                                 noise floor and the per-config replicas (V100)
     vacuum_classical.py         force-matching least squares of every classical
-                                arm, ε on the replicas (V100, ~30 min)
+                                arm, ε on the replicas (V100, ~7 h; minutes
+                                to rescore with VAC_EVAL_ONLY)
     train_vacuum.py             a network trained by force matching, residual
                                 over a classical arm (V100, hours)
     vacuum_relative_weights.py  exact ψ₀² ratios along configuration ladders —
@@ -43,6 +44,7 @@ _FLAGS = {
     "residual", "init-seed", "lr", "epochs", "patience", "warmup", "batch",
     "train-configs", "val-configs", "tag", "family", "rw-config", "rw-target-std",
     "rw-max-rungs", "rw-smax", "rw-meas", "rw-eq", "rw-nets", "rw-mode", "rw-seed",
+    "replica-seed",
 }
 
 
@@ -196,6 +198,28 @@ def classical_path():
 
 def replica_path():
     return f"{OUT}/replicas{ENS}.pt"
+
+
+def replica_tag(rep):
+    """What makes two replica dumps the same: grid, late cut, chain and seed.
+
+    The configurations alone (``idx``) do not — a rerun with longer chains has
+    the same ``idx``, so an ε scored on the old replicas would pair silently
+    with an S from the new ones. Run 1 (2026-11-20) was unseeded: seed None."""
+    m = rep["meta"]
+    return dict(sweeps=list(m["sweeps"]), late=int(m["late"]), n_or=int(m["n_or"]),
+                seed=m.get("seed"))
+
+
+def scored_on(d, rep):
+    """Was the dump ``d`` (classical, or a net's ``eval``) scored on ``rep``?
+
+    A dump without a tag predates it and was scored on run 1's replicas, which
+    carry no seed — it pairs with those and with nothing else."""
+    if list(d.get("rep_idx", [])) != list(rep["idx"]):
+        return False
+    tag = d.get("rep_tag")
+    return replica_tag(rep)["seed"] is None if tag is None else tag == replica_tag(rep)
 
 
 def classical_phi(arm, coef):

@@ -12,14 +12,20 @@
 #   smoke      the whole pipeline on an 8 × 4³ ensemble sampled on the spot
 #              (results/vacuum/smoke, wiped first) — plumbing, minutes
 #   replicas   conditional chains on 200 test configs: signal, noise floor,
-#              the per-config replicas every ε is read on      (~10–20 min)
-#   classical  force-matching least squares of the six classical arms, ε  (~30 min)
+#              the per-config replicas every ε is read on      (~90 min)
+#   classical  force-matching least squares of the six classical arms, ε  (~7 h)
 #   gelt       GELT, residual over `full`                       (~3–4 h)
 #   frozen     the same with frozen offset weights (M1 ablation) (~3–4 h)
 #   lcnn       our matched L-CNN, residual over `full`           (~1–2 h)
 #   rw         exact relative weights, families noise / plane / smear, every
 #              classical arm and every net above scored on them (~30 min)
 #   readout    the pre-registered readings V0–V5 (vacuum_readout.py)
+#   rescore    (not in the default list) ε of the classical arms and of every
+#              trained net on the *current* replica dump, nothing re-accumulated
+#              or retrained (VAC_EVAL_ONLY=1) — after the replicas are rerun
+#              (minutes). Run 2 of P12 (2026-11-21), after moving run 1 away:
+#                mv results/vacuum/replicas_ens0.pt results/vacuum/replicas_ens0_run1.pt
+#                VAC_PARTS=replicas,rescore,readout bash scripts/vacuum_batch.sh
 #   alone      (not in the default list) GELT with no classical residual: does
 #              the network alone reach the 24-operator ansatz?    (~3–4 h)
 # A phase whose output exists is skipped (replicas resumes instead).
@@ -98,6 +104,24 @@ train gelt   "${NET_GELT}"
 train frozen "${NET_FROZEN}" --vac-alpha-mode=frozen
 train lcnn   "${NET_LCNN}"   --vac-arch=lcnn
 train alone  "${OUT}/net_gelt_sm0_resnone_init0${E}" --vac-residual=none
+
+if want rescore; then
+  if [ -e "${OUT}/classical${E}.pt" ] || [ "${DRY}" = "1" ]; then
+    VAC_EVAL_ONLY=1 run rescore_classical python scripts/vacuum_classical.py "${A}" \
+      --vac-eval-only=1 || exit 1
+  else echo "  rescore: no ${OUT}/classical${E}.pt — nothing to rescore"; fi
+  rescore() {  # rescore <name> <stem> <flags...>
+    local name="$1" stem="$2"; shift 2
+    if [ -e "${stem}.pth" ] || [ "${DRY}" = "1" ]; then
+      VAC_EVAL_ONLY=1 run "rescore_${name}" python scripts/train_vacuum.py "${A}" \
+        --vac-eval-only=1 "$@"
+    else echo "  rescore ${name}: no ${stem}.pth — skipped"; fi
+  }
+  rescore gelt   "${NET_GELT}"
+  rescore frozen "${NET_FROZEN}" --vac-alpha-mode=frozen
+  rescore lcnn   "${NET_LCNN}"   --vac-arch=lcnn
+  rescore alone  "${OUT}/net_gelt_sm0_resnone_init0${E}" --vac-residual=none
+fi
 
 if want rw; then
   NETS=""

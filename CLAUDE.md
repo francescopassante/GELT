@@ -638,8 +638,12 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   backprop, **no gradient checkpointing** — the non-reentrant checkpoint's
   double-backward support was not relied on), and are selected on the
   validation force-matching loss. Every ε is paired on one replica set, checked
-  by index before any difference is formed. **Smoke-tested only** (8 × 4³, CPU);
-  never run on the V100.
+  by index *and* by the replicas' tag (grid, late, n_or, seed) before any
+  difference is formed. **Run 1 (ens0, 2026-11-21) failed V0** on the plateau
+  (c(12) − c(32) = +0.0017 ± 0.0005, the curve flat from n = 3 to 24);
+  run 2 reruns the replicas only, on 1…128 sweeps with seeded chains, and
+  rescores classical arms and nets with `VAC_EVAL_ONLY=1` (`rescore` phase of
+  `vacuum_batch.sh`) — record §11 P12.
 - **`cubic_projection.py` / `cubic_batch.sh`** — S4: each trained net's Ō on
   its test split transformed by all 48 elements of O_h, the whole input
   pipeline rebuilt from the transformed links. Gated on the identity

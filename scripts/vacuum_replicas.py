@@ -15,11 +15,20 @@ plateau is ‖E[F|U]‖² — the part of the temporal force the slice determine
 Also checked here, on the production ensemble: Stein's identity (the test of
 tests/test_vacuum.py) on the measured slices.
 
-Resumable (a partial dump is extended). V100, ~10 min at the defaults.
+Resumable (a partial dump is extended). Each chain is seeded from
+(VAC_REPLICA_SEED, config index), so a resumed run is the run it would have
+been in one pass, and a second seed gives independent chains on the same
+configurations. V100, ~0.7 min per sweep of the grid's longest chain (200
+configs): ~90 min at the defaults.
+
+The defaults are run 2's (2026-11-21). Run 1 (2026-11-20, unseeded, sweeps
+"1,2,3,4,6,8,12,16,24,32", late 12) failed V0 at c(12) − c(32) = +0.0017 ±
+0.0005 with the curve flat from n = 3 to 24 — notes/thesis_record.md §11 P12.
+Its dump is kept as replicas<ens>_run1.pt.
 
 Env / --vac-*: VAC_ENSEMBLE_SEED (0), VAC_REPLICA_CONFIGS (200),
-VAC_REPLICA_SWEEPS ("1,2,3,4,6,8,12,16,24,32"), VAC_LATE (12),
-VAC_N_OR_COND (2), VAC_SMOKE, VAC_DEVICE.
+VAC_REPLICA_SWEEPS ("1,2,3,4,6,8,12,16,24,32,48,64,96,128"), VAC_LATE (32),
+VAC_N_OR_COND (2), VAC_REPLICA_SEED (1), VAC_SMOKE, VAC_DEVICE.
 
     python scripts/vacuum_replicas.py
 """
@@ -47,9 +56,10 @@ from gelt.vacuum import (  # noqa: E402
 
 N_REP = int(vc.cfg("VAC_REPLICA_CONFIGS", 12 if vc.SMOKE else 200))
 SWEEPS = vc.levels(vc.cfg("VAC_REPLICA_SWEEPS", "1,2,4,8" if vc.SMOKE
-                          else "1,2,3,4,6,8,12,16,24,32"))
-LATE = int(vc.cfg("VAC_LATE", 4 if vc.SMOKE else 12))
+                          else "1,2,3,4,6,8,12,16,24,32,48,64,96,128"))
+LATE = int(vc.cfg("VAC_LATE", 4 if vc.SMOKE else 32))
 N_OR = int(vc.cfg("VAC_N_OR_COND", 2))
+SEED = int(vc.cfg("VAC_REPLICA_SEED", 1))
 if not [n for n in SWEEPS if n >= LATE]:
     raise SystemExit(f"no replica sweep ≥ VAC_LATE={LATE} in {SWEEPS}")
 
@@ -66,19 +76,23 @@ def main():
     idx = vc.evenly(test, N_REP)
     path = vc.replica_path()
     rep = torch.load(path, weights_only=False) if os.path.exists(path) else None
-    if rep is not None and rep["meta"]["sweeps"] != SWEEPS:
-        raise SystemExit(f"{path} was written with sweeps {rep['meta']['sweeps']}; "
-                         "move it away to change VAC_REPLICA_SWEEPS")
+    if rep is not None and (rep["meta"]["sweeps"] != SWEEPS or rep["meta"]["late"] != LATE
+                            or rep["meta"]["n_or"] != N_OR
+                            or rep["meta"].get("seed") != SEED):
+        m = rep["meta"]
+        raise SystemExit(f"{path} was written with sweeps {m['sweeps']}, late {m['late']}, "
+                         f"n_or {m['n_or']}, seed {m.get('seed')}; move it away to change "
+                         "the grid, the chain or the seed")
     if rep is None:
         rep = dict(idx=[], t0=[], U3=[], F0=[], Flate=[], curve=[], FsFs=[], FsF0=[],
                    FsFl=[], stein=[],
-                   meta=dict(sweeps=SWEEPS, late=LATE, n_or=N_OR, L=vc.L, Lt=vc.LT,
+                   meta=dict(sweeps=SWEEPS, late=LATE, n_or=N_OR, seed=SEED, L=vc.L, Lt=vc.LT,
                              beta=vc.BETA, xi=vc.XI, ensemble_seed=vc.ENSEMBLE_SEED,
                              smoke=vc.SMOKE))
     done = set(rep["idx"])
     todo = [i for i in idx if i not in done]
     print(f"replicas: {len(done)} done, {len(todo)} to go | sweeps {SWEEPS} | "
-          f"late ≥ {LATE} | n_or {N_OR} | device {vc.device}")
+          f"late ≥ {LATE} | n_or {N_OR} | seed {SEED} | device {vc.device}")
     late = [n for n in SWEEPS if n >= LATE]
     CF = casimir_fundamental(vc.NC)
     t_start = time.time()
@@ -89,6 +103,7 @@ def main():
         F0 = slice_force(U4c, t0)
         frozen = frozen_slice_mask(U4.shape[:-2], t0, device=vc.device)
         U = U4.clone()
+        torch.manual_seed(1_000_003 * SEED + i)  # per chain: resume-invariant
         curve, Fl = [], torch.zeros_like(F0)
         for n in range(1, max(SWEEPS) + 1):
             U, _ = heatbath_overrelaxation_sweep(U, vc.G, vc.BETA, n_or=N_OR, xi=vc.XI,

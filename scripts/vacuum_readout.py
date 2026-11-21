@@ -45,6 +45,26 @@ def load(p):
     return torch.load(p, weights_only=False) if os.path.exists(p) else None
 
 
+def replication(rep, curve, F0F0):
+    """Reported, not a gate: run 1's chains against these, sweep by sweep.
+
+    Same configurations and F⁰, independent chains (run 1 unseeded, run 2 seeded),
+    so the per-config difference is paired and its jackknife is exact. Run 1's
+    c(32) = 0.1244 under a flat 0.126 from n = 3 to 24 is what V0 failed on."""
+    p = vc.replica_path()[:-3] + "_run1.pt"
+    old = load(p)
+    if old is None or old is rep or list(old["idx"]) != list(rep["idx"]):
+        return
+    c1 = torch.tensor(old["curve"], dtype=torch.float64)
+    common = [s for s in rep["meta"]["sweeps"] if s in old["meta"]["sweeps"]]
+    print(f"   replication against {os.path.basename(p)} (reported, not read):")
+    for s in common:
+        j, j1 = rep["meta"]["sweeps"].index(s), old["meta"]["sweeps"].index(s)
+        r, e = vc.jackknife_ratio(curve[:, j], F0F0, vc.JACK_BLOCK)
+        dd, de = vc.jackknife_diff(curve[:, j], c1[:, j1], F0F0, vc.JACK_BLOCK)
+        print(f"      n = {s:3d}: {r:.4f} ± {e:.4f}   this − run 1 {dd:+.4f} ± {de:.4f}")
+
+
 def main():
     rep, cl = load(vc.replica_path()), load(vc.classical_path())
     if rep is None:
@@ -57,8 +77,9 @@ def main():
     st = torch.tensor(rep["stein"], dtype=torch.float64)
     z = float(st.mean() / (st.std() / len(st) ** 0.5))
     plateau, stein_ok = abs(d) < 2 * de + 1e-12, abs(z) < 4
-    print(f"V0: plateau {d:+.4f} ± {de:.4f} ({'ok' if plateau else 'FAIL'}), "
-          f"Stein z = {z:+.2f} ({'ok' if stein_ok else 'FAIL'})")
+    print(f"V0: plateau c({sw[lt[0]]}) − c({sw[lt[-1]]}) = {d:+.4f} ± {de:.4f} "
+          f"({'ok' if plateau else 'FAIL'}), Stein z = {z:+.2f} ({'ok' if stein_ok else 'FAIL'})")
+    replication(rep, curve, F0F0)
     if not (plateau and stein_ok):
         raise SystemExit("V0 failed — nothing below is read.")
     S = torch.tensor([float((a.double() * b.double()).sum())
@@ -68,6 +89,10 @@ def main():
 
     if cl is None:
         raise SystemExit(f"no {vc.classical_path()}")
+    if not vc.scored_on(cl, rep):
+        raise SystemExit(f"{vc.classical_path()} was scored on other replicas (tag "
+                         f"{cl.get('rep_tag')}, replicas {vc.replica_tag(rep)}) — "
+                         "VAC_EVAL_ONLY=1 python scripts/vacuum_classical.py first")
     print("V2: classical ladder (ε = 0 exact vacuum score, 1 = Φ ≡ 0):")
     for arm in vc.ARM_ORDER:
         e, ee = cl["arms"][arm]["eps"]
@@ -80,8 +105,9 @@ def main():
         d = load(p)
         if d is None or d.get("eval") is None:
             continue
-        if d["eval"]["rep_idx"] != list(rep["idx"]):
-            print(f"   ** {os.path.basename(p)}: other replicas — skipped")
+        if not vc.scored_on(d["eval"], rep):
+            print(f"   ** {os.path.basename(p)}: other replicas — skipped "
+                  "(VAC_EVAL_ONLY=1 rescores it)")
             continue
         nets[os.path.basename(p)[:-3]] = d
     print("V3: networks, residual over a classical arm:")

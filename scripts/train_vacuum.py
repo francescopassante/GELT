@@ -144,12 +144,13 @@ def evaluate(model, coef, cl):
         ej, sj = vc.per_config_error(g.cpu(), rep, j)
         e.append(ej)
         S.append(sj)
-    out = dict(e=e, S=S, rep_idx=list(rep["idx"]),
+    out = dict(e=e, S=S, rep_idx=list(rep["idx"]), rep_tag=vc.replica_tag(rep),
                eps=vc.jackknife_ratio(e, S, vc.JACK_BLOCK))
     print(f"ε(net + {C['residual']}) = {out['eps'][0]:.4f} ± {out['eps'][1]:.4f}")
     if cl is not None:
-        if cl.get("rep_idx") != out["rep_idx"]:
-            print("** the classical dump was evaluated on other replicas — no pairing")
+        if not vc.scored_on(cl, rep):
+            print("** the classical dump was evaluated on other replicas — no pairing "
+                  "(VAC_EVAL_ONLY=1 python scripts/vacuum_classical.py rescores it)")
         else:
             arm = cl["arms"][C["residual"]]
             d = vc.jackknife_diff(arm["e"], e, S, vc.JACK_BLOCK)
@@ -170,6 +171,9 @@ def main():
     n_par = sum(p.numel() * (2 if p.is_complex() else 1) for p in model.parameters())
     print(f"{C['arch']}: {n_par} real parameters")
     hist = []
+    if EVAL_ONLY and os.path.exists(STEM + ".pt"):
+        # a rescore must not erase the training record it is rescoring
+        hist = torch.load(STEM + ".pt", weights_only=False).get("history", [])
     if not EVAL_ONLY:
         val_set = [targets(configs[i], coef, VAL_SLICES) for i in vc.evenly(val_r, N_VAL)]
         val_set = [(U.cpu(), T.cpu()) for U, T in val_set]
