@@ -20,6 +20,12 @@
 #   rw         exact relative weights, families noise / plane / smear, every
 #              classical arm and every net above scored on them (~30 min)
 #   readout    the pre-registered readings V0–V5 (vacuum_readout.py)
+#   rw2        (not in the default list) V5 on more than one configuration:
+#              `noise` on test configs VAC_RW2_CONFIGS (default 0,100,200,300;
+#              config 0 at the default spread exists from run 1) and `plane`
+#              at VAC_RW2_PLANE_STD (0.5) on the same configs — run 1's plane
+#              failed G-RW at spread 1.0. Every net is scored. (~1 h)
+#                VAC_PARTS=rw2,readout bash scripts/vacuum_batch.sh
 #   rescore    (not in the default list) ε of the classical arms and of every
 #              trained net on the *current* replica dump, nothing re-accumulated
 #              or retrained (VAC_EVAL_ONLY=1) — after the replicas are rerun
@@ -123,15 +129,30 @@ if want rescore; then
   rescore alone  "${OUT}/net_gelt_sm0_resnone_init0${E}" --vac-residual=none
 fi
 
+NETS=""
+for n in "${NET_GELT}" "${NET_FROZEN}" "${NET_LCNN}"; do
+  if [ -e "${n}.pth" ] || [ "${DRY}" = "1" ]; then NETS="${NETS:+${NETS},}${n}.pth"; fi
+done
+
 if want rw; then
-  NETS=""
-  for n in "${NET_GELT}" "${NET_FROZEN}" "${NET_LCNN}"; do
-    if [ -e "${n}.pth" ] || [ "${DRY}" = "1" ]; then NETS="${NETS:+${NETS},}${n}.pth"; fi
-  done
   for fam in noise plane smear; do
     if [ -e "${OUT}/rw_${fam}_cfg0${E}.pt" ]; then echo "  rw ${fam}: exists — skipped"
     else run "rw_${fam}" python scripts/vacuum_relative_weights.py "${A}" \
       --vac-family="${fam}" ${NETS:+--vac-rw-nets="${NETS}"}; fi
+  done
+fi
+
+if want rw2; then
+  PSTD="${VAC_RW2_PLANE_STD:-0.5}"
+  for k in $(echo "${VAC_RW2_CONFIGS:-0,100,200,300}" | tr ',' ' '); do
+    if [ -e "${OUT}/rw_noise_cfg${k}${E}.pt" ]; then echo "  rw2 noise cfg${k}: exists — skipped"
+    else run "rw_noise_cfg${k}" python scripts/vacuum_relative_weights.py "${A}" \
+      --vac-family=noise --vac-rw-config="${k}" ${NETS:+--vac-rw-nets="${NETS}"}; fi
+    if [ -e "${OUT}/rw_plane_cfg${k}_std${PSTD}${E}.pt" ]; then
+      echo "  rw2 plane cfg${k} std${PSTD}: exists — skipped"
+    else run "rw_plane_cfg${k}_std${PSTD}" python scripts/vacuum_relative_weights.py "${A}" \
+      --vac-family=plane --vac-rw-config="${k}" --vac-rw-target-std="${PSTD}" \
+      ${NETS:+--vac-rw-nets="${NETS}"}; fi
   done
 fi
 

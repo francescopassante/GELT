@@ -1,0 +1,59 @@
+P12 run 2 — vacuum wavefunctional, ensemble 0 (V100, 2026-11-21).
+VAC_PARTS=replicas,rescore,readout after moving run 1's dump to
+replicas_ens0_run1.pt. Replicas: sweeps 1…32, 48, 64, 96, 128, late ≥ 32,
+n_or 2, VAC_REPLICA_SEED=1. Classical arms and nets rescored with
+VAC_EVAL_ONLY=1 (nothing retrained). Verbatim tail of logs/vacuum_batch_run2.log:
+
+rescore alone: no results/vacuum/net_gelt_sm0_resnone_init0_ens0.pth — skipped
+V0: plateau c(32) − c(128) = +0.0005 ± 0.0007 (ok), Stein z = -0.27 (ok)
+   replication against replicas_ens0_run1.pt (reported, not read):
+      n =   1: 0.1452 ± 0.0005   this − run 1 +0.0005 ± 0.0009
+      n =   2: 0.1354 ± 0.0005   this − run 1 +0.0010 ± 0.0006
+      n =   3: 0.1294 ± 0.0005   this − run 1 +0.0020 ± 0.0010
+      n =   4: 0.1274 ± 0.0005   this − run 1 +0.0003 ± 0.0007
+      n =   6: 0.1268 ± 0.0007   this − run 1 -0.0011 ± 0.0007
+      n =   8: 0.1266 ± 0.0006   this − run 1 +0.0005 ± 0.0008
+      n =  12: 0.1259 ± 0.0008   this − run 1 -0.0002 ± 0.0010
+      n =  16: 0.1253 ± 0.0005   this − run 1 -0.0009 ± 0.0005
+      n =  24: 0.1260 ± 0.0007   this − run 1 +0.0002 ± 0.0006
+      n =  32: 0.1260 ± 0.0005   this − run 1 +0.0016 ± 0.0008
+V1: predictable fraction of the temporal force 0.1257 ± 0.0003
+V2: classical ladder (ε = 0 exact vacuum score, 1 = Φ ≡ 0):
+   dr         ε = 0.1491 ± 0.0016
+   shapes     ε = 0.1063 ± 0.0018
+   shapes_sm  ε = 0.0259 ± 0.0018
+   bb         ε = 0.6026 ± 0.0011
+   dr_bb      ε = 0.1079 ± 0.0017
+   full       ε = 0.0200 ± 0.0018
+   → a rescaled 3D Wilson action explains 85.1% of the non-trivial vacuum score
+V3: networks, residual over a classical arm:
+   net_gelt_frozen_sm0_resfull_init0_ens0: ε = 0.0082 ± 0.0018; gain over full +0.0118 ± 0.0001 (+81.3σ, 59% of ε(full)) → R-V1 (substantial)
+   net_gelt_sm0_resfull_init0_ens0: ε = 0.0072 ± 0.0018; gain over full +0.0128 ± 0.0002 (+84.4σ, 64% of ε(full)) → R-V1 (substantial)
+   net_lcnn_sm0_resfull_init0_ens0: ε = 0.0070 ± 0.0018; gain over full +0.0131 ± 0.0002 (+69.5σ, 65% of ε(full)) → R-V1 (substantial)
+V4: softmax vs frozen α (same residual, seed, inputs):
+   ε(frozen) − ε(softmax) = +0.0009 ± 0.0001 → input-dependent weighting pays
+V5: exact relative weights:
+   noise (config 1600, s_max 0.301, ΔΦ_true -384.40 ± 1.15)
+      null (Φ ≡ 0)                           χ²/dof 29963.09  max|Δ|/σ  333.7  
+      classical dr                           χ²/dof   153.64  max|Δ|/σ   28.5  
+      classical shapes                       χ²/dof   157.68  max|Δ|/σ   28.1  
+      classical shapes_sm                    χ²/dof    19.47  max|Δ|/σ    8.1  
+      classical bb                           χ²/dof 10721.28  max|Δ|/σ  207.1  
+      classical dr_bb                        χ²/dof    53.07  max|Δ|/σ   16.1  
+      classical full                         χ²/dof     7.38  max|Δ|/σ    4.7  
+      net_gelt_sm0_resfull_init0_ens0        χ²/dof     6.95  max|Δ|/σ    4.6  
+      net_gelt_frozen_sm0_resfull_init0_ens0 χ²/dof     7.01  max|Δ|/σ    4.6  
+      net_lcnn_sm0_resfull_init0_ens0        χ²/dof     2.92  max|Δ|/σ    3.9  
+   plane (config 1600, s_max 1.04, ΔΦ_true -273.85 ± 1.18): G-RW failed (3 bad rungs) — not read
+   smear (config 1600, s_max 1.01, ΔΦ_true +2748.72 ± 1.30)  [off-distribution: reported only]
+      null (Φ ≡ 0)                           χ²/dof 3384453.99  max|Δ|/σ 2185.6  
+      classical dr                           χ²/dof 20676.71  max|Δ|/σ  192.7  
+      classical shapes                       χ²/dof 28334.43  max|Δ|/σ  285.7  
+      classical shapes_sm                    χ²/dof  5976.68  max|Δ|/σ  131.7  
+      classical bb                           χ²/dof 336081.34  max|Δ|/σ  766.5  
+      classical dr_bb                        χ²/dof 36217.11  max|Δ|/σ  227.7  
+      classical full                         χ²/dof   922.27  max|Δ|/σ   40.4  
+      net_gelt_sm0_resfull_init0_ens0        χ²/dof   114.11  max|Δ|/σ   12.8  
+      net_gelt_frozen_sm0_resfull_init0_ens0 χ²/dof    35.14  max|Δ|/σ    9.9  
+      net_lcnn_sm0_resfull_init0_ens0        χ²/dof    20.27  max|Δ|/σ    7.3  
+[2026-11-21 13:19:53] done.

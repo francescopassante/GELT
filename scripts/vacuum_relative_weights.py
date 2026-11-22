@@ -35,7 +35,8 @@ Env / --vac-*: VAC_FAMILY (noise), VAC_RW_CONFIG (0: index into the test split),
 VAC_RW_TARGET_STD (1.0), VAC_RW_SMAX (0.3 noise, 1.0 plane and smear),
 VAC_RW_MAX_RUNGS (200), VAC_RW_MEAS (32 measurements per rung, one sweep apart),
 VAC_RW_EQ (4 sweeps after each switch), VAC_RW_SEED (0), VAC_N_OR_COND (2),
-VAC_RW_NETS, VAC_SMOKE.
+VAC_RW_NETS, VAC_SMOKE. Output: rw_<family>_cfg<k>[_std<s>]<ens>.pt, the
+_std tag only off the default spread.
 
     VAC_FAMILY=plane VAC_RW_NETS=results/vacuum/net_gelt_sm0_resfull_init0_ens0.pth \\
         python scripts/vacuum_relative_weights.py
@@ -78,7 +79,10 @@ N_OR = int(vc.cfg("VAC_N_OR_COND", 2))
 SMEAR_STEPS = int(vc.cfg("VAC_RW_SMEAR_STEPS", 4))
 NETS = [p for p in str(vc.cfg("VAC_RW_NETS", "")).split(",") if p]
 JB = 4  # jackknife block, in measurements (they are one sweep apart)
-OUT_PATH = f"{vc.OUT}/rw_{FAMILY}_cfg{CONF}{vc.ENS}.pt"
+# the target spread is in the name when it is not the default, so a rerun of a
+# ladder that failed G-RW at a smaller step sits beside it instead of over it
+STD_TAG = "" if TARGET_STD == 1.0 else f"_std{TARGET_STD:g}"
+OUT_PATH = f"{vc.OUT}/rw_{FAMILY}_cfg{CONF}{STD_TAG}{vc.ENS}.pt"
 
 
 def direction(Ustar):
@@ -143,6 +147,8 @@ def main():
     vc.require_cuda("vacuum_relative_weights")
     configs = vc.load_ensemble()
     _, _, test = vc.splits(configs.shape[0])
+    if not 0 <= CONF < len(test):
+        raise SystemExit(f"VAC_RW_CONFIG={CONF}: the test split has {len(test)} configurations")
     i = list(test)[CONF]
     t0 = vc.LT // 2
     U = configs[i].to(vc.device)

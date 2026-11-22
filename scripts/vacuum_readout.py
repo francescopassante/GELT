@@ -25,11 +25,17 @@ Reads results/vacuum/{replicas,classical,net_*,rw_*}<ens>.pt and applies:
       family if χ²/dof < 2 and max|Δ|/σ < 4. The network *beats* the classical
       ansatz if its χ² is below half of `full`'s on both `noise` and `plane`.
       `smear` is off the training distribution: reported, not read.
+      With several ladders per family (2026-11-22, fixed before they ran):
+      validated = the rule on every ladder of the family passing G-RW; beats =
+      under half of `full`'s χ² on every passing ladder of both families. Beside
+      each χ²/dof, the Monte Carlo probability that an exact model reads at least
+      that much (vacuum_common.cumulative_chi2_p) — calibration, not the reading.
 
     python scripts/vacuum_readout.py [--vac-ensemble-seed=0]
 """
 
 import glob
+import itertools
 import os
 import sys
 
@@ -132,6 +138,18 @@ def main():
               f"{g:+.4f} ± {ge:.4f} ({g / max(ge, 1e-12):+.1f}σ, {g / max(base, 1e-12):.0%} "
               f"of ε({arm})) → {verdict}")
 
+    paired = [n for n, d in nets.items() if d["config"]["residual"] != "none"]
+    if len(paired) > 1:
+        print("   net against net, paired on the same replicas (one seed each; "
+              "reported, not read):")
+        for a, b in itertools.combinations(paired, 2):
+            if nets[a]["config"]["residual"] != nets[b]["config"]["residual"]:
+                continue
+            d, de = vc.jackknife_diff(nets[a]["eval"]["e"], nets[b]["eval"]["e"], cl["S"],
+                                      vc.JACK_BLOCK)
+            print(f"      ε({a[4:]}) − ε({b[4:]}) = {d:+.4f} ± {de:.4f} "
+                  f"({d / max(de, 1e-12):+.1f}σ)")
+
     print("V4: softmax vs frozen α (same residual, seed, inputs):")
     found = False
     for name, d in nets.items():
@@ -149,19 +167,63 @@ def main():
         print("   (no softmax/frozen pair yet)")
 
     print("V5: exact relative weights:")
+    passing = {}
     for p in sorted(glob.glob(f"{vc.OUT}/rw_*{vc.ENS}.pt")):
         r = load(p)
-        tag = f"{r['family']} (config {r['config']}, s_max {r['s'][-1]:.3g}, " \
+        std = r.get("meta", {}).get("target_std", 1.0)
+        tag = f"{r['family']} (config {r['config']}, spread {std:g}, {len(r['dphi'])} rungs, " \
+              f"s_max {r['s'][-1]:.3g}, " \
               f"ΔΦ_true {float(r['true'][-1]):+.2f} ± {float(r['true_err'][-1]):.2f})"
         if not r["gate"]:
             print(f"   {tag}: G-RW failed ({r['bad_rungs']} bad rungs) — not read")
             continue
         print(f"   {tag}{'  [off-distribution: reported only]' if r['family'] == 'smear' else ''}")
         for m, v in r["models"].items():
-            ok = v["chi2"] < 2 and v["maxdev"] < 4
+            pv, n_mc = vc.cumulative_chi2_p(v["chi2"], r["dphi_err"])
+            ps = f"p {pv:.2g}" if pv > 0 else f"p < {1 / n_mc:.0e}"
             print(f"      {m:38s} χ²/dof {v['chi2']:8.2f}  max|Δ|/σ {v['maxdev']:6.1f}  "
-                  f"{'validated' if ok else ''}")
+                  f"{'validated' if validated(v) else '':9s}  [if exact: {ps}]")
+        passing.setdefault(r["family"], []).append(r)
+    family_readings(passing)
 
+
+def validated(v):
+    return v["chi2"] < 2 and v["maxdev"] < 4
+
+
+def family_readings(passing):
+    """V5 over several ladders per family (fixed 2026-11-22, before they ran).
+
+    validated on a family — the per-ladder rule on *every* ladder of that family
+    that passes G-RW; beats the classical ansatz — χ²/dof under half of `full`'s
+    on every passing ladder of both `noise` and `plane`. `smear` stays reported."""
+    fams = ("noise", "plane")
+    print("   per family, every ladder passing G-RW (smear excluded):")
+    for fam in fams:
+        rs = passing.get(fam, [])
+        if not rs:
+            print(f"      {fam}: no readable ladder")
+            continue
+        models = [m for m in rs[0]["models"] if all(m in r["models"] for r in rs)]
+        ok = [m for m in models if all(validated(r["models"][m]) for r in rs)]
+        print(f"      {fam} ({len(rs)} ladder{'s' if len(rs) > 1 else ''}): validated — "
+              + (", ".join(ok) if ok else "none"))
+    nets = [m for m in passing.get("noise", [{}])[0].get("models", {})
+            if not m.startswith(("classical", "null"))]
+    for n in nets:
+        if not all(passing.get(f) for f in fams):
+            print(f"      {n}: beats the classical ansatz — not read (a family has no "
+                  "readable ladder)")
+            continue
+        ladders = [r for f in fams for r in passing[f]]
+        if not all(n in r["models"] and "classical full" in r["models"] for r in ladders):
+            print(f"      {n}: beats the classical ansatz — not read (not scored on every "
+                  "passing ladder)")
+            continue
+        rows = [r["models"][n]["chi2"] / r["models"]["classical full"]["chi2"] for r in ladders]
+        verdict = "yes" if all(x < 0.5 for x in rows) else "no"
+        print(f"      {n}: χ²/χ²(full) per ladder " + ", ".join(f"{x:.2f}" for x in rows)
+              + f" → beats the classical ansatz: {verdict}")
 
 if __name__ == "__main__":
     main()

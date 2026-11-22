@@ -62,7 +62,7 @@ and are kept as they were.
 | L18 | GELT ties our matched L-CNN on the glueball: ΔA₀ = +0.012 ± 0.009 | ESTABLISHED for **our reimplementation** | §5.2 |
 | L19 | GELT beats the authors' L-CNN on the glueball: ahead in 4 of 4 pairings, median +0.101 on ens0, GELT's worst run above their best | ESTABLISHED as an accuracy gap at n = 3 on one ensemble; **its cause (representation vs optimisation) is OPEN** | §5.2 |
 | L20 | "Attention buys robustness" | **QUALIFIED** to a failure-rate asymmetry on SU(2) tasks that reverses on Z₂ in distribution and is absent in 1+1D | §5.4 |
-| L21 | Input-dependent offset weighting (M1) pays | ESTABLISHED on a constructed target (6/6, p = 0.031); **never on a physics task** (0 of 3) | §5.3 |
+| L21 | Input-dependent offset weighting (M1) pays | ESTABLISHED on a constructed target (6/6, p = 0.031); on physics tasks 0 of 3, plus the vacuum score (§11 P12) at **one seed**: +0.0009 ± 0.0001 (σ without training noise, 7% of the gain, reversed on the off-distribution `smear` ladder, M1-free L-CNN level or ahead) | §5.3, §11 P12 |
 | L22 | The softmax is worth ≈ 0.48 of R² at matched parameters | ESTABLISHED, as *trainability*; its split into sign / normalisation / bound RETRACTED | §5.3 |
 | L23 | Shortest-path averaging of the transport buys accuracy | **OPEN, and never observed** on any task; untested on the glueball | §5.5 |
 | L24 | Boundedness (M2) is why L-CNNs fail | OPEN — the counts fit it, nothing separates it from the transport | §5.4 |
@@ -71,6 +71,7 @@ and are kept as they were.
 | L27 | Our L-CNN is a strict low-rank restriction of the authors' L-CB; the vendored L-CB is one slot wider than the Letter's | ESTABLISHED (constructive, 1.9e−15; Table V reproduced exactly) | §6 |
 | L28 | GELT's step costs 3.9× our L-CNN's; the transport is 62.8% of it | ESTABLISHED against ours; unmeasured against theirs | §8 |
 | L29 | 4D APE at α = 0.5, n steps ≡ Wilson flow at t = n·α/6 | ESTABLISHED (standing fact) | §7 |
+| L30 | Networks residual over the 28-operator classical vacuum ansatz remove ~60% of its error on the exact vacuum score (ε(full) 0.020 → 0.007; GELT, frozen-α and L-CNN alike) | ESTABLISHED at one seed, one ensemble (V3 R-V1, ≥ 70σ test-sample); **not validated** against exact relative weights (V5: one config, `plane` unread, only the L-CNN under half of `full`'s χ²); stronger classical arm untried | §11 P12 |
 | — | Z₂ APE smearing at α = 0.5 is not gauge covariant and freezes after one step | ESTABLISHED **defect, unfixed** | §9 |
 
 ---
@@ -1308,6 +1309,72 @@ if it passes, V1–V5 are read as fixed above. If it fails again, the tail is
 real: nothing is read and the next step is a longer grid. Reported, not read:
 run 2 − run 1 at each shared n (paired per configuration) — whether run 1's
 c(32) replicates.
+*Run 2 result (2026-11-21, ens0; verbatim in
+`notes/raw/vacuum_ens0_run2_readout_2026-11-21.txt`).* **V0 passes**:
+c(32) − c(128) = +0.0005 ± 0.0007, Stein z = −0.27. Run 1's c(32) does not
+replicate (run 2 − run 1 = +0.0016 ± 0.0008; run 2 is flat at 0.1253–0.1274
+from n = 4 to 32), so run 1's failure was most likely a 2–3σ fluctuation of
+one point — said after the fact, and the gate was not loosened to say it.
+- **V1**: 0.1257 ± 0.0003 of the temporal force's variance is fixed by the
+  slice.
+- **V2**: ε(dr) 0.149, ε(shapes) 0.106, ε(shapes_sm) 0.026, ε(bb) 0.603,
+  ε(dr_bb) 0.108, ε(full) 0.020 (all ± 0.002). A rescaled 3D Wilson action
+  explains 85% of the vacuum score. **Smearing is the lever**: thin to smeared
+  loop shapes takes ε from 0.106 to 0.026, and `bb` adds only 0.006 on top.
+- **V3: R-V1 (substantial) for all three nets.** Gain over `full`: GELT
+  +0.0128 ± 0.0002 (64% of ε(full)), frozen-α +0.0118 ± 0.0001 (59%), L-CNN
+  +0.0131 ± 0.0002 (65%); ε(net + full) = 0.0072 / 0.0082 / 0.0070. The σ is
+  the test-sample error at fixed trained weights — paired, so ε's common
+  ±0.0018 cancels — and **contains no initialisation variance**. All three
+  nets see only the unsmeared slice (`sm0`) and still beat `shapes_sm`, which
+  sees APE 0–6.
+- **V4: "input-dependent weighting pays" as written** — ε(frozen) − ε(softmax)
+  = +0.0009 ± 0.0001. Three qualifiers. It is one seed per arm with a σ that
+  excludes training noise. It is 7% of the gain. And the M1-free L-CNN is level
+  with or ahead of GELT on every reading. On `smear` (reported only) the order
+  reverses: frozen 35 against softmax 114.
+- **V5: nothing validated; "beats the classical ansatz" not read.** `noise`
+  passes G-RW: the L-CNN is at χ²/dof 2.92 (max 3.9σ — passes max|Δ|, fails
+  χ² < 2) and is the only model under half of `full`'s 7.38. GELT 6.95 and
+  frozen 7.01 are level with `full`, although V3 has them removing 60% of its
+  ε. `plane` failed G-RW (3 bad rungs) — not read, so the "both families"
+  criterion cannot be met. `smear` (reported): every net is far ahead of
+  `full` (20–114 against 922). Two limits of V5 as built: **one configuration
+  per family** (test config 1600), and the χ² is diagonal on a *cumulative*
+  (random-walk) curve. Its mean is 1 for an exact model, but it has a few
+  effective degrees of freedom, so "χ² < 2" separates 7 from 1 and does not
+  separate 2.9 from 1.
+- **The pre-registered "publishable" condition** (R-V1 and V5 validating the
+  net where `full` fails) **is not met**: V3 is met, V5 is not.
+What is established, and what is not: networks residual over the 28-operator
+classical ansatz remove ~60% of its remaining error on the exact vacuum score,
+far outside test noise, one seed per architecture, one ensemble. Whether that
+survives a **stronger classical arm** is open. The 0⁺⁺ precedent (L8: +0.095
+→ +0.038 once loop shapes were added), together with V2's smearing lever, says
+the deeper APE ladder (8, 12, …) is the comparator to try first. Open, in order:
+(i) `plane` rerun at a lower `VAC_RW_TARGET_STD` (minutes) and more than one
+configuration per family; (ii) paired ε(GELT) − ε(L-CNN) — the readout prints
+no net-vs-net difference; (iii) init seeds for GELT and frozen-α, ≈ 10 h each,
+for V4; (iv) `shapes_sm` on a deeper smearing ladder, which needs a new
+accumulation (fewer fit configurations suffice at K ≈ 40).
+*V5 on four configurations (prepared 2026-11-22, readings fixed before it
+runs).* `VAC_PARTS=rw2,readout` (≈ 1 h): `noise` at the default spread on
+test configurations 0, 100, 200, 300 (0 exists from run 1), and `plane` at
+spread 0.5 on the same four (run 1's `plane` failed G-RW at 1.0). Every net is
+scored. Outputs at a non-default spread carry `_std<s>`, so the failed ladder
+stays beside its rerun. **Readings, extending V5 to several ladders:** a model
+is *validated* on a family if χ²/dof < 2 and max|Δ|/σ < 4 on **every** ladder
+of that family that passes G-RW. A net *beats* the classical ansatz if its
+χ²/dof is under half of `full`'s on every passing ladder of both `noise` and
+`plane`, and it is not read unless the net was scored on all of them. `smear`
+stays reported only. Printed beside each χ²/dof, not read: the Monte Carlo
+probability that an exact model reads at least that much
+(`vacuum_common.cumulative_chi2_p` — the truth's random walk simulated from the
+same per-rung σ's). On the smoke lattice χ²/dof 0.49 → p 0.56 and 2.93 → p 0.06,
+so the "< 2" cut is near a 10% test. A χ² over the rung *increments* was tried
+first and dropped: one rung whose 8-block jackknife σ comes out near zero
+dominates it. Also new, reported and not read: V3 now prints ε(net) − ε(net′)
+paired on the same replicas (one seed each).
 
 **P13 — the learned K-state spectrum (Ky Fan loss). V100, one training
 (~10 h) + its untrained twin (minutes), then offline.** Written 2026-11-19 by

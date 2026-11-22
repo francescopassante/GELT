@@ -348,6 +348,24 @@ def jackknife_ratio(num, den, block):
     return float(full), err
 
 
+def cumulative_chi2_p(chi2, err, n_mc=20000, seed=0):
+    """Monte Carlo p-value of V5's χ²/dof for a model that is exactly right.
+
+    V5's statistic is the mean of (dev_k/σ_k)² over a *cumulative* curve: the
+    truth is a random walk of independent rung estimates, so its terms are
+    strongly correlated, its mean is 1 and its spread is that of a few degrees
+    of freedom — the "χ²/dof < 2" cut is not calibrated. Here the walk is
+    simulated from the same per-rung σ's and the statistic recomputed. A
+    χ² over the *increments* was tried first and rejected: a single rung
+    whose jackknife σ comes out near zero (8 blocks in production, 2 in the
+    smoke) dominates it, where the cumulative σ's dilute it."""
+    e = torch.as_tensor(err, dtype=torch.float64)
+    g = torch.Generator().manual_seed(seed)
+    walk = (torch.randn(n_mc, e.shape[0], generator=g, dtype=torch.float64) * e).cumsum(1)
+    stat = ((walk / e.pow(2).cumsum(0).sqrt().clamp_min(1e-12)) ** 2).mean(1)
+    return float((stat >= chi2).double().mean()), n_mc
+
+
 def jackknife_diff(num_a, num_b, den, block):
     """(Σa − Σb)/Σden, paired over the same configs."""
     a = torch.as_tensor(num_a, dtype=torch.float64)

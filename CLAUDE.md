@@ -99,6 +99,12 @@ before quoting any number.
   asymmetry on SU(2) tasks, reversed on Z₂ in distribution, absent in 1+1D.
   **Path-averaged transport has never been shown to pay on accuracy and has
   never been ablated on the glueball** (§11 P3 of the record).
+- **Vacuum wavefunctional (§11 P12, ens0).** On the exact vacuum score the
+  classical ansatz leaves ε = 0.020 (a rescaled 3D Wilson action alone 0.149;
+  smeared loop shapes are the lever). GELT, frozen-α and our L-CNN residual over
+  it all reach ε ≈ 0.007, one seed each. Not yet validated against exact
+  relative weights, and no stronger classical arm has been tried. M1 pays
+  +0.0009 at one seed, with the L-CNN level or ahead.
 
 ## Layout
 
@@ -643,7 +649,13 @@ subdirectories. `README.md` has the one-line table; the details that matter:
   (c(12) − c(32) = +0.0017 ± 0.0005, the curve flat from n = 3 to 24);
   run 2 reruns the replicas only, on 1…128 sweeps with seeded chains, and
   rescores classical arms and nets with `VAC_EVAL_ONLY=1` (`rescore` phase of
-  `vacuum_batch.sh`) — record §11 P12.
+  `vacuum_batch.sh`). **Run 2 passed V0** and read **R-V1 for all three nets**
+  (ε(full) 0.020 → 0.007, one seed each) with V5 validating nothing (`plane`
+  failed G-RW, one configuration per family) — record §11 P12, ledger L30.
+  The `rw2` phase runs V5 on four test configurations (`noise`, and `plane` at
+  spread 0.5); the readout then reads V5 per family over every passing ladder,
+  prints a Monte Carlo calibration of each χ²/dof
+  (`vacuum_common.cumulative_chi2_p`), and pairs the nets against each other.
 - **`cubic_projection.py` / `cubic_batch.sh`** — S4: each trained net's Ō on
   its test split transformed by all 48 elements of O_h, the whole input
   pipeline rebuilt from the transformed links. Gated on the identity
